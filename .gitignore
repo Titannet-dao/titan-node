@@ -1,13 +1,8 @@
-/titan-scheduler
-/titan-candidate
-/titan-edge
-
 **/*.a
 **/*.pc
 /**/*/.DS_STORE
 .DS_STORE
 .idea
-
+*.exe
 ~
-titan-*
 .vscode/
