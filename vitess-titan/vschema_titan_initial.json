@@ -1,0 +1,15 @@
+{
+    "tables": {
+        "node_info": {},
+        "validation_result": {},
+        "block_download_info": {},
+        "node_register_info":{},
+        "replica_info":{},
+        "asset_record":{},
+        "edge_update_info":{},
+        "validators":{},
+        "asset_view":{},
+        "bucket":{}
+    }
+}
+  
