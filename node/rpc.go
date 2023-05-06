@@ -59,6 +59,8 @@ func ServeRPC(h http.Handler, id string, addr string) (StopFunc, error) {
 // SchedulerHandler returns a scheduler handler, to be mounted as-is on the server.
 func SchedulerHandler(a api.Scheduler, permission bool, opts ...jsonrpc.ServerOption) (http.Handler, error) {
 	m := mux.NewRouter()
+	readerHandler, readerServerOpt := rpcenc.ReaderParamDecoder()
+	opts = append(opts, readerServerOpt)
 
 	serveRPC := func(path string, hnd interface{}) {
 		rpcServer := jsonrpc.NewServer(append(opts, jsonrpc.WithServerErrors(api.RPCErrors))...)
@@ -84,7 +86,7 @@ func SchedulerHandler(a api.Scheduler, permission bool, opts ...jsonrpc.ServerOp
 	m.Handle("/debug/pprof-set/mutex", handleFractionOpt("MutexProfileFraction", func(x int) {
 		runtime.SetMutexProfileFraction(x)
 	}))
-
+	m.Handle("/rpc/streams/v0/push/{uuid}", readerHandler)
 	m.PathPrefix("/").Handler(http.DefaultServeMux) // pprof
 
 	return m, nil

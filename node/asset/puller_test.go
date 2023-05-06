@@ -9,6 +9,10 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 )
 
+const (
+	testIPFS = "http://192.168.0.132:5001"
+)
+
 func TestCache(t *testing.T) {
 	t.Log("TestCache")
 
@@ -30,7 +34,8 @@ func TestCache(t *testing.T) {
 		return
 	}
 
-	assetPuller := newAssetPuller(&pullerOptions{root: c, dss: nil, storage: manger, bFetcher: fetcher.NewIPFSClient("http://192.168.0.132:5001", 15, 1), parallel: 5})
+	opts := &pullerOptions{root: c, dss: nil, storage: manger, bFetcher: fetcher.NewIPFSClient(testIPFS), parallel: 5, timeout: 3, retry: 2}
+	assetPuller := newAssetPuller(opts)
 	err = assetPuller.pullAsset()
 	if err != nil {
 		t.Errorf("pull asset error:%s", err)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"strings"
-	"sync"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
@@ -16,9 +15,7 @@ import (
 
 // Datastore represents the asset datastore
 type Datastore struct {
-	sync.RWMutex
 	assetDB *db.SQLDB
-	assetDS *datastore.MapDatastore
 	dtypes.ServerID
 }
 
@@ -26,14 +23,13 @@ type Datastore struct {
 func NewDatastore(db *db.SQLDB, serverID dtypes.ServerID) *Datastore {
 	return &Datastore{
 		assetDB:  db,
-		assetDS:  datastore.NewMapDatastore(),
 		ServerID: serverID,
 	}
 }
 
 // Close closes the asset datastore
 func (d *Datastore) Close() error {
-	return d.assetDS.Close()
+	return nil
 }
 
 func trimPrefix(key datastore.Key) string {
@@ -42,23 +38,34 @@ func trimPrefix(key datastore.Key) string {
 
 // Get retrieves data from the datastore
 func (d *Datastore) Get(ctx context.Context, key datastore.Key) (value []byte, err error) {
-	d.RLock()
-	defer d.RUnlock()
-	return d.assetDS.Get(ctx, key)
+	cInfo, err := d.assetDB.LoadAssetRecord(trimPrefix(key))
+	if err != nil {
+		return nil, err
+	}
+
+	cInfo.ReplicaInfos, err = d.assetDB.LoadAssetReplicas(cInfo.Hash)
+	if err != nil {
+		return nil, err
+	}
+
+	asset := assetPullingInfoFrom(cInfo)
+
+	valueBuf := new(bytes.Buffer)
+	if err := asset.MarshalCBOR(valueBuf); err != nil {
+		return nil, err
+	}
+
+	return valueBuf.Bytes(), nil
 }
 
 // Has  checks if the key exists in the datastore
 func (d *Datastore) Has(ctx context.Context, key datastore.Key) (exists bool, err error) {
-	d.RLock()
-	defer d.RUnlock()
-	return d.assetDS.Has(ctx, key)
+	return d.assetDB.AssetExists(trimPrefix(key), d.ServerID)
 }
 
 // GetSize gets the data size from the datastore
 func (d *Datastore) GetSize(ctx context.Context, key datastore.Key) (size int, err error) {
-	d.RLock()
-	defer d.RUnlock()
-	return d.assetDS.GetSize(ctx, key)
+	return d.assetDB.LoadAssetCount(d.ServerID)
 }
 
 // Query queries asset records from the datastore
@@ -66,17 +73,12 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 	var rows *sqlx.Rows
 	var err error
 
-	state := append(FailedStates, PullingStates...)
-
-	rows, err = d.assetDB.LoadAssetRecords(state, q.Limit, q.Offset, d.ServerID)
+	rows, err = d.assetDB.LoadAllAssetRecords(d.ServerID)
 	if err != nil {
 		log.Errorf("LoadAssets :%s", err.Error())
 		return nil, err
 	}
 	defer rows.Close()
-
-	d.Lock()
-	defer d.Unlock()
 
 	re := make([]query.Entry, 0)
 	// loading assets to local
@@ -106,10 +108,6 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 			Key: prefix + asset.Hash.String(), Size: len(valueBuf.Bytes()),
 		}
 
-		if err = d.assetDS.Put(ctx, datastore.NewKey(entry.Key), valueBuf.Bytes()); err != nil {
-			log.Errorf("datastore loading assets: %v", err)
-		}
-
 		if !q.KeysOnly {
 			entry.Value = valueBuf.Bytes()
 		}
@@ -125,35 +123,19 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 
 // Put update asset record info
 func (d *Datastore) Put(ctx context.Context, key datastore.Key, value []byte) error {
-	d.Lock()
-	defer d.Unlock()
-
-	if err := d.assetDS.Put(ctx, key, value); err != nil {
-		log.Errorf("datastore local put: %v", err)
-	}
 	aInfo := &AssetPullingInfo{}
 	if err := aInfo.UnmarshalCBOR(bytes.NewReader(value)); err != nil {
 		return err
 	}
-	if aInfo.Hash == "" {
-		return nil
-	}
 
-	info := aInfo.ToAssetRecord()
-	info.ServerID = d.ServerID
+	aInfo.Hash = AssetHash(trimPrefix(key))
 
-	return d.assetDB.SaveAssetRecord(info)
+	return d.assetDB.UpdateStateOfAsset(aInfo.Hash.String(), aInfo.State.String(), aInfo.Blocks, aInfo.Size, aInfo.RetryCount, aInfo.ReplenishReplicas, d.ServerID)
 }
 
-// Delete delete asset record info
+// Delete delete asset record info (This func has no place to call it)
 func (d *Datastore) Delete(ctx context.Context, key datastore.Key) error {
-	d.Lock()
-	defer d.Unlock()
-
-	if err := d.assetDS.Delete(ctx, key); err != nil {
-		log.Errorf("datastore local delete: %v", err)
-	}
-	return d.assetDB.DeleteAssetRecord(trimPrefix(key))
+	return nil
 }
 
 // Sync sync
@@ -163,7 +145,7 @@ func (d *Datastore) Sync(ctx context.Context, prefix datastore.Key) error {
 
 // Batch batch
 func (d *Datastore) Batch(ctx context.Context) (datastore.Batch, error) {
-	return d.assetDS.Batch(ctx)
+	return nil, nil
 }
 
 var _ datastore.Batching = (*Datastore)(nil)

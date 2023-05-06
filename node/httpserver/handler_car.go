@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/interface-go-ipfs-core/path"
+	"golang.org/x/xerrors"
 )
 
 // ServeCar handles HTTP requests for serving CAR files
-func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, credentials *types.Credentials, carVersion string) {
+func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload, carVersion string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -24,7 +27,7 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, credentia
 		return
 	}
 
-	root, err := cid.Decode(credentials.AssetCID)
+	root, err := cid.Decode(tkPayload.AssetCID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("decode root cid error: %s", err.Error()), http.StatusBadRequest)
 		return
@@ -80,6 +83,8 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, credentia
 
 	modtime := addCacheControlHeaders(w, r, contentPath, rootCID)
 
+	startTime := time.Now()
+	// TODO limit rate
 	reader, err := hs.asset.GetAsset(rootCID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("not support car version %s", carVersion), http.StatusInternalServerError)
@@ -90,5 +95,44 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, credentia
 	// If-None-Match+Etag, Content-Length and range requests
 	http.ServeContent(w, r, name, modtime, reader)
 
-	// TODO: limit rate and report to scheduler
+	contentLength, err := getContentLength(w)
+	if err != nil {
+		log.Errorf("get Content-length error:", err.Error())
+		return
+	}
+
+	duration := time.Since(startTime)
+	speed := time.Duration(0)
+	if duration > 0 {
+		speed = time.Duration(contentLength) / duration * time.Second
+	}
+
+	workload := &types.Workload{
+		DownloadSpeed: int64(speed),
+		DownloadSize:  contentLength,
+		StartTime:     startTime.Unix(),
+		EndTime:       time.Now().Unix(),
+	}
+
+	report := &report{
+		TokenID:  tkPayload.ID,
+		ClientID: tkPayload.ClientID,
+		Workload: workload,
+	}
+	hs.reporter.addReport(report)
+}
+
+func getContentLength(rw http.ResponseWriter) (int64, error) {
+	length := rw.Header().Get("Content-Length")
+	if length == "" {
+		return 0, xerrors.Errorf("content length is empty")
+	}
+
+	size, err := strconv.ParseInt(length, 10, 64)
+	if err != nil {
+		return 0, xerrors.Errorf("parse content length error: %w", err)
+	}
+
+	return size, nil
+
 }

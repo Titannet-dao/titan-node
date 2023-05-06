@@ -9,8 +9,11 @@ type Candidate interface {
 	Validation
 	DataSync
 	Asset
-	WaitQuiet(ctx context.Context) error                                                                                   //perm:read                                                        //perm:read
-	GetBlocksWithAssetCID(ctx context.Context, assetCID string, randomSeed int64, randomCount int) (map[int]string, error) //perm:read
+	WaitQuiet(ctx context.Context) error                                                                             //perm:admin
+	GetBlocksWithAssetCID(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error) //perm:admin
+	// GetExternalAddress retrieves the external address of the caller.
+	GetExternalAddress(ctx context.Context) (string, error)                        //perm:default
+	CheckNetworkConnectivity(ctx context.Context, network, targetURL string) error //perm:default
 }
 
 // ValidationResult node Validation result
@@ -30,6 +33,4 @@ type ValidationResult struct {
 	Cids []string
 	// The number of random for validator
 	RandomCount int
-
-	RoundID string
 }

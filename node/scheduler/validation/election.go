@@ -11,6 +11,10 @@ var (
 	electionCycle         = 5 * 24 * time.Hour // Length of the election cycle
 )
 
+func getTimeAfter(t time.Duration) time.Time {
+	return time.Now().Add(t)
+}
+
 // triggers the election process at a regular interval.
 func (m *Manager) startElectionTicker() {
 	validators, err := m.nodeMgr.LoadValidators(m.nodeMgr.ServerID)
@@ -24,10 +28,14 @@ func (m *Manager) startElectionTicker() {
 		expiration = firstElectionInterval
 	}
 
+	m.nextElectionTime = getTimeAfter(expiration)
+
 	ticker := time.NewTicker(expiration)
 	defer ticker.Stop()
 
 	doElect := func() {
+		m.nextElectionTime = getTimeAfter(electionCycle)
+
 		ticker.Reset(electionCycle)
 		err := m.elect()
 		if err != nil {

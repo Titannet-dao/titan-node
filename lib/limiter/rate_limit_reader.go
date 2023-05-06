@@ -1,7 +1,6 @@
 package limiter
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"time"
@@ -20,13 +19,6 @@ type reader struct {
 func NewReader(rs io.ReadSeeker, l *rate.Limiter) io.ReadSeeker {
 	return &reader{
 		rs:      rs,
-		limiter: l,
-	}
-}
-
-func ReaderFromBytes(data []byte, l *rate.Limiter) io.ReadSeeker {
-	return &reader{
-		rs:      bytes.NewReader(data),
 		limiter: l,
 	}
 }

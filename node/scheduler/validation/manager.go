@@ -3,9 +3,11 @@ package validation
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
+	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/docker/go-units"
 	"github.com/filecoin-project/pubsub"
@@ -47,8 +49,9 @@ func newValidatableGroup() *ValidatableGroup {
 
 // Manager validation manager
 type Manager struct {
-	nodeMgr *node.Manager
-	notify  *pubsub.PubSub
+	nodeMgr  *node.Manager
+	assetMgr *assets.Manager
+	notify   *pubsub.PubSub
 
 	// Each validator provides n window(VWindow) for titan according to the bandwidth down, and each window corresponds to a group(ValidatableGroup).
 	// All nodes will randomly fall into a group(ValidatableGroup).
@@ -64,12 +67,17 @@ type Manager struct {
 	config     dtypes.GetSchedulerConfigFunc
 
 	updateCh chan struct{}
+
+	nextElectionTime time.Time
+
+	profit float64
 }
 
 // NewManager return new node manager instance
-func NewManager(nodeMgr *node.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *Manager {
+func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *Manager {
 	nodeManager := &Manager{
 		nodeMgr:       nodeMgr,
+		assetMgr:      assetMgr,
 		config:        configFunc,
 		close:         make(chan struct{}),
 		unpairedGroup: newValidatableGroup(),
@@ -85,7 +93,7 @@ func (m *Manager) Start(ctx context.Context) {
 	go m.startValidationTicker(ctx)
 	go m.startElectionTicker()
 
-	m.subscribe()
+	m.subscribeNodeEvents()
 }
 
 // Stop stop
@@ -93,7 +101,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 	return m.stopValidation(ctx)
 }
 
-func (m *Manager) subscribe() {
+func (m *Manager) subscribeNodeEvents() {
 	subOnline := m.notify.Sub(types.EventNodeOnline.String())
 	subOffline := m.notify.Sub(types.EventNodeOffline.String())
 
@@ -131,6 +139,12 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 	if isOnline {
 		if isV {
 			m.addValidator(nodeID, node.BandwidthDown)
+
+			// update validator owner
+			err = m.nodeMgr.UpdateValidatorInfo(m.nodeMgr.ServerID, nodeID)
+			if err != nil {
+				log.Errorf("UpdateValidatorInfo err:%s", err.Error())
+			}
 		} else {
 			m.addValidatableNode(nodeID, node.BandwidthDown)
 		}
@@ -143,4 +157,9 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 	} else {
 		m.removeValidatableNode(nodeID)
 	}
+}
+
+// GetNextElectionTime Get the time of the next election
+func (m *Manager) GetNextElectionTime() time.Time {
+	return m.nextElectionTime
 }

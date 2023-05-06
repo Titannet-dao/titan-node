@@ -49,10 +49,11 @@ type API struct {
 	api.Asset
 	WaitQuiet func(ctx context.Context) error
 	// edge api
-	ExternalServiceAddress func(ctx context.Context, schedulerURL string) (string, error)
+	ExternalServiceAddress func(ctx context.Context, candidateURL string) (string, error)
 	UserNATPunch           func(ctx context.Context, sourceURL string, req *types.NatPunchReq) error
 	// candidate api
-	GetBlocksOfAsset func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) (map[int]string, error)
+	GetBlocksOfAsset         func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error)
+	CheckNetworkConnectivity func(ctx context.Context, network, targetURL string) error
 }
 
 // New creates a new node
@@ -80,13 +81,14 @@ func APIFromEdge(api api.Edge) *API {
 // APIFromCandidate creates a new API from a Candidate API
 func APIFromCandidate(api api.Candidate) *API {
 	a := &API{
-		Common:           api,
-		Device:           api,
-		Validation:       api,
-		DataSync:         api,
-		Asset:            api,
-		WaitQuiet:        api.WaitQuiet,
-		GetBlocksOfAsset: api.GetBlocksWithAssetCID,
+		Common:                   api,
+		Device:                   api,
+		Validation:               api,
+		DataSync:                 api,
+		Asset:                    api,
+		WaitQuiet:                api.WaitQuiet,
+		GetBlocksOfAsset:         api.GetBlocksWithAssetCID,
+		CheckNetworkConnectivity: api.CheckNetworkConnectivity,
 	}
 	return a
 }
@@ -209,33 +211,35 @@ func (n *Node) UpdateNodePort(port string) {
 	n.PortMapping = port
 }
 
-// Credentials returns the credentials of the node
-func (n *Node) Credentials(cid string, titanRsa *titanrsa.Rsa, privateKey *rsa.PrivateKey) (*types.GatewayCredentials, error) {
-	svc := &types.Credentials{
-		ID:        uuid.NewString(),
-		NodeID:    n.NodeID,
-		AssetCID:  cid,
-		ValidTime: time.Now().Add(10 * time.Hour).Unix(),
+// Token returns the token of the node
+func (n *Node) Token(cid string, titanRsa *titanrsa.Rsa, privateKey *rsa.PrivateKey) (*types.Token, *types.TokenPayload, error) {
+	tkPayload := &types.TokenPayload{
+		ID:         uuid.NewString(),
+		NodeID:     n.NodeID,
+		AssetCID:   cid,
+		ClientID:   uuid.NewString(), // TODO auth client and allocate id
+		CreateTime: time.Now(),
+		Expiration: time.Now().Add(10 * time.Hour),
 	}
 
-	b, err := n.encryptCredentials(svc, n.publicKey, titanRsa)
+	b, err := n.encryptTokenPayload(tkPayload, n.publicKey, titanRsa)
 	if err != nil {
-		return nil, xerrors.Errorf("%s encryptCredentials err:%s", n.NodeID, err.Error())
+		return nil, nil, xerrors.Errorf("%s encryptTokenPayload err:%s", n.NodeID, err.Error())
 	}
 
 	sign, err := titanRsa.Sign(privateKey, b)
 	if err != nil {
-		return nil, xerrors.Errorf("%s Sign err:%s", n.NodeID, err.Error())
+		return nil, nil, xerrors.Errorf("%s Sign err:%s", n.NodeID, err.Error())
 	}
 
-	return &types.GatewayCredentials{Ciphertext: hex.EncodeToString(b), Sign: hex.EncodeToString(sign)}, nil
+	return &types.Token{ID: tkPayload.ID, CipherText: hex.EncodeToString(b), Sign: hex.EncodeToString(sign)}, tkPayload, nil
 }
 
-// encryptCredentials encrypts a Credentials object using the given public key and RSA instance.
-func (n *Node) encryptCredentials(at *types.Credentials, publicKey *rsa.PublicKey, rsa *titanrsa.Rsa) ([]byte, error) {
+// encryptTokenPayload encrypts a token payload object using the given public key and RSA instance.
+func (n *Node) encryptTokenPayload(tkPayload *types.TokenPayload, publicKey *rsa.PublicKey, rsa *titanrsa.Rsa) ([]byte, error) {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
-	err := enc.Encode(at)
+	err := enc.Encode(tkPayload)
 	if err != nil {
 		return nil, err
 	}

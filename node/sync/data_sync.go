@@ -91,6 +91,8 @@ func (ds *DataSync) doSync(ctx context.Context, extraBuckets, lostBuckets, misma
 			log.Errorf("repair mismatch asset error %s", err.Error())
 		}
 	}
+
+	// TODO sync assetsView and assets
 }
 
 // removeExtraAsset removes any assets from the datastore that are not present in the specified buckets.

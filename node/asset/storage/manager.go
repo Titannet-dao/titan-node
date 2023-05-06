@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"path/filepath"
 
@@ -156,7 +157,12 @@ func (m *Manager) GetAssetsInBucket(ctx context.Context, bucketID uint32) ([]cid
 
 	cids := make([]cid.Cid, 0, len(hashes))
 	for _, h := range hashes {
-		cids = append(cids, cid.NewCidV0(h))
+		multiHash, err := hex.DecodeString(h)
+		if err != nil {
+			return nil, err
+		}
+
+		cids = append(cids, cid.NewCidV0(multiHash))
 	}
 	return cids, nil
 }

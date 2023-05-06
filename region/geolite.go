@@ -85,7 +85,9 @@ func (g geoLite) GetGeoInfo(ip string) (*GeoInfo, error) {
 	if record.Country.IsoCode == "" {
 		return geoInfo, err
 	}
-	country := record.Country.IsoCode
+
+	continent := record.Continent.Names["en"]
+	country := record.Country.Names["en"]
 	city := unknown
 	province := unknown
 	// geoInfo.IsoCode = record.Country.IsoCode
@@ -95,13 +97,13 @@ func (g geoLite) GetGeoInfo(ip string) (*GeoInfo, error) {
 	}
 
 	if len(record.Subdivisions) > 0 {
-		province = record.Subdivisions[0].IsoCode
+		province = record.Subdivisions[0].Names["en"]
 	}
 
 	geoInfo.Latitude = record.Location.Latitude
 	geoInfo.Longitude = record.Location.Longitude
 
-	geoInfo.Geo = fmt.Sprintf("%s%s%s%s%s", country, separate, province, separate, city)
+	geoInfo.Geo = fmt.Sprintf("%s%s%s%s%s%s%s", continent, separate, country, separate, province, separate, city)
 
 	return geoInfo, nil
 }

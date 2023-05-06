@@ -22,10 +22,10 @@ type DownloadHistory struct {
 
 // EdgeDownloadInfo represents download information for an edge node
 type EdgeDownloadInfo struct {
-	URL         string
-	Credentials *GatewayCredentials
-	NodeID      string
-	NatType     string
+	URL     string
+	Tk      *Token
+	NodeID  string
+	NatType string
 }
 
 // EdgeDownloadInfoList represents a list of EdgeDownloadInfo structures along with
@@ -38,8 +38,8 @@ type EdgeDownloadInfoList struct {
 
 // CandidateDownloadInfo represents download information for a candidate
 type CandidateDownloadInfo struct {
-	URL         string
-	Credentials *GatewayCredentials
+	URL string
+	Tk  *Token
 }
 
 // NodeReplicaStatus represents the status of a node cache
@@ -58,8 +58,8 @@ type NodeReplicaRsp struct {
 type NatType int
 
 const (
-	// NatTypeUnknow Unknown NAT type
-	NatTypeUnknow NatType = iota
+	// NatTypeUnknown Unknown NAT type
+	NatTypeUnknown NatType = iota
 	// NatTypeNo not  nat
 	NatTypeNo
 	// NatTypeSymmetric Symmetric NAT
@@ -102,7 +102,7 @@ func (n NatType) FromString(natType string) NatType {
 	case "PortRestrictedNAT":
 		return NatTypePortRestricted
 	}
-	return NatTypeUnknow
+	return NatTypeUnknown
 }
 
 // ListNodesRsp list node rsp
@@ -125,6 +125,7 @@ type ListValidationResultRsp struct {
 
 // ValidationResultInfo validator result info
 type ValidationResultInfo struct {
+	ID          int              `db:"id"`
 	RoundID     string           `db:"round_id"`
 	NodeID      string           `db:"node_id"`
 	Cid         string           `db:"cid"`
@@ -135,6 +136,8 @@ type ValidationResultInfo struct {
 	Bandwidth   float64          `db:"bandwidth"`
 	StartTime   time.Time        `db:"start_time"`
 	EndTime     time.Time        `db:"end_time"`
+	Profit      float64          `db:"profit"`
+	Processed   bool             `db:"processed"`
 
 	UploadTraffic float64 `db:"upload_traffic"`
 }
@@ -174,38 +177,51 @@ const (
 	ValidationStatusCIDToHashErr
 )
 
-// Credentials gateway access credentials
-type Credentials struct {
-	ID        string
-	NodeID    string
-	AssetCID  string
-	ClientID  string
-	LimitRate int64
-	ValidTime int64
+// TokenPayload payload of token
+type TokenPayload struct {
+	ID         string    `db:"token_id"`
+	NodeID     string    `db:"node_id"`
+	AssetCID   string    `db:"asset_id"`
+	ClientID   string    `db:"client_id"`
+	LimitRate  int64     `db:"limit_rate"`
+	CreateTime time.Time `db:"create_time"`
+	Expiration time.Time `db:"expiration"`
 }
 
-// GatewayCredentials be use for access gateway
-type GatewayCredentials struct {
-	// encrypted Credentials
-	Ciphertext string
-	// sign by scheduler private key
+// Token access download asset
+type Token struct {
+	ID string
+	// CipherText encrypted TokenPayload by public key
+	CipherText string
+	// Sign signs CipherText by scheduler private key
 	Sign string
 }
 
-type UserProofOfWork struct {
-	TicketID      string
-	ClientID      string
+type Workload struct {
 	DownloadSpeed int64
 	DownloadSize  int64
 	StartTime     int64
 	EndTime       int64
 }
 
+type WorkloadReport struct {
+	TokenID  string
+	ClientID string
+	NodeID   string
+	Workload *Workload
+}
+
+type NodeWorkloadReport struct {
+	// CipherText encrypted []*WorkloadReport by scheduler public key
+	CipherText []byte
+	// Sign signs CipherText by node private key
+	Sign []byte
+}
+
 type NatPunchReq struct {
-	Credentials *GatewayCredentials
-	NodeID      string
-	// seconds
-	Timeout int
+	Tk      *Token
+	NodeID  string
+	Timeout time.Duration
 }
 
 type ConnectOptions struct {

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ipfs/go-cid"
@@ -30,20 +31,21 @@ func (ng *nodeGetter) Get(ctx context.Context, block cid.Cid) (ipldformat.Node, 
 // GetMany returns a channel of NodeOptions given a set of CIDs.
 func (ng *nodeGetter) GetMany(ctx context.Context, cids []cid.Cid) <-chan *ipldformat.NodeOption {
 	var count uint64
+	once := &sync.Once{}
 	ch := make(chan *ipldformat.NodeOption, len(cids))
-	for _, cid := range cids {
-		c := cid
-		go func() {
+	for _, c := range cids {
+		go func(c cid.Cid) {
 			node, err := ng.Get(ctx, c)
 			ch <- &ipldformat.NodeOption{Node: node, Err: err}
 
 			atomic.AddUint64(&count, 1)
 
-			// TODO: will be ch = nil ?
 			if int(count) == len(cids) {
-				close(ch)
+				once.Do(func() {
+					close(ch)
+				})
 			}
-		}()
+		}(c)
 	}
 	return ch
 }

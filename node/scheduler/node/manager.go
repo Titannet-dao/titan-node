@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/lib/etcdcli"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/filecoin-project/pubsub"
 	"github.com/google/uuid"
@@ -21,14 +22,16 @@ import (
 var log = logging.Logger("node")
 
 const (
-	// offlineTimeMax is the maximum amount of time a node can be offline before being considered as quit
-	offlineTimeMax = 24 // hours
-
 	// keepaliveTime is the interval between keepalive requests
 	keepaliveTime = 30 * time.Second // seconds
 
 	// saveInfoInterval is the interval at which node information is saved during keepalive requests
 	saveInfoInterval = 10 // keepalive saves information every 10 times
+
+	// Processing validation result data from 5 days ago
+	vResultDay = 5 * 24 * time.Hour
+	// Process 1000 pieces of validation result data at a time
+	vResultLimit = 1000
 )
 
 // Manager is the node manager responsible for managing the online nodes
@@ -38,7 +41,8 @@ type Manager struct {
 	Edges          int // online edge node count
 	Candidates     int // online candidate node count
 
-	notify *pubsub.PubSub
+	etcdcli *etcdcli.Client
+	notify  *pubsub.PubSub
 	*db.SQLDB
 	*rsa.PrivateKey // scheduler privateKey
 	dtypes.ServerID // scheduler server id
@@ -56,14 +60,15 @@ type Manager struct {
 }
 
 // NewManager creates a new instance of the node manager
-func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, k *rsa.PrivateKey, p *pubsub.PubSub) *Manager {
+func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, ec *etcdcli.Client) *Manager {
 	pullSelectSeed := time.Now().UnixNano()
 
 	nodeManager := &Manager{
 		SQLDB:      sdb,
 		ServerID:   serverID,
-		PrivateKey: k,
-		notify:     p,
+		PrivateKey: pk,
+		notify:     pb,
+		etcdcli:    ec,
 
 		cNodeNumRand:          rand.New(rand.NewSource(pullSelectSeed)),
 		eNodeNumRand:          rand.New(rand.NewSource(pullSelectSeed)),
@@ -73,13 +78,14 @@ func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, k *rsa.PrivateKey, p *p
 		eUndistributedNodeNum: make(map[int]string),
 	}
 
-	go nodeManager.run()
+	go nodeManager.startNodeKeepaliveTimer()
+	// go nodeManager.startHandleValidationResultTimer()
 
 	return nodeManager
 }
 
-// run periodically sends keepalive requests to all nodes and checks if any nodes have been offline for too long
-func (m *Manager) run() {
+// startNodeKeepaliveTimer periodically sends keepalive requests to all nodes and checks if any nodes have been offline for too long
+func (m *Manager) startNodeKeepaliveTimer() {
 	ticker := time.NewTicker(keepaliveTime)
 	defer ticker.Stop()
 
@@ -90,8 +96,30 @@ func (m *Manager) run() {
 		count++
 		saveInfo := count%saveInfoInterval == 0
 		m.nodesKeepalive(saveInfo)
-		// Check how long a node has been offline
-		m.checkNodesTTL()
+	}
+}
+
+func (m *Manager) startHandleValidationResultTimer() {
+	now := time.Now()
+
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if now.After(nextTime) {
+		nextTime = nextTime.Add(24 * time.Hour)
+	}
+
+	duration := nextTime.Sub(now)
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	for {
+		<-timer.C
+
+		log.Debugln("start validation result check ")
+
+		m.handleValidationResults()
+
+		timer.Reset(24 * time.Hour)
 	}
 }
 
@@ -176,6 +204,7 @@ func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) {
 	}
 
 	if isSave {
+		// Minute
 		node.OnlineDuration += int((saveInfoInterval * keepaliveTime) / time.Minute)
 
 		err := m.UpdateNodeOnlineTime(nodeID, node.OnlineDuration)
@@ -212,40 +241,23 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 	})
 }
 
-// KeepaliveCallBackFunc Callback function to handle node keepalive
-func KeepaliveCallBackFunc(nodeMgr *Manager) (dtypes.SessionCallbackFunc, error) {
-	return func(nodeID, remoteAddr string) error {
-		lastTime := time.Now()
+func (m *Manager) nodeSession(nodeID, remoteAddr string) error {
+	lastTime := time.Now()
 
-		node := nodeMgr.GetNode(nodeID)
-		if node != nil {
-			node.SetLastRequestTime(lastTime)
+	node := m.GetNode(nodeID)
+	if node != nil {
+		node.SetLastRequestTime(lastTime)
 
-			if remoteAddr != node.remoteAddr {
-				return xerrors.New("remoteAddr inconsistent")
-			}
+		if remoteAddr != node.remoteAddr {
+			return xerrors.New("remoteAddr inconsistent")
 		}
-
-		return nil
-	}, nil
-}
-
-// checkNodesTTL Check for nodes that have timed out and quit them
-func (m *Manager) checkNodesTTL() {
-	nodes, err := m.LoadTimeoutNodes(offlineTimeMax, m.ServerID)
-	if err != nil {
-		log.Errorf("checkWhetherNodeQuits LoadTimeoutNodes err:%s", err.Error())
-		return
 	}
 
-	if len(nodes) > 0 {
-		m.NodesQuit(nodes)
-	}
+	return nil
 }
 
 // saveInfo Save node information when it comes online
 func (m *Manager) saveInfo(n *types.NodeInfo) error {
-	n.IsQuitted = false
 	n.LastSeen = time.Now()
 
 	err := m.SaveNodeInfo(n)
@@ -272,4 +284,65 @@ func (m *Manager) NewNodeID(nType types.NodeType) (string, error) {
 	uid = strings.Replace(uid, "-", "", -1)
 
 	return fmt.Sprintf("%s%s", nodeID, uid), nil
+}
+
+func (m *Manager) handleValidationResults() {
+	// TODO Need to save the leaseID to find the session next time
+	leaseID, err := m.etcdcli.AcquireMasterLock(types.RunningNodeType.String())
+	if err != nil {
+		log.Errorf("handleValidationResults SetMasterScheduler err:%s", err.Error())
+		return
+	}
+
+	defer func() {
+		log.Infoln("handleValidationResults done")
+
+		err = m.etcdcli.ReleaseMasterLock(leaseID, types.RunningNodeType.String())
+		if err != nil {
+			log.Errorf("RemoveMasterScheduler err:%s", err.Error())
+		}
+	}()
+
+	log.Infof("handleValidationResults %s", m.ServerID)
+
+	mTime := time.Now().Add(-vResultDay)
+
+	// do handle validation result
+	for {
+		rows, err := m.LoadValidationResults(mTime, vResultLimit)
+		if err != nil {
+			log.Errorf("LoadValidationResults err:%s", err.Error())
+			return
+		}
+
+		ids := make([]int, 0)
+		nodeProfits := make(map[string]float64)
+
+		for rows.Next() {
+			info := &types.ValidationResultInfo{}
+			err = rows.StructScan(info)
+			if err != nil {
+				log.Errorf("ValidationResultInfo StructScan err: %s", err.Error())
+				continue
+			}
+
+			ids = append(ids, info.ID)
+
+			if info.Profit == 0 {
+				continue
+			}
+
+			nodeProfits[info.NodeID] += info.Profit
+		}
+		rows.Close()
+
+		if len(ids) == 0 {
+			return
+		}
+
+		err = m.UpdateNodeProfitsByValidationResult(ids, nodeProfits)
+		if err != nil {
+			log.Errorf("UpdateNodeProfitsByValidationResult err:%s", err.Error())
+		}
+	}
 }

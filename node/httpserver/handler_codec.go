@@ -7,6 +7,6 @@ import (
 )
 
 // serveCodec serves requests for codec endpoints.
-func (hs *HttpServer) serveCodec(w http.ResponseWriter, r *http.Request, credentials *types.Credentials) {
+func (hs *HttpServer) serveCodec(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
 	http.Error(w, "not implement", http.StatusBadRequest)
 }

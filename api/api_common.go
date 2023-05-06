@@ -28,32 +28,32 @@ type Common interface {
 	// MethodGroup: Auth
 
 	// AuthVerify checks whether the specified token is valid and returns the list of permissions associated with it.
-	AuthVerify(ctx context.Context, token string) ([]auth.Permission, error) //perm:read
+	AuthVerify(ctx context.Context, token string) ([]auth.Permission, error) //perm:default
 	// AuthNew creates a new token with the specified list of permissions.
 	AuthNew(ctx context.Context, perms []auth.Permission) (string, error) //perm:admin
 
 	// MethodGroup: Log
 
 	// LogList returns a list of all logs in the system.
-	LogList(context.Context) ([]string, error) //perm:write
+	LogList(context.Context) ([]string, error) //perm:admin
 	// LogSetLevel sets the log level of the specified logger.
-	LogSetLevel(context.Context, string, string) error //perm:write
+	LogSetLevel(context.Context, string, string) error //perm:admin
 	// LogAlerts returns list of all, active and inactive alerts tracked by the
 	LogAlerts(ctx context.Context) ([]alerting.Alert, error) //perm:admin
 
 	// MethodGroup: Common
 
 	// Version provides information about API provider
-	Version(context.Context) (APIVersion, error) //perm:read
+	Version(context.Context) (APIVersion, error) //perm:default
 	// Discover returns an OpenRPC document describing an RPC API.
-	Discover(ctx context.Context) (types.OpenRPCDocument, error) //perm:read
+	Discover(ctx context.Context) (types.OpenRPCDocument, error) //perm:admin
 	// Shutdown trigger graceful shutdown
 	Shutdown(context.Context) error //perm:admin
 	// Session returns a UUID of api provider session
-	Session(ctx context.Context) (uuid.UUID, error) //perm:write
+	Session(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate
 
 	// Closing jsonrpc closing
-	Closing(context.Context) (<-chan struct{}, error) //perm:read
+	Closing(context.Context) (<-chan struct{}, error) //perm:admin
 }
 
 // APIVersion provides various build-time information

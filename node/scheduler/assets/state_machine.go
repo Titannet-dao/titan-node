@@ -189,8 +189,9 @@ func apply(mut mutator) func() (mutator, func(*AssetPullingInfo) (bool, error)) 
 	}
 }
 
-// restartStateMachines restarts all state machines for the assets
-func (m *Manager) restartStateMachines(ctx context.Context) error {
+// initStateMachines init all asset state machines
+func (m *Manager) initStateMachines(ctx context.Context) error {
+	// initialization
 	defer m.stateMachineWait.Done()
 
 	list, err := m.ListAssets()
@@ -200,7 +201,7 @@ func (m *Manager) restartStateMachines(ctx context.Context) error {
 
 	for _, asset := range list {
 		if err := m.assetStateMachines.Send(asset.Hash, PullAssetRestart{}); err != nil {
-			log.Errorf("restartStateMachines asset send %s , err %s", asset.CID, err.Error())
+			log.Errorf("initStateMachines asset send %s , err %s", asset.CID, err.Error())
 			continue
 		}
 

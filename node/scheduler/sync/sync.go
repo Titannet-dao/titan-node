@@ -1,7 +1,9 @@
 package sync
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"sync"
 
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
@@ -102,12 +104,12 @@ func (ds *DataSync) performDataSync(nodeID string) error {
 	}
 
 	if len(topChecksum) == 0 {
-		log.Warnf("node %s no assets exist", nodeID)
+		log.Debugf("node %s no assets exist", nodeID)
 		return nil
 	}
 
-	ctx, cancle := context.WithCancel(context.Background())
-	defer cancle()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	if ok, err := node.CompareTopHash(ctx, topChecksum); err != nil {
 		return xerrors.Errorf("compare top hash %w", err)
@@ -136,5 +138,21 @@ func (ds *DataSync) fetchTopHash(nodeID string) (string, error) {
 
 // retrieves the hashes of buckets for a nodeID.
 func (ds *DataSync) fetchBucketHashes(nodeID string) (map[uint32]string, error) {
-	return ds.nodeManager.LoadBucketHashes(nodeID)
+	hashBytes, err := ds.nodeManager.LoadBucketHashes(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(hashBytes) == 0 {
+		return make(map[uint32]string), nil
+	}
+
+	buffer := bytes.NewBuffer(hashBytes)
+	dec := gob.NewDecoder(buffer)
+
+	out := make(map[uint32]string)
+	if err = dec.Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

@@ -7,4 +7,5 @@ var CandidateCmds = []*cli.Command{
 	cacheStatCmd,
 	progressCmd,
 	keyCmds,
+	configCmds,
 }

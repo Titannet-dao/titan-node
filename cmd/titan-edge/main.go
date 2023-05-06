@@ -22,6 +22,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/httpserver"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
+	"github.com/Filecoin-Titan/titan/node/validation"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
@@ -35,6 +36,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/repo"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/filecoin-project/go-jsonrpc"
+	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/google/uuid"
@@ -154,14 +156,15 @@ var runCmd = &cli.Command{
 			return err
 		}
 
-		if len(edgeCfg.NodeID) == 0 || len(edgeCfg.AreaID) == 0 {
-			return xerrors.Errorf(`Please config node id and area id, example: \n
-			titan-edge config set --node-id=your_node_id --area-id=your_area_id`)
-		}
-
 		privateKey, err := loadPrivateKey(r)
 		if err != nil {
-			return xerrors.Errorf(`Please import private key, example: titan-edge key import --path /path/to/private.key`)
+			return fmt.Errorf(`please import private key, example: 
+			titan-edge key import --path /path/to/private.key`)
+		}
+
+		if len(edgeCfg.NodeID) == 0 || len(edgeCfg.AreaID) == 0 {
+			return fmt.Errorf(`please config node id and area id, example:
+			titan-edge config set --node-id=your_node_id --area-id=your_area_id `)
 		}
 
 		connectTimeout, err := time.ParseDuration(edgeCfg.Timeout)
@@ -178,18 +181,18 @@ var runCmd = &cli.Command{
 		// all jsonrpc client use udp
 		httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, edgeCfg.InsecureSkipVerify, edgeCfg.CaCertificatePath)
 		if err != nil {
-			return xerrors.Errorf("new http3 client error %w", err)
+			return xerrors.Errorf("new http3 client: %w", err)
 		}
 		jsonrpc.SetHttp3Client(httpClient)
 
 		url, err := getSchedulerURL(cctx, edgeCfg.NodeID, edgeCfg.AreaID, edgeCfg.Locator)
 		if err != nil {
-			return xerrors.Errorf("get scheduler url %w", err)
+			return xerrors.Errorf("get scheduler url: %w", err)
 		}
 
 		schedulerAPI, closer, err := newSchedulerAPI(cctx, url, edgeCfg.NodeID, privateKey)
 		if err != nil {
-			return xerrors.Errorf("new scheduler api %w", err)
+			return xerrors.Errorf("new scheduler api: %w", err)
 		}
 		defer closer()
 
@@ -252,8 +255,8 @@ var runCmd = &cli.Command{
 				return dtypes.InternalIP(strings.Split(localAddr.IP.String(), ":")[0]), nil
 			}),
 
-			node.Override(node.RunGateway, func(assetMgr *asset.Manager) error {
-				httpServer = httpserver.NewHttpServer(assetMgr, schedulerAPI, privateKey)
+			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation) error {
+				httpServer = httpserver.NewHttpServer(assetMgr, schedulerAPI, privateKey, validation)
 
 				return err
 			}),
@@ -323,7 +326,7 @@ var runCmd = &cli.Command{
 					readyCh = waitQuietCh()
 				}
 
-				token, err := edgeAPI.AuthNew(cctx.Context, api.AllPermissions)
+				token, err := edgeAPI.AuthNew(cctx.Context, []auth.Permission{api.RoleAdmin})
 				if err != nil {
 					log.Errorf("auth new error %s", err.Error())
 					return
@@ -355,14 +358,12 @@ var runCmd = &cli.Command{
 							return
 						}
 
-						pk, err := getSchedulerPublicKey(schedulerAPI)
-						if err != nil {
-							log.Errorf("get scheduler public key failed: %s", err.Error())
+						if err := httpServer.UpdateSchedulerPublicKey(); err != nil {
+							log.Errorf("update scheduler public key error %s", err.Error())
 							cancel()
 							return
 						}
 
-						httpServer.SetSchedulerPublicKey(pk)
 						log.Info("Edge registered successfully, waiting for tasks")
 						errCount = 0
 						readyCh = nil
@@ -384,7 +385,7 @@ func getSchedulerSession(api api.Scheduler, timeout time.Duration) (uuid.UUID, e
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return api.Session(ctx)
+	return api.NodeKeepalive(ctx)
 }
 
 func getSchedulerVersion(api api.Scheduler, timeout time.Duration) (api.APIVersion, error) {
@@ -532,13 +533,4 @@ func loadPrivateKey(r *repo.FsRepo) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 	return titanrsa.Pem2PrivateKey(pem)
-}
-
-func getSchedulerPublicKey(schedulerAPI api.Scheduler) (*rsa.PublicKey, error) {
-	pem, err := schedulerAPI.GetSchedulerPublicKey(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	return titanrsa.Pem2PublicKey([]byte(pem))
 }

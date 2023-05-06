@@ -41,9 +41,9 @@ func DefaultEdgeCfg() *EdgeCfg {
 		CaCertificatePath:  "",
 		InsecureSkipVerify: true,
 
-		FetchBlockTimeout: 15,
-		FetchBlockRetry:   1,
-		FetchBatch:        5,
+		PullBlockTimeout:  15,
+		PullBlockRetry:    1,
+		PullBlockParallel: 5,
 	}
 }
 
@@ -63,15 +63,15 @@ func DefaultCandidateCfg() *CandidateCfg {
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
 
-		FetchBlockTimeout: 15,
-		FetchBlockRetry:   1,
-		FetchBatch:        5,
+		PullBlockTimeout:  15,
+		PullBlockRetry:    1,
+		PullBlockParallel: 5,
+		TCPSrvAddr:        "0.0.0.0:9000",
+		IPFSAPIURL:        "http://127.0.0.1:5001",
+		ValidateDuration:  10,
 	}
 	return &CandidateCfg{
-		EdgeCfg:          edgeCfg,
-		TCPSrvAddr:       "0.0.0.0:9000",
-		IpfsAPIURL:       "http://127.0.0.1:5001",
-		ValidateDuration: 10,
+		EdgeCfg: edgeCfg,
 	}
 }
 
@@ -79,13 +79,14 @@ func DefaultCandidateCfg() *CandidateCfg {
 func DefaultLocatorCfg() *LocatorCfg {
 	return &LocatorCfg{
 		ListenAddress:      "0.0.0.0:5000",
-		Timeout:            "30s",
+		Timeout:            "3s",
 		GeoDBPath:          "./city.mmdb",
 		InsecureSkipVerify: true,
 		CertificatePath:    "",
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
 		EtcdAddresses:      []string{"127.0.0.1:2379"},
+		DefaultAreaID:      "Asia-China-Guangdong-Shenzhen",
 	}
 }
 
@@ -98,13 +99,14 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		CertificatePath:    "",
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
-		AreaID:             "CN-GD-Shenzhen",
+		AreaID:             "Asia-China-Guangdong-Shenzhen",
 		DatabaseAddress:    "mysql_user:mysql_password@tcp(127.0.0.1:3306)/titan",
 		EnableValidation:   true,
-		EtcdAddresses:      []string{"192.168.0.160:2379"},
+		EtcdAddresses:      []string{},
 		CandidateReplicas:  0,
 		ValidatorRatio:     1,
 		ValidatorBaseBwDn:  100,
+		ValidationProfit:   1,
 	}
 }
 

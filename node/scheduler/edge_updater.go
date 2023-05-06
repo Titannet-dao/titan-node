@@ -17,20 +17,25 @@ type EdgeUpdateManager struct {
 // NewEdgeUpdateManager creates a new EdgeUpdateManager with the given SQL database connection.
 func NewEdgeUpdateManager(db *db.SQLDB) (*EdgeUpdateManager, error) {
 	updater := &EdgeUpdateManager{
-		db:          db,
-		updateInfos: make(map[int]*api.EdgeUpdateConfig),
+		db: db,
 	}
-	appUpdateInfo, err := db.LoadEdgeUpdateConfigs()
-	if err != nil {
-		log.Errorf("GetEdgeUpdateConfigs error:%s", err)
-		return nil, err
-	}
-	updater.updateInfos = appUpdateInfo
+
 	return updater, nil
 }
 
 // GetEdgeUpdateConfigs  returns the map of edge node update information.
 func (eu *EdgeUpdateManager) GetEdgeUpdateConfigs(ctx context.Context) (map[int]*api.EdgeUpdateConfig, error) {
+	if eu.updateInfos != nil {
+		return eu.updateInfos, nil
+	}
+
+	appUpdateInfo, err := eu.db.LoadEdgeUpdateConfigs()
+	if err != nil {
+		log.Errorf("GetEdgeUpdateConfigs error:%s", err)
+		return nil, err
+	}
+	eu.updateInfos = appUpdateInfo
+
 	return eu.updateInfos, nil
 }
 

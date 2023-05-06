@@ -7,20 +7,20 @@ import (
 const (
 	// When changing these, update docs/API.md too
 
-	PermRead  auth.Permission = "read" // default
-	PermWrite auth.Permission = "write"
-	PermSign  auth.Permission = "sign"  // Use wallet keys for signing
-	PermAdmin auth.Permission = "admin" // Manage permissions
+	RoleWeb       auth.Permission = "web"
+	RoleCandidate auth.Permission = "candidate"
+	RoleEdge      auth.Permission = "edge"
+	RoleLocator   auth.Permission = "locator"
+	RoleAdmin     auth.Permission = "admin" // Manage permissions
+	RoleDefault   auth.Permission = "default"
 )
 
-var AllPermissions = []auth.Permission{PermRead, PermWrite, PermSign, PermAdmin}
-var DefaultPerms = []auth.Permission{PermRead}
-var ReadWritePerms = []auth.Permission{PermRead, PermWrite}
+var AllPermissions = []auth.Permission{RoleWeb, RoleCandidate, RoleEdge, RoleLocator, RoleAdmin, RoleDefault}
 
 func permissionedProxies(in, out interface{}) {
 	outs := GetInternalStructs(out)
 	for _, o := range outs {
-		auth.PermissionedProxy(AllPermissions, DefaultPerms, in, o)
+		PermissionedProxy(AllPermissions, RoleDefault, in, o)
 	}
 }
 

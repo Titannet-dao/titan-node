@@ -5,12 +5,14 @@ import (
 	"os"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/lib/tablewriter"
 	"github.com/docker/go-units"
+	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
 )
 
-var nodeCmd = &cli.Command{
+var nodeCmds = &cli.Command{
 	Name:  "node",
 	Usage: "Manage node",
 	Subcommands: []*cli.Command{
@@ -20,6 +22,7 @@ var nodeCmd = &cli.Command{
 		nodeQuitCmd,
 		setNodePortCmd,
 		edgeExternalAddrCmd,
+		listNodeCmd,
 	},
 }
 
@@ -44,6 +47,61 @@ var onlineNodeCountCmd = &cli.Command{
 		fmt.Println("Online nodes count:", nodes)
 		return err
 	},
+}
+
+var listNodeCmd = &cli.Command{
+	Name:  "list",
+	Usage: "list node",
+	Flags: []cli.Flag{
+		limitFlag,
+		offsetFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		limit := cctx.Int("limit")
+		offset := cctx.Int("offset")
+
+		rsp, err := schedulerAPI.GetNodeList(ctx, offset, limit)
+		if err != nil {
+			return err
+		}
+
+		tw := tablewriter.New(
+			tablewriter.Col("NodeID"),
+			tablewriter.Col("NodeType"),
+			tablewriter.Col("Online"),
+		)
+
+		for w := 0; w < len(rsp.Data); w++ {
+			info := rsp.Data[w]
+			m := map[string]interface{}{
+				"NodeID":   info.NodeID,
+				"NodeType": info.Type.String(),
+				"Online":   colorOnline(info.IsOnline),
+			}
+
+			tw.Write(m)
+		}
+		err = tw.Flush(os.Stdout)
+
+		fmt.Printf(color.YellowString("\n Total:%d ", rsp.Total))
+
+		return err
+	},
+}
+
+func colorOnline(IsOnline bool) string {
+	if IsOnline {
+		return color.GreenString("true")
+	} else {
+		return color.RedString("false")
+	}
 }
 
 var registerNodeCmd = &cli.Command{
@@ -113,8 +171,6 @@ var showNodeInfoCmd = &cli.Command{
 			return err
 		}
 
-		natType, _ := schedulerAPI.GetNodeNATType(ctx, nodeID)
-
 		fmt.Printf("node id: %s \n", info.NodeID)
 		fmt.Printf("online: %v \n", info.IsOnline)
 		fmt.Printf("name: %s \n", info.NodeName)
@@ -130,7 +186,7 @@ var showNodeInfoCmd = &cli.Command{
 		fmt.Printf("cpu percent: %.2f %s \n", info.CPUUsage, "%")
 		//
 		fmt.Printf("DownloadCount: %d \n", info.DownloadBlocks)
-		fmt.Printf("NatType: %s \n", natType.String())
+		fmt.Printf("NatType: %s \n", info.NATType)
 
 		return nil
 	},

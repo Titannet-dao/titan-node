@@ -1,8 +1,6 @@
 package assets
 
 import (
-	"time"
-
 	"github.com/Filecoin-Titan/titan/api/types"
 )
 
@@ -27,20 +25,18 @@ type AssetPullingInfo struct {
 	State             AssetState
 	Hash              AssetHash
 	CID               string
-	ServerID          string
 	Size              int64
 	Blocks            int64
 	EdgeReplicas      int64
 	CandidateReplicas int64
-	CreatedAt         int64
-	Expiration        int64
 
 	EdgeReplicaSucceeds      []string
 	EdgeReplicaFailures      []string
 	CandidateReplicaSucceeds []string
 	CandidateReplicaFailures []string
 
-	RetryCount int64
+	RetryCount        int64
+	ReplenishReplicas int64
 }
 
 // ToAssetRecord converts AssetPullingInfo to types.AssetRecord
@@ -53,7 +49,8 @@ func (state *AssetPullingInfo) ToAssetRecord() *types.AssetRecord {
 		TotalBlocks:           state.Blocks,
 		State:                 state.State.String(),
 		NeedCandidateReplicas: state.CandidateReplicas,
-		Expiration:            time.Unix(state.Expiration, 0),
+		RetryCount:            state.RetryCount,
+		ReplenishReplicas:     state.ReplenishReplicas,
 	}
 }
 
@@ -67,18 +64,26 @@ func assetPullingInfoFrom(info *types.AssetRecord) *AssetPullingInfo {
 		Size:              info.TotalSize,
 		Blocks:            info.TotalBlocks,
 		CandidateReplicas: info.NeedCandidateReplicas,
-		Expiration:        info.Expiration.Unix(),
+		RetryCount:        info.RetryCount,
+		ReplenishReplicas: info.ReplenishReplicas,
 	}
 
 	for _, r := range info.ReplicaInfos {
-		if r.Status != types.ReplicaStatusSucceeded {
+		if r.Status == types.ReplicaStatusSucceeded {
+			if r.IsCandidate {
+				cInfo.CandidateReplicaSucceeds = append(cInfo.CandidateReplicaSucceeds, r.NodeID)
+			} else {
+				cInfo.EdgeReplicaSucceeds = append(cInfo.EdgeReplicaSucceeds, r.NodeID)
+			}
 			continue
 		}
 
-		if r.IsCandidate {
-			cInfo.CandidateReplicaSucceeds = append(cInfo.CandidateReplicaSucceeds, r.NodeID)
-		} else {
-			cInfo.EdgeReplicaSucceeds = append(cInfo.EdgeReplicaSucceeds, r.NodeID)
+		if r.Status == types.ReplicaStatusFailed {
+			if r.IsCandidate {
+				cInfo.CandidateReplicaFailures = append(cInfo.CandidateReplicaFailures, r.NodeID)
+			} else {
+				cInfo.EdgeReplicaFailures = append(cInfo.EdgeReplicaFailures, r.NodeID)
+			}
 		}
 	}
 

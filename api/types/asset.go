@@ -41,12 +41,21 @@ type AssetRecord struct {
 	Expiration            time.Time       `db:"expiration"`
 	CreateTime            time.Time       `db:"created_time"`
 	EndTime               time.Time       `db:"end_time"`
-	State                 string          `db:"state"`
 	NeedCandidateReplicas int64           `db:"candidate_replicas"`
 	ServerID              dtypes.ServerID `db:"scheduler_sid"`
+	State                 string          `db:"state"`
 
-	ReplicaInfos []*ReplicaInfo
-	EdgeReplica  int64
+	RetryCount        int64 `db:"retry_count"`
+	ReplenishReplicas int64 `db:"replenish_replicas"`
+	ReplicaInfos      []*ReplicaInfo
+}
+
+// AssetStateInfo represents information about an asset state
+type AssetStateInfo struct {
+	State             string `db:"state"`
+	RetryCount        int64  `db:"retry_count"`
+	Hash              string `db:"hash"`
+	ReplenishReplicas int64  `db:"replenish_replicas"`
 }
 
 // ReplicaInfo represents information about an asset replica
@@ -65,7 +74,6 @@ type PullAssetReq struct {
 	CID        string
 	Hash       string
 	Replicas   int64
-	ServerID   string
 	Expiration time.Time
 }
 
@@ -99,12 +107,12 @@ func (c ReplicaStatus) String() string {
 	}
 }
 
-// ReplicaStatusAll contains all possible replica statuses as strings
-var ReplicaStatusAll = []string{
-	ReplicaStatusWaiting.String(),
-	ReplicaStatusPulling.String(),
-	ReplicaStatusFailed.String(),
-	ReplicaStatusSucceeded.String(),
+// ReplicaStatusAll contains all possible replica statuses
+var ReplicaStatusAll = []ReplicaStatus{
+	ReplicaStatusWaiting,
+	ReplicaStatusPulling,
+	ReplicaStatusFailed,
+	ReplicaStatusSucceeded,
 }
 
 // ListReplicaInfosReq represents a request to list asset replicas
@@ -144,4 +152,30 @@ type AssetHash string
 
 func (c AssetHash) String() string {
 	return string(c)
+}
+
+// AssetStatistics Statistics on asset pulls and downloads
+type AssetStatistics struct {
+	ReplicaCount      int
+	UserDownloadCount int
+}
+
+// AssetEvent Events for asset manipulation
+type AssetEvent string
+
+const (
+	// AssetEventAdd status
+	AssetEventAdd AssetEvent = "Add"
+	// AssetEventRemove status
+	AssetEventRemove AssetEvent = "Remove"
+)
+
+// AssetEventInfo Event info for asset manipulation
+type AssetEventInfo struct {
+	ID          int
+	Hash        string     `db:"hash"`
+	Event       AssetEvent `db:"event"`
+	CreatedTime time.Time  `db:"created_time"`
+	Requester   string     `db:"requester"`
+	Details     string     `db:"details"`
 }

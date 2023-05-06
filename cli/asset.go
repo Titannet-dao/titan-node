@@ -23,7 +23,7 @@ var (
 	defaultDateTimeLayout = "2006-01-02 15:04:05"
 )
 
-var assetCmd = &cli.Command{
+var assetCmds = &cli.Command{
 	Name:  "asset",
 	Usage: "Manage asset record",
 	Subcommands: []*cli.Command{
@@ -201,7 +201,7 @@ var pullAssetCmd = &cli.Command{
 
 var listAssetRecordCmd = &cli.Command{
 	Name:  "list",
-	Usage: "List asset record",
+	Usage: "List asset of this Scheduler",
 	Flags: []cli.Flag{
 		limitFlag,
 		offsetFlag,
@@ -237,7 +237,7 @@ var listAssetRecordCmd = &cli.Command{
 		limit := cctx.Int("limit")
 		offset := cctx.Int("offset")
 
-		states := append([]string{assets.Servicing.String()}, append(assets.FailedStates, assets.PullingStates...)...)
+		states := assets.AllStates
 
 		if cctx.Bool("pulling") {
 			states = assets.PullingStates
@@ -262,7 +262,7 @@ var listAssetRecordCmd = &cli.Command{
 			tablewriter.NewLineCol("Processes"),
 		)
 
-		list, err := schedulerAPI.GetAssetRecords(ctx, limit, offset, states)
+		list, err := schedulerAPI.GetAssetRecords(ctx, limit, offset, states, "")
 		if err != nil {
 			return err
 		}

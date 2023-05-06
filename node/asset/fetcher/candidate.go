@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -18,35 +19,38 @@ import (
 
 // CandidateFetcher
 type CandidateFetcher struct {
-	retryCount int
 	httpClient *http.Client
 }
 
 // NewCandidateFetcher creates a new CandidateFetcher with the specified timeout and retry count
-func NewCandidateFetcher(timeout, retryCount int) *CandidateFetcher {
+func NewCandidateFetcher() *CandidateFetcher {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxIdleConns = 10
 	t.IdleConnTimeout = 120 * time.Second
 
 	httpClient := &http.Client{
-		Timeout:   time.Duration(timeout) * time.Second,
 		Transport: t,
 	}
 
-	return &CandidateFetcher{retryCount: retryCount, httpClient: httpClient}
+	return &CandidateFetcher{httpClient: httpClient}
 }
 
 // FetchBlocks fetches blocks for the given cids and candidate download info
 func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]blocks.Block, error) {
-	return c.retrieveBlocks(cids, dss)
+	return c.retrieveBlocks(ctx, cids, dss)
 }
 
 // fetchSingleBlock fetches a single block for the given candidate download info and cid string
-func (c *CandidateFetcher) fetchSingleBlock(ds *types.CandidateDownloadInfo, cidStr string) (blocks.Block, error) {
+func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, ds *types.CandidateDownloadInfo, cidStr string) (blocks.Block, error) {
 	if len(ds.URL) == 0 {
 		return nil, fmt.Errorf("candidate address can not empty")
 	}
-	buf, err := encode(ds.Credentials)
+
+	if ds.Tk == nil {
+		return nil, fmt.Errorf("token can not empty")
+	}
+
+	buf, err := encode(ds.Tk)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +60,7 @@ func (c *CandidateFetcher) fetchSingleBlock(ds *types.CandidateDownloadInfo, cid
 	if err != nil {
 		return nil, err
 	}
+	req = req.WithContext(ctx)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -90,7 +95,7 @@ func (c *CandidateFetcher) fetchSingleBlock(ds *types.CandidateDownloadInfo, cid
 }
 
 // retrieveBlocks retrieves multiple blocks using the given cids and candidate download info
-func (c *CandidateFetcher) retrieveBlocks(cids []string, dss []*types.CandidateDownloadInfo) ([]blocks.Block, error) {
+func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]blocks.Block, error) {
 	if len(dss) == 0 {
 		return nil, fmt.Errorf("download infos can not empty")
 	}
@@ -110,29 +115,30 @@ func (c *CandidateFetcher) retrieveBlocks(cids []string, dss []*types.CandidateD
 
 		go func() {
 			defer wg.Done()
-
-			for i := 0; i < c.retryCount; i++ {
-				b, err := c.fetchSingleBlock(ds, cidStr)
-				if err != nil {
-					log.Errorf("getBlock error:%s, cid:%s", err.Error(), cidStr)
-					continue
-				}
-				blksLock.Lock()
-				blks = append(blks, b)
-				blksLock.Unlock()
+			b, err := c.fetchSingleBlock(ctx, ds, cidStr)
+			if err != nil {
+				log.Errorf("fetch single block error:%s, cid:%s", err.Error(), cidStr)
 				return
 			}
+
+			blksLock.Lock()
+			blks = append(blks, b)
+			blksLock.Unlock()
 		}()
 	}
 	wg.Wait()
 
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return blks, ctx.Err()
+	}
+
 	return blks, nil
 }
 
-func encode(gwCredentials *types.GatewayCredentials) (*bytes.Buffer, error) {
+func encode(esc *types.Token) (*bytes.Buffer, error) {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
-	err := enc.Encode(gwCredentials)
+	err := enc.Encode(esc)
 	if err != nil {
 		return nil, err
 	}

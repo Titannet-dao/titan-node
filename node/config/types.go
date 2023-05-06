@@ -36,21 +36,21 @@ type EdgeCfg struct {
 	PrivateKeyPath string
 	// self sign certificate, use for client
 	CaCertificatePath string
-	// FetchTimeout get block timeout
-	FetchBlockTimeout int
-	// FetchBlockRetry retry when get block failed
-	FetchBlockRetry int
-	// FetchBatch the number of goroutine to fetch block
-	FetchBatch int
+	// PullBlockTimeout get block timeout
+	PullBlockTimeout int
+	// PullBlockRetry retry when get block failed
+	PullBlockRetry int
+	// PullBlockParallel the number of goroutine to pull block
+	PullBlockParallel int
+	TCPSrvAddr        string
+	IPFSAPIURL        string
+	// seconds
+	ValidateDuration int
 }
 
 // CandidateCfg candidate node config
 type CandidateCfg struct {
 	EdgeCfg
-	TCPSrvAddr string
-	IpfsAPIURL string
-	// seconds
-	ValidateDuration int
 }
 
 // LocatorCfg locator config
@@ -73,6 +73,7 @@ type LocatorCfg struct {
 	CaCertificatePath string
 	// etcd server addresses
 	EtcdAddresses []string
+	DefaultAreaID string
 }
 
 // SchedulerCfg scheduler config
@@ -95,10 +96,6 @@ type SchedulerCfg struct {
 	PrivateKeyPath string
 	// self sign certificate, use for client
 	CaCertificatePath string
-	// test nat type
-	SchedulerServer1 string
-	// test nat type
-	SchedulerServer2 string
 	// config to enabled node validation, default: true
 	EnableValidation bool
 	// etcd server addresses
@@ -109,4 +106,6 @@ type SchedulerCfg struct {
 	ValidatorRatio float64
 	// The base downstream bandwidth per validator window (unit : MiB)
 	ValidatorBaseBwDn int
+	// Increased profit after node validation passes
+	ValidationProfit float64
 }

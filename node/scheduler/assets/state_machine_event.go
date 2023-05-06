@@ -1,7 +1,6 @@
 package assets
 
 import (
-	"github.com/Filecoin-Titan/titan/api/types"
 	"golang.org/x/xerrors"
 )
 
@@ -90,21 +89,6 @@ func (evt PulledResult) apply(state *AssetPullingInfo) {
 		state.Size = rInfo.Size
 		state.Blocks = rInfo.BlocksCount
 	}
-
-	nodeID := rInfo.NodeID
-	if rInfo.Status == int64(types.ReplicaStatusSucceeded) {
-		if rInfo.IsCandidate {
-			state.CandidateReplicaSucceeds = append(state.CandidateReplicaSucceeds, nodeID)
-		} else {
-			state.EdgeReplicaSucceeds = append(state.EdgeReplicaSucceeds, nodeID)
-		}
-	} else if rInfo.Status == int64(types.ReplicaStatusFailed) {
-		if rInfo.IsCandidate {
-			state.CandidateReplicaFailures = append(state.CandidateReplicaFailures, nodeID)
-		} else {
-			state.EdgeReplicaFailures = append(state.EdgeReplicaFailures, nodeID)
-		}
-	}
 }
 
 // PullRequestSent indicates that a pull request has been sent
@@ -122,9 +106,6 @@ type AssetStartPulls struct {
 	ID                string
 	Hash              AssetHash
 	Replicas          int64
-	ServerID          string
-	CreatedAt         int64
-	Expiration        int64
 	CandidateReplicas int // Number of candidate node replicas
 }
 
@@ -132,54 +113,38 @@ func (evt AssetStartPulls) apply(state *AssetPullingInfo) {
 	state.CID = evt.ID
 	state.Hash = evt.Hash
 	state.EdgeReplicas = evt.Replicas
-	state.ServerID = evt.ServerID
-	state.CreatedAt = evt.CreatedAt
-	state.Expiration = evt.Expiration
 	state.CandidateReplicas = int64(seedReplicaCount + evt.CandidateReplicas)
 }
 
 // ReplenishReplicas replenish asset replicas
 type ReplenishReplicas struct {
-	ID                       string
-	State                    AssetState
-	Hash                     AssetHash
-	Replicas                 int64
-	ServerID                 string
-	CreatedAt                int64
-	Expiration               int64
-	CandidateReplicas        int // Number of candidate node replicas
-	Size                     int64
-	Blocks                   int64
-	EdgeReplicaSucceeds      []string
-	CandidateReplicaSucceeds []string
+	State AssetState
 }
 
 func (evt ReplenishReplicas) applyGlobal(state *AssetPullingInfo) bool {
+	// change state
 	state.State = evt.State
-	state.CID = evt.ID
-	state.Hash = evt.Hash
-	state.EdgeReplicas = evt.Replicas
-	state.ServerID = evt.ServerID
-	state.CreatedAt = evt.CreatedAt
-	state.Expiration = evt.Expiration
-	state.CandidateReplicas = int64(seedReplicaCount + evt.CandidateReplicas)
-	state.Size = evt.Size
-	state.Blocks = evt.Blocks
-	state.EdgeReplicaSucceeds = evt.EdgeReplicaSucceeds
-	state.CandidateReplicaSucceeds = evt.CandidateReplicaSucceeds
 	return true
 }
 
 // AssetRePull re-pull the asset
 type AssetRePull struct{}
 
-func (evt AssetRePull) apply(state *AssetPullingInfo) {}
+func (evt AssetRePull) apply(state *AssetPullingInfo) {
+	state.RetryCount++
+}
 
 // PullSucceed indicates that a node has successfully pulled an asset
 type PullSucceed struct{}
 
 func (evt PullSucceed) apply(state *AssetPullingInfo) {
 	state.RetryCount = 0
+
+	// Check to node offline while replenishing the temporary replicas
+	// After these temporary replicas are pulled, the count should be deleted
+	if state.State == EdgesPulling {
+		state.ReplenishReplicas = 0
+	}
 }
 
 // SkipStep skips the current step
@@ -194,7 +159,6 @@ type PullFailed struct{ error }
 func (evt PullFailed) FormatError(xerrors.Printer) (next error) { return evt.error }
 
 func (evt PullFailed) apply(state *AssetPullingInfo) {
-	state.RetryCount++
 }
 
 // SelectFailed  indicates that node selection has failed
@@ -204,5 +168,4 @@ type SelectFailed struct{ error }
 func (evt SelectFailed) FormatError(xerrors.Printer) (next error) { return evt.error }
 
 func (evt SelectFailed) apply(state *AssetPullingInfo) {
-	state.RetryCount++
 }

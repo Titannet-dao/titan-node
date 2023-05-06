@@ -16,13 +16,14 @@ import (
 var log = logging.Logger("validate")
 
 type Validation struct {
-	checker       Checker
-	device        *device.Device
-	cancelChannel chan bool
+	checker                 Checker
+	device                  *device.Device
+	cancelChannel           chan bool
+	downloadThreadCountFunc func() uint32
 }
 
 type Checker interface {
-	GetChecker(ctx context.Context, randomSeed int64) (Asset, error)
+	GetAssetForValidation(ctx context.Context, randomSeed int64) (Asset, error)
 }
 
 type Asset interface {
@@ -54,6 +55,10 @@ func (v *Validation) StopValidation() {
 	}
 }
 
+func (v *Validation) SetFunc(fun func() uint32) {
+	v.downloadThreadCountFunc = fun
+}
+
 // sendBlocks sends blocks over a TCP connection with rate limiting
 func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRate int64) error {
 	defer func() {
@@ -71,7 +76,7 @@ func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRa
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	asset, err := v.checker.GetChecker(ctx, req.RandomSeed)
+	asset, err := v.checker.GetAssetForValidation(ctx, req.RandomSeed)
 	if err != nil {
 		return xerrors.Errorf("get checker error %w", err)
 	}
@@ -85,19 +90,25 @@ func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRa
 		return err
 	}
 
+	if v.downloadThreadCountFunc != nil && v.downloadThreadCountFunc() > 0 {
+		log.Debugf("user is downloading, cancel validation")
+		return sendData(conn, nil, api.TCPMsgTypeCancel, limiter)
+	}
+
 	for {
 		select {
 		case <-t.C:
 			return nil
 		case <-v.cancelChannel:
+			log.Debugf("cancel validation by httpserver")
 			return sendData(conn, nil, api.TCPMsgTypeCancel, limiter)
 		default:
 		}
-
 		blk, err := asset.GetBlock(ctx)
 		if err != nil {
 			return err
 		}
+
 		err = sendData(conn, blk.RawData(), api.TCPMsgTypeBlock, limiter)
 		if err != nil {
 			return err

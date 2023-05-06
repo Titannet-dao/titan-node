@@ -3,6 +3,7 @@ package candidate
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -25,14 +26,16 @@ type TCPServer struct {
 	config         *config.CandidateCfg
 	blockWaiterMap *sync.Map
 	listen         *net.TCPListener
+	privateKey     *rsa.PrivateKey
 }
 
 // NewTCPServer initializes a new instance of TCPServer.
-func NewTCPServer(cfg *config.CandidateCfg, schedulerAPI api.Scheduler) *TCPServer {
+func NewTCPServer(cfg *config.CandidateCfg, schedulerAPI api.Scheduler, key *rsa.PrivateKey) *TCPServer {
 	return &TCPServer{
 		config:         cfg,
 		blockWaiterMap: &sync.Map{},
 		schedulerAPI:   schedulerAPI,
+		privateKey:     key,
 	}
 }
 
@@ -102,7 +105,8 @@ func (t *TCPServer) handleMessage(conn *net.TCPConn) {
 	}
 
 	ch := make(chan tcpMsg, 1)
-	bw := newBlockWaiter(nodeID, ch, t.config.ValidateDuration, t.schedulerAPI)
+	opts := blockWaiterOptions{nodeID: nodeID, ch: ch, duration: t.config.ValidateDuration, resulter: t.schedulerAPI, privateKey: t.privateKey}
+	bw := newBlockWaiter(&opts)
 	t.blockWaiterMap.Store(nodeID, bw)
 
 	defer func() {

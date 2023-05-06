@@ -6,13 +6,15 @@ import (
 	"strings"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/urfave/cli/v2"
 )
 
 // SchedulerCMDs Scheduler cmd
 var SchedulerCMDs = []*cli.Command{
-	WithCategory("node", nodeCmd),
-	WithCategory("asset", assetCmd),
+	WithCategory("node", nodeCmds),
+	WithCategory("asset", assetCmds),
+	WithCategory("config", sConfigCmds),
 	startElectionCmd,
 	// other
 	edgeUpdaterCmd,
@@ -279,4 +281,172 @@ func newVersion(version string) (api.Version, error) {
 	}
 
 	return api.Version(uint32(major)<<16 | uint32(minor)<<8 | uint32(patch)), nil
+}
+
+var sConfigCmds = &cli.Command{
+	Name:  "config",
+	Usage: "set or show config",
+	Subcommands: []*cli.Command{
+		sConfigSetCmd,
+		sConfigShowCmd,
+	},
+}
+
+var sConfigShowCmd = &cli.Command{
+	Name:  "show",
+	Usage: "show scheduler config",
+	Flags: []cli.Flag{},
+	Action: func(cctx *cli.Context) error {
+		lr, err := openRepo(cctx)
+		if err != nil {
+			return err
+		}
+		defer lr.Close() //nolint:errcheck  // ignore error
+
+		cfg, err := lr.Config()
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%#v\n", cfg)
+		return nil
+	},
+}
+
+var sConfigSetCmd = &cli.Command{
+	Name:  "set",
+	Usage: "set scheduler config",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "external-url",
+			Usage: "scheduler's external ip. example: --external-url=https://server_ip:port/rpc/v0",
+			Value: "https://localhost:3456/rpc/v0",
+		},
+		&cli.StringFlag{
+			Name:  "listen-address",
+			Usage: "local listen address, example: --listen-address=local_server_ip:port",
+			Value: "0.0.0.0:1234",
+		},
+		&cli.BoolFlag{
+			Name:  "insecure-skip-verify",
+			Usage: "skip tls verify, example: --insecure-skip-verify=true",
+			Value: true,
+		},
+		&cli.StringFlag{
+			Name:  "certificate-path",
+			Usage: "used for http3 server, be used if InsecureSkipVerify is true , example: --certificate-path=your_certificate_path",
+			Value: "",
+		},
+		&cli.StringFlag{
+			Name:  "private-key-path",
+			Usage: "used for http3 server, be used if InsecureSkipVerify is true , example: --private-key-path=your_private_key_path",
+			Value: "",
+		},
+		&cli.StringFlag{
+			Name:  "ca-certificate-path",
+			Usage: "self sign certificate, use for client , example: --ca-certificate-path=your_ca_certificate_path",
+			Value: "",
+		},
+		&cli.BoolFlag{
+			Name:  "enable-validation",
+			Usage: "config to enabled node validation, example: --enable-validation=true",
+			Value: true,
+		},
+		&cli.StringSliceFlag{
+			Name:  "etcd-addresses",
+			Usage: "etcd cluster address example: --etcd-addresses=etcd-address1,etcd-address2",
+			Value: &cli.StringSlice{},
+		},
+		&cli.StringFlag{
+			Name:  "area-id",
+			Usage: "example: --area-id=your_area_id",
+			Value: "",
+		},
+		&cli.StringFlag{
+			Name:  "database-address",
+			Usage: "mysql cluster address metadata path, example: --database-address=mysql_user:mysql_password@tcp(mysql_ip:mysql_port)/mysql_database",
+			Value: "",
+		},
+		&cli.IntFlag{
+			Name:  "candidate-replicas",
+			Usage: "number of candidate node replicas (does not contain 'seed'), example: --candidate-replicas=candidate_replicas_count",
+			Value: 0,
+		},
+		&cli.Float64Flag{
+			Name:  "validator-ratio",
+			Usage: "proportion of validator in candidate nodes (0 ~ 1), example: --validator-ratio=validator_ratio",
+			Value: 1,
+		},
+		&cli.IntFlag{
+			Name:  "validator-base-bandwidth",
+			Usage: "the base downstream bandwidth per validator window (unit : MiB), example: --validator-base-bandwidth=bandwidth",
+			Value: 100,
+		},
+		&cli.Float64Flag{
+			Name:  "validation-profit",
+			Usage: "increased profit after node validation passes",
+			Value: 1,
+		},
+	},
+
+	Action: func(cctx *cli.Context) error {
+		lr, err := openRepo(cctx)
+		if err != nil {
+			return err
+		}
+		defer lr.Close() //nolint:errcheck  // ignore error
+
+		lr.SetConfig(func(raw interface{}) {
+			cfg, ok := raw.(*config.SchedulerCfg)
+			if !ok {
+				log.Errorf("can not convert interface to SchedulerCfg")
+				return
+			}
+
+			if cctx.IsSet("listen-address") {
+				cfg.ListenAddress = cctx.String("listen-address")
+			}
+			if cctx.IsSet("external-url") {
+				cfg.ExternalURL = cctx.String("external-url")
+			}
+			if cctx.IsSet("database-address") {
+				cfg.DatabaseAddress = cctx.String("database-address")
+			}
+			if cctx.IsSet("area-id") {
+				cfg.AreaID = cctx.String("area-id")
+			}
+			if cctx.IsSet("etcd-addresses") {
+				cfg.EtcdAddresses = cctx.StringSlice("etcd-addresses")
+			}
+			if cctx.IsSet("insecure-skip-verify") {
+				cfg.InsecureSkipVerify = cctx.Bool("insecure-skip-verify")
+			}
+			if cctx.IsSet("certificate-path") {
+				cfg.CertificatePath = cctx.String("certificate-path")
+			}
+			if cctx.IsSet("private-key-path") {
+				cfg.PrivateKeyPath = cctx.String("private-key-path")
+			}
+			if cctx.IsSet("ca-certificate-path") {
+				cfg.CaCertificatePath = cctx.String("ca-certificate-path")
+			}
+			if cctx.IsSet("enable-validation") {
+				cfg.EnableValidation = cctx.Bool("enable-validation")
+			}
+			if cctx.IsSet("candidate-replicas") {
+				cfg.CandidateReplicas = cctx.Int("candidate-replicas")
+			}
+			if cctx.IsSet("validator-ratio") {
+				cfg.ValidatorRatio = cctx.Float64("validator-ratio")
+			}
+			if cctx.IsSet("validator-base-bandwidth") {
+				cfg.ValidatorBaseBwDn = cctx.Int("validator-base-bandwidth")
+			}
+			if cctx.IsSet("validation-profit") {
+				cfg.ValidationProfit = cctx.Float64("validation-profit")
+			}
+		})
+
+		return nil
+	},
 }

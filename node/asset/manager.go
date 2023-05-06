@@ -6,8 +6,10 @@ import (
 	"math/rand"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	titanindex "github.com/Filecoin-Titan/titan/node/asset/index"
@@ -15,7 +17,12 @@ import (
 	validate "github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
+	format "github.com/ipfs/go-ipld-format"
+	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
+	carv2 "github.com/ipld/go-car/v2"
+	"github.com/ipld/go-car/v2/blockstore"
+	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 )
 
@@ -34,17 +41,23 @@ type Manager struct {
 	waitList     []*assetWaiter
 	waitListLock *sync.Mutex
 	pullCh       chan bool
-	pullParallel int
 	bFetcher     fetcher.BlockFetcher
 	lru          *lruCache
 	storage.Storage
+	api.Scheduler
+	pullParallel int
+	pullTimeout  int
+	pullRetry    int
 }
 
 // ManagerOptions is the struct that contains options for Manager
 type ManagerOptions struct {
 	Storage      storage.Storage
 	BFetcher     fetcher.BlockFetcher
+	SchedulerAPI api.Scheduler
 	PullParallel int
+	PullTimeout  int
+	PullRetry    int
 }
 
 // NewManager creates a new instance of Manager
@@ -61,7 +74,10 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		Storage:      opts.Storage,
 		bFetcher:     opts.BFetcher,
 		lru:          lru,
+		Scheduler:    opts.SchedulerAPI,
 		pullParallel: opts.PullParallel,
+		pullTimeout:  opts.PullTimeout,
+		pullRetry:    opts.PullRetry,
 	}
 
 	m.restoreWaitListFromStore()
@@ -87,7 +103,7 @@ func (m *Manager) startTick() {
 					len(puller.blocksPulledSuccessList)+len(puller.blocksWaitList),
 					len(puller.blocksPulledSuccessList),
 					puller.totalSize,
-					puller.totalSize)
+					puller.doneSize)
 			}
 		}
 
@@ -134,7 +150,8 @@ func (m *Manager) doPullAsset() {
 	}
 	defer m.removeAssetFromWaitList(cw.Root)
 
-	assetPuller, err := m.restoreAssetPullerOrNew(&pullerOptions{cw.Root, cw.Dss, m.Storage, m.bFetcher, m.pullParallel})
+	opts := &pullerOptions{cw.Root, cw.Dss, m.Storage, m.bFetcher, m.pullParallel, m.pullTimeout, m.pullRetry}
+	assetPuller, err := m.restoreAssetPullerOrNew(opts)
 	if err != nil {
 		log.Errorf("restore asset puller error:%s", err)
 		return
@@ -143,7 +160,7 @@ func (m *Manager) doPullAsset() {
 	cw.puller = assetPuller
 	err = assetPuller.pullAsset()
 	if err != nil {
-		log.Errorf("pull asset error:%s", err)
+		log.Errorf("pull asset error: %s", err)
 	}
 
 	m.onPullAssetFinish(assetPuller)
@@ -301,13 +318,8 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 	// remove lru puller
 	m.lru.remove(root)
 
-	ok, err := m.deleteAssetFromWaitList(root)
-	if err != nil {
+	if _, err := m.deleteAssetFromWaitList(root); err != nil {
 		return err
-	}
-
-	if ok {
-		return nil
 	}
 
 	if ok, err := m.PullerExists(root); err == nil && ok {
@@ -315,7 +327,12 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 	}
 
 	if err := m.Storage.DeleteAsset(root); err != nil {
-		return err
+		if e, ok := err.(*os.PathError); !ok {
+			return err
+		} else if e.Err != syscall.ENOENT {
+			return err
+		}
+
 	}
 
 	return m.RemoveAssetFromView(context.Background(), root)
@@ -366,9 +383,9 @@ func (m *Manager) assetStatus(root cid.Cid) (types.ReplicaStatus, error) {
 		return types.ReplicaStatusSucceeded, nil
 	}
 
-	for _, cw := range m.waitList {
-		if cw.Root.Hash().String() == root.Hash().String() {
-			if cw.puller != nil {
+	for _, aw := range m.waitList {
+		if aw.Root.Hash().String() == root.Hash().String() {
+			if aw.puller != nil {
 				return types.ReplicaStatusPulling, nil
 			}
 			return types.ReplicaStatusWaiting, nil
@@ -419,8 +436,9 @@ func (m *Manager) HasBlock(ctx context.Context, root, block cid.Cid) (bool, erro
 }
 
 // GetBlocksOfAsset returns a random selection of blocks for the given root CID
-func (m *Manager) GetBlocksOfAsset(root cid.Cid, randomSeed int64, randomCount int) (map[int]string, error) {
-	rand := rand.New(rand.NewSource(randomSeed))
+// return map, key is random number, value is cid string
+func (m *Manager) GetBlocksOfAsset(root cid.Cid, randomSeed int64, randomCount int) ([]string, error) {
+	r := rand.New(rand.NewSource(randomSeed))
 
 	idx, err := m.lru.assetIndex(root)
 	if err != nil {
@@ -433,10 +451,10 @@ func (m *Manager) GetBlocksOfAsset(root cid.Cid, randomSeed int64, randomCount i
 	}
 
 	sizeOfBuckets := multiIndex.BucketCount()
-	ret := make(map[int]string, 0)
+	rets := make([]string, 0, randomCount)
 
 	for i := 0; i < randomCount; i++ {
-		index := rand.Intn(int(sizeOfBuckets))
+		index := r.Intn(int(sizeOfBuckets))
 		records, err := multiIndex.GetBucketRecords(uint32(index))
 		if err != nil {
 			return nil, err
@@ -446,12 +464,12 @@ func (m *Manager) GetBlocksOfAsset(root cid.Cid, randomSeed int64, randomCount i
 			return nil, xerrors.Errorf("record is empty")
 		}
 
-		index = rand.Intn(len(records))
+		index = r.Intn(len(records))
 		record := records[index]
-		ret[i] = record.Cid.String()
+		rets = append(rets, record.Cid.String())
 	}
 
-	return ret, nil
+	return rets, nil
 }
 
 // AddLostAsset adds a lost asset to the Manager's waitList if it is not already present in the storage
@@ -466,7 +484,11 @@ func (m *Manager) AddLostAsset(root cid.Cid) error {
 	case types.NodeCandidate:
 		m.addToWaitList(root, nil)
 	case types.NodeEdge:
-		return fmt.Errorf("not implement")
+		downloadInfos, err := m.GetCandidateDownloadInfos(context.Background(), root.String())
+		if err != nil {
+			return xerrors.Errorf("get candidate download infos: %w", err.Error())
+		}
+		m.addToWaitList(root, downloadInfos)
 	default:
 		return fmt.Errorf("not support node type:%s", types.RunningNodeType)
 	}
@@ -479,10 +501,85 @@ func (m *Manager) GetAssetsOfBucket(ctx context.Context, bucketID uint32, isRemo
 	if !isRemote {
 		return m.Storage.GetAssetsInBucket(ctx, bucketID)
 	}
-	return nil, nil
+
+	multiHashes, err := m.GetAssetListForBucket(ctx, bucketID)
+	if err != nil {
+		return nil, err
+	}
+
+	cidList := make([]cid.Cid, 0, len(multiHashes))
+	for _, multiHash := range multiHashes {
+		hash, err := multihash.FromHexString(multiHash)
+		if err != nil {
+			log.Errorf("new multi hash from string error %s", err.Error())
+			continue
+		}
+		cidList = append(cidList, cid.NewCidV0(hash))
+	}
+	return cidList, nil
 }
 
-// GetChecker returns a new instance of a random asset validator based on a given random seed
-func (m *Manager) GetChecker(ctx context.Context, randomSeed int64) (validate.Asset, error) {
-	return NewRandomCheck(randomSeed, m.Storage, m.lru), nil
+// GetAssetForValidation returns a new instance of asset based on a given random seed
+func (m *Manager) GetAssetForValidation(ctx context.Context, randomSeed int64) (validate.Asset, error) {
+	return NewRandomCheck(randomSeed, m.Storage, m.lru)
+}
+
+func (m *Manager) ScanBlocks(ctx context.Context, root cid.Cid) error {
+	reader, err := m.GetAsset(root)
+	if err != nil {
+		return err
+	}
+
+	f, ok := reader.(*os.File)
+	if !ok {
+		return xerrors.Errorf("can not convert asset %s reader to file", root.String())
+	}
+
+	bs, err := blockstore.NewReadOnly(f, nil, carv2.ZeroLengthSectionAsEOF(true))
+	if err != nil {
+		return err
+	}
+
+	block, err := bs.Get(ctx, root)
+	if err != nil {
+		return xerrors.Errorf("get block %s error %w", root.String(), err)
+	}
+
+	node, err := legacy.DecodeNode(context.Background(), block)
+	if err != nil {
+		log.Errorf("decode block error:%s", err.Error())
+		return err
+	}
+
+	if len(node.Links()) > 0 {
+		return m.getNodes(ctx, bs, node.Links())
+	}
+
+	return nil
+
+}
+
+func (m *Manager) getNodes(ctx context.Context, bs *blockstore.ReadOnly, links []*format.Link) error {
+	for _, link := range links {
+		block, err := bs.Get(context.Background(), link.Cid)
+		if err != nil {
+			return xerrors.Errorf("get block %s error %w", link.Cid.String(), err)
+		}
+
+		node, err := legacy.DecodeNode(context.Background(), block)
+		if err != nil {
+			log.Errorf("decode block error:%s", err.Error())
+			return err
+		}
+
+		if len(node.Links()) > 0 {
+			err = m.getNodes(ctx, bs, node.Links())
+			if err != nil {
+				return err
+			}
+		}
+
+	}
+
+	return nil
 }

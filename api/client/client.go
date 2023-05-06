@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
@@ -16,10 +17,21 @@ import (
 
 // NewScheduler creates a new http jsonrpc client.
 func NewScheduler(ctx context.Context, addr string, requestHeader http.Header) (api.Scheduler, jsonrpc.ClientCloser, error) {
+	pushURL, err := getPushURL(addr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// TODO server not support https now
+	pushURL = strings.Replace(pushURL, "https", "http", 1)
+
 	var res api.SchedulerStruct
 
 	closer, err := jsonrpc.NewMergeClient(ctx, addr, "titan",
-		api.GetInternalStructs(&res), requestHeader)
+		api.GetInternalStructs(&res),
+		requestHeader,
+		rpcenc.ReaderParamEncoder(pushURL),
+	)
 
 	return &res, closer, err
 }

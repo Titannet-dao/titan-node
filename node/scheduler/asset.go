@@ -7,6 +7,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/handler"
+	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"golang.org/x/xerrors"
 )
 
@@ -49,8 +50,12 @@ func (s *Scheduler) GetAssetRecord(ctx context.Context, cid string) (*types.Asse
 }
 
 // GetAssetRecords lists asset records with optional filtering by status, limit, and offset.
-func (s *Scheduler) GetAssetRecords(ctx context.Context, limit, offset int, statuses []string) ([]*types.AssetRecord, error) {
-	rows, err := s.NodeManager.LoadAssetRecords(statuses, limit, offset, s.ServerID)
+func (s *Scheduler) GetAssetRecords(ctx context.Context, limit, offset int, statuses []string, serverID dtypes.ServerID) ([]*types.AssetRecord, error) {
+	if serverID == "" {
+		serverID = s.ServerID
+	}
+
+	rows, err := s.db.LoadAssetRecords(statuses, limit, offset, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +72,7 @@ func (s *Scheduler) GetAssetRecords(ctx context.Context, limit, offset int, stat
 			continue
 		}
 
-		cInfo.ReplicaInfos, err = s.NodeManager.LoadAssetReplicas(cInfo.Hash)
+		cInfo.ReplicaInfos, err = s.db.LoadAssetReplicas(cInfo.Hash)
 		if err != nil {
 			log.Errorf("asset %s load replicas err: %s", cInfo.CID, err.Error())
 			continue
@@ -90,7 +95,7 @@ func (s *Scheduler) RemoveAssetRecord(ctx context.Context, cid string) error {
 		return err
 	}
 
-	return s.AssetManager.RemoveAsset(cid, hash)
+	return s.AssetManager.RemoveAsset(cid, hash, "") // TODO UserID
 }
 
 // RemoveAssetReplica removes an asset replica from the system by its CID and nodeID.
@@ -104,7 +109,7 @@ func (s *Scheduler) RemoveAssetReplica(ctx context.Context, cid, nodeID string) 
 		return err
 	}
 
-	return s.AssetManager.RemoveReplica(cid, hash, nodeID)
+	return s.AssetManager.RemoveReplica(cid, hash, nodeID, "") // TODO UserID
 }
 
 // PullAsset pull an asset based on the provided PullAssetReq structure.
@@ -128,7 +133,7 @@ func (s *Scheduler) PullAsset(ctx context.Context, info *types.PullAssetReq) err
 		return xerrors.Errorf("expiration %s less than now(%v)", info.Expiration.String(), time.Now())
 	}
 
-	return s.AssetManager.CreateAssetPullTask(info)
+	return s.AssetManager.CreateAssetPullTask(info, "") // TODO UserID
 }
 
 // GetAssetReplicaInfos lists asset replicas based on a given request with startTime, endTime, cursor, and count parameters.
@@ -136,10 +141,22 @@ func (s *Scheduler) GetAssetReplicaInfos(ctx context.Context, req types.ListRepl
 	startTime := time.Unix(req.StartTime, 0)
 	endTime := time.Unix(req.EndTime, 0)
 
-	info, err := s.NodeManager.LoadReplicas(startTime, endTime, req.Cursor, req.Count)
+	info, err := s.db.LoadReplicas(startTime, endTime, req.Cursor, req.Count)
 	if err != nil {
 		return nil, err
 	}
 
 	return info, nil
+}
+
+// GetAssetStatistics get asset related statistics information
+func (s *Scheduler) GetAssetStatistics(ctx context.Context) (*types.AssetStatistics, error) {
+	count, err := s.db.LoadSucceededReplicaCount()
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.AssetStatistics{
+		ReplicaCount: count,
+	}, nil
 }

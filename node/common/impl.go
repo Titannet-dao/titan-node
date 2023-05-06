@@ -9,8 +9,6 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/build"
 	"github.com/Filecoin-Titan/titan/journal/alerting"
-	"github.com/Filecoin-Titan/titan/node/handler"
-	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 
 	"github.com/filecoin-project/go-jsonrpc/auth"
@@ -24,22 +22,14 @@ var session = uuid.New()
 
 // CommonAPI api o
 type CommonAPI struct {
-	Alerting        *alerting.Alerting
-	APISecret       *jwt.HMACSHA
-	ShutdownChan    chan struct{}
-	SessionCallBack dtypes.SessionCallbackFunc
+	Alerting     *alerting.Alerting
+	APISecret    *jwt.HMACSHA
+	ShutdownChan chan struct{}
 }
 
 type jwtPayload struct {
 	Allow []auth.Permission
 }
-
-type (
-	// PermissionWriteToken A token with write permission
-	PermissionWriteToken []byte
-	// PermissionAdminToken A token admin write permission
-	PermissionAdminToken []byte
-)
 
 // SessionCallbackFunc will be called after node connection
 type SessionCallbackFunc func(string, string)
@@ -47,10 +37,9 @@ type SessionCallbackFunc func(string, string)
 // MethodGroup: Auth
 
 // NewCommonAPI initializes a new CommonAPI
-func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA, callback dtypes.SessionCallbackFunc) (CommonAPI, error) {
+func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA) (CommonAPI, error) {
 	commAPI := CommonAPI{
-		APISecret:       secret,
-		SessionCallBack: callback,
+		APISecret: secret,
 	}
 
 	return commAPI, nil
@@ -121,17 +110,6 @@ func (a *CommonAPI) Shutdown(context.Context) error {
 
 // Session returns a UUID of api provider session
 func (a *CommonAPI) Session(ctx context.Context) (uuid.UUID, error) {
-	if a.SessionCallBack != nil {
-		remoteAddr := handler.GetRemoteAddr(ctx)
-		nodeID := handler.GetNodeID(ctx)
-		if nodeID != "" && remoteAddr != "" {
-			err := a.SessionCallBack(nodeID, remoteAddr)
-			if err != nil {
-				return session, err
-			}
-		}
-	}
-
 	return session, nil
 }
 

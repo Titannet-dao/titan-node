@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -57,5 +58,5 @@ func NewHTTP3Client(pConn net.PacketConn, insecureSkipVerify bool, caCertPath st
 		Dial:       dial,
 	}
 
-	return &http.Client{Transport: roundTripper}, nil
+	return &http.Client{Transport: roundTripper, Timeout: 10 * time.Second}, nil
 }

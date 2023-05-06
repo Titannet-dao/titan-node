@@ -58,7 +58,7 @@ func sendData(conn *net.TCPConn, data []byte, msgType api.TCPMsgType, rateLimite
 		return err
 	}
 
-	n, err := io.Copy(conn, limiter.ReaderFromBytes(buf, rateLimiter))
+	n, err := io.Copy(conn, limiter.NewReader(bytes.NewReader(buf), rateLimiter))
 	if err != nil {
 		log.Errorf("sendData, io.Copy error:%s", err.Error())
 		return err

@@ -5,21 +5,24 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
-// serveRawBlock retrieves a raw block from the asset using the given credentials and URL path,
+// serveRawBlock retrieves a raw block from the asset using the given tokenPayload and URL path,
 // sets the appropriate headers, and serves the block to the client.
-func (hs *HttpServer) serveRawBlock(w http.ResponseWriter, r *http.Request, credentials *types.Credentials) {
+func (hs *HttpServer) serveRawBlock(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	root, err := cid.Decode(credentials.AssetCID)
+	startTime := time.Now()
+
+	root, err := cid.Decode(tkPayload.AssetCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("decode root cid %s error: %s", credentials.AssetCID, err.Error()), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("decode root cid %s error: %s", tkPayload.AssetCID, err.Error()), http.StatusBadRequest)
 		return
 	}
 
@@ -37,6 +40,7 @@ func (hs *HttpServer) serveRawBlock(w http.ResponseWriter, r *http.Request, cred
 		return
 	}
 
+	// TODO: limit rate
 	content := bytes.NewReader(block.RawData())
 
 	// Set Content-Disposition
@@ -57,5 +61,23 @@ func (hs *HttpServer) serveRawBlock(w http.ResponseWriter, r *http.Request, cred
 	// If-None-Match+Etag, Content-Length and range requests
 	http.ServeContent(w, r, name, modtime, content)
 
-	// TODO: limit rate and report to scheduler
+	duration := time.Since(startTime)
+	speed := float64(0)
+	if duration > 0 {
+		speed = float64(len(block.RawData())) / float64(duration) * float64(time.Second)
+	}
+
+	workload := &types.Workload{
+		DownloadSpeed: int64(speed),
+		DownloadSize:  int64(len(block.RawData())),
+		StartTime:     startTime.Unix(),
+		EndTime:       time.Now().Unix(),
+	}
+
+	report := &report{
+		TokenID:  tkPayload.ID,
+		ClientID: tkPayload.ClientID,
+		Workload: workload,
+	}
+	hs.reporter.addReport(report)
 }

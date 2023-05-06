@@ -3,9 +3,14 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/filecoin-project/go-jsonrpc/auth"
+	logging "github.com/ipfs/go-log/v2"
 )
+
+var log = logging.Logger("handler")
 
 type (
 	// RemoteAddr client address
@@ -55,5 +60,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx = context.WithValue(ctx, RemoteAddr{}, remoteAddr)
 	ctx = context.WithValue(ctx, NodeID{}, nodeID)
 
-	h.handler.ServeHTTP(w, r.WithContext(ctx))
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		token = r.FormValue("token")
+		if token != "" {
+			token = "Bearer " + token
+		}
+	}
+
+	if token != "" {
+		if !strings.HasPrefix(token, "Bearer ") {
+			log.Warn("missing Bearer prefix in auth header")
+			w.WriteHeader(401)
+			return
+		}
+		token = strings.TrimPrefix(token, "Bearer ")
+
+		allow, err := h.handler.Verify(ctx, token)
+		if err != nil {
+			log.Warnf("JWT Verification failed (originating from %s): %s", r.RemoteAddr, err)
+			w.WriteHeader(401)
+			return
+		}
+
+		ctx = api.WithPerm(ctx, allow)
+	}
+
+	h.handler.Next(w, r.WithContext(ctx))
 }

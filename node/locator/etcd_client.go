@@ -39,7 +39,7 @@ func NewEtcdClient(addresses []string) (*EtcdClient, error) {
 }
 
 func (ec *EtcdClient) loadSchedulerConfigs() error {
-	resp, err := ec.cli.GetServers(types.NodeScheduler)
+	resp, err := ec.cli.GetServers(types.NodeScheduler.String())
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,8 @@ func (ec *EtcdClient) loadSchedulerConfigs() error {
 	schedulerConfigs := make(map[string][]*types.SchedulerCfg)
 
 	for _, kv := range resp.Kvs {
-		config, err := etcdcli.SCUnmarshal(kv.Value)
+		config := &types.SchedulerCfg{}
+		err := etcdcli.SCUnmarshal(kv.Value, config)
 		if err != nil {
 			return err
 		}
@@ -71,7 +72,7 @@ func (ec *EtcdClient) watch() {
 		ec.schedulerConfigs = make(map[string][]*types.SchedulerCfg)
 	}
 
-	watchChan := ec.cli.WatchServers(context.Background(), types.NodeScheduler)
+	watchChan := ec.cli.WatchServers(context.Background(), types.NodeScheduler.String())
 	for {
 		resp, ok := <-watchChan
 		if !ok {
@@ -90,15 +91,14 @@ func (ec *EtcdClient) watch() {
 					log.Errorf("on put error %s", err.Error())
 				}
 			}
-
 		}
 	}
-
 }
 
 func (ec *EtcdClient) onPut(kv *mvccpb.KeyValue) error {
 	log.Debugf("onPut key: %s", string(kv.Key))
-	config, err := etcdcli.SCUnmarshal(kv.Value)
+	config := &types.SchedulerCfg{}
+	err := etcdcli.SCUnmarshal(kv.Value, config)
 	if err != nil {
 		return err
 	}

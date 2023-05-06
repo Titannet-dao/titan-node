@@ -11,15 +11,19 @@ import (
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
-func TestGateway(t *testing.T) {
+const (
+	testIPFSAddress = "http://192.168.0.132:5001"
+)
+
+func TestHttpServer(t *testing.T) {
 	t.Log("TestGateway")
 }
 
 func TestResolvePath(t *testing.T) {
 	t.Log("TestResolvePath")
 
-	p := "/ipfs/QmNXoAB3ZNoFQQZMGk4utybuvABdLTz6hcVmtHnV4FUp3S/log"
-	metaDataPath := "C:/Users/aaa/.titanedge-1/storage"
+	p := "/ipfs/QmSUs7pPXL9jqcLSXNgZ92QXB36oXurgRCYzFrzAkYdT5d/log"
+	metaDataPath := "C:/Users/aaa/.titancandidate-1/storage"
 	assetsPaths := []string{metaDataPath}
 	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
 	if err != nil {
@@ -33,8 +37,8 @@ func TestResolvePath(t *testing.T) {
 		return
 	}
 
-	bFetcher := fetcher.NewIPFSClient("http://192.168.0.132:5001", 15, 1)
-	opts := &asset.ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5}
+	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
+	opts := &asset.ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
 
 	mgr, err := asset.NewManager(opts)
 	if err != nil {
@@ -51,4 +55,42 @@ func TestResolvePath(t *testing.T) {
 	}
 
 	t.Logf("root: %s, cid: %s, rest:%v", resolvePath.Root().String(), resolvePath.Cid().String(), resolvePath.Remainder())
+}
+
+func TestGetBlock(t *testing.T) {
+	t.Log("TestGetBlock")
+
+	metaDataPath := "C:/Users/aaa/.titancandidate-1/storage"
+	assetsPaths := []string{metaDataPath}
+	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
+	if err != nil {
+		t.Errorf("NewManager err:%s", err)
+		return
+	}
+
+	root := "QmSUs7pPXL9jqcLSXNgZ92QXB36oXurgRCYzFrzAkYdT5d"
+	assetCID, err := cid.Decode(root)
+	if err != nil {
+		t.Errorf("Decode err:%s", err)
+		return
+	}
+
+	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
+	opts := &asset.ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+
+	mgr, err := asset.NewManager(opts)
+	if err != nil {
+		t.Errorf("TestResolvePath error:%s", err.Error())
+		return
+	}
+
+	hs := &HttpServer{asset: mgr}
+	blk, err := hs.asset.GetBlock(context.Background(), assetCID, assetCID)
+	if err != nil {
+		t.Errorf("GetBlock error:%s", err.Error())
+		return
+	}
+
+	t.Logf("block size:%d", len(blk.RawData()))
+
 }

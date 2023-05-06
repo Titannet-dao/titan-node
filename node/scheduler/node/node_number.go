@@ -74,28 +74,27 @@ func (m *Manager) repayEdgeNodeNum(num int) {
 
 // getNodeNumRandom returns a random integer up to max (inclusive) using the provided Rand generator
 func (m *Manager) getNodeNumRandom(max int, r *rand.Rand) int {
-	max = max + 1
-	return r.Intn(max)
+	return r.Intn(max) + 1
 }
 
 // GetRandomCandidate returns a random candidate node
-func (m *Manager) GetRandomCandidate() *Node {
+func (m *Manager) GetRandomCandidate() (*Node, int) {
 	num := m.getNodeNumRandom(m.cNodeNumMax, m.cNodeNumRand)
 	nodeID, exist := m.cDistributedNodeNum[num]
 	if !exist {
-		return nil
+		return nil, num
 	}
 
-	return m.GetCandidateNode(nodeID)
+	return m.GetCandidateNode(nodeID), num
 }
 
 // GetRandomEdge returns a random edge node
-func (m *Manager) GetRandomEdge() *Node {
+func (m *Manager) GetRandomEdge() (*Node, int) {
 	num := m.getNodeNumRandom(m.eNodeNumMax, m.eNodeNumRand)
 	nodeID, exist := m.eDistributedNodeNum[num]
 	if !exist {
-		return nil
+		return nil, num
 	}
 
-	return m.GetEdgeNode(nodeID)
+	return m.GetEdgeNode(nodeID), num
 }

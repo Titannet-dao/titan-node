@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/blocks"
@@ -133,6 +134,15 @@ func (a *asset) exists(root cid.Cid) (bool, error) {
 
 // remove deletes the asset from the file system.
 func (a *asset) remove(root cid.Cid) error {
+	assetDir := filepath.Join(a.baseDir, root.Hash().String())
+	if err := os.RemoveAll(assetDir); err != nil {
+		if e, ok := err.(*os.PathError); !ok {
+			return err
+		} else if e.Err != syscall.ENOENT {
+			return err
+		}
+	}
+
 	name := a.generateAssetName(root)
 	path := filepath.Join(a.baseDir, name)
 

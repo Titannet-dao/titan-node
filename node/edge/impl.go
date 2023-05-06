@@ -42,14 +42,14 @@ func (edge *Edge) WaitQuiet(ctx context.Context) error {
 }
 
 // ExternalServiceAddress returns the external service address of the scheduler.
-func (edge *Edge) ExternalServiceAddress(ctx context.Context, schedulerURL string) (string, error) {
-	schedulerAPI, closer, err := client.NewScheduler(ctx, schedulerURL, nil)
+func (edge *Edge) ExternalServiceAddress(ctx context.Context, candidateURL string) (string, error) {
+	candidateAPI, closer, err := client.NewCandidate(ctx, candidateURL, nil)
 	if err != nil {
 		return "", err
 	}
 	defer closer()
 
-	return schedulerAPI.GetExternalAddress(ctx)
+	return candidateAPI.GetExternalAddress(ctx)
 }
 
 // UserNATPunch checks network connectivity from the edge device to the specified URL.
@@ -58,24 +58,14 @@ func (edge *Edge) UserNATPunch(ctx context.Context, sourceURL string, req *types
 }
 
 // checkNetworkConnectivity uses HTTP/3 to check network connectivity to a target URL.
-func (edge *Edge) checkNetworkConnectivity(targetURL string, timeout int) error {
-	udpPacketConn, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return xerrors.Errorf("list udp %w", err)
-	}
-
-	defer func() {
-		err = udpPacketConn.Close()
-		if err != nil {
-			log.Errorf("udpPacketConn Close err:%s", err.Error())
-		}
-	}()
-
-	httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, true, "")
+func (edge *Edge) checkNetworkConnectivity(targetURL string, timeout time.Duration) error {
+	httpClient, err := cliutil.NewHTTP3Client(edge.PConn, true, "")
 	if err != nil {
 		return xerrors.Errorf("new http3 client %w", err)
 	}
-	httpClient.Timeout = time.Duration(timeout) * time.Second
+	if timeout != 0 {
+		httpClient.Timeout = timeout
+	}
 
 	resp, err := httpClient.Get(targetURL)
 	if err != nil {
