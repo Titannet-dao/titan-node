@@ -26,7 +26,7 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 
 	cw := cbg.NewCborWriter(w)
 
-	if _, err := cw.Write([]byte{175}); err != nil {
+	if _, err := cw.Write([]byte{173}); err != nil {
 		return err
 	}
 
@@ -143,73 +143,6 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 		}
 	}
 
-	// t.ServerID (string) (string)
-	if len("ServerID") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"ServerID\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("ServerID"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("ServerID")); err != nil {
-		return err
-	}
-
-	if len(t.ServerID) > cbg.MaxLength {
-		return xerrors.Errorf("Value in field t.ServerID was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(t.ServerID))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string(t.ServerID)); err != nil {
-		return err
-	}
-
-	// t.CreatedAt (int64) (int64)
-	if len("CreatedAt") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"CreatedAt\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("CreatedAt"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("CreatedAt")); err != nil {
-		return err
-	}
-
-	if t.CreatedAt >= 0 {
-		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.CreatedAt)); err != nil {
-			return err
-		}
-	} else {
-		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.CreatedAt-1)); err != nil {
-			return err
-		}
-	}
-
-	// t.Expiration (int64) (int64)
-	if len("Expiration") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"Expiration\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Expiration"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("Expiration")); err != nil {
-		return err
-	}
-
-	if t.Expiration >= 0 {
-		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.Expiration)); err != nil {
-			return err
-		}
-	} else {
-		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Expiration-1)); err != nil {
-			return err
-		}
-	}
-
 	// t.RetryCount (int64) (int64)
 	if len("RetryCount") > cbg.MaxLength {
 		return xerrors.Errorf("Value in field \"RetryCount\" was too long")
@@ -272,6 +205,28 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 		}
 	} else {
 		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.CandidateReplicas-1)); err != nil {
+			return err
+		}
+	}
+
+	// t.ReplenishReplicas (int64) (int64)
+	if len("ReplenishReplicas") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"ReplenishReplicas\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("ReplenishReplicas"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("ReplenishReplicas")); err != nil {
+		return err
+	}
+
+	if t.ReplenishReplicas >= 0 {
+		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.ReplenishReplicas)); err != nil {
+			return err
+		}
+	} else {
+		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.ReplenishReplicas-1)); err != nil {
 			return err
 		}
 	}
@@ -529,69 +484,6 @@ func (t *AssetPullingInfo) UnmarshalCBOR(r io.Reader) (err error) {
 
 				t.Blocks = int64(extraI)
 			}
-			// t.ServerID (string) (string)
-		case "ServerID":
-
-			{
-				sval, err := cbg.ReadString(cr)
-				if err != nil {
-					return err
-				}
-
-				t.ServerID = string(sval)
-			}
-			// t.CreatedAt (int64) (int64)
-		case "CreatedAt":
-			{
-				maj, extra, err := cr.ReadHeader()
-				var extraI int64
-				if err != nil {
-					return err
-				}
-				switch maj {
-				case cbg.MajUnsignedInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 positive overflow")
-					}
-				case cbg.MajNegativeInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 negative overflow")
-					}
-					extraI = -1 - extraI
-				default:
-					return fmt.Errorf("wrong type for int64 field: %d", maj)
-				}
-
-				t.CreatedAt = int64(extraI)
-			}
-			// t.Expiration (int64) (int64)
-		case "Expiration":
-			{
-				maj, extra, err := cr.ReadHeader()
-				var extraI int64
-				if err != nil {
-					return err
-				}
-				switch maj {
-				case cbg.MajUnsignedInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 positive overflow")
-					}
-				case cbg.MajNegativeInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 negative overflow")
-					}
-					extraI = -1 - extraI
-				default:
-					return fmt.Errorf("wrong type for int64 field: %d", maj)
-				}
-
-				t.Expiration = int64(extraI)
-			}
 			// t.RetryCount (int64) (int64)
 		case "RetryCount":
 			{
@@ -669,6 +561,32 @@ func (t *AssetPullingInfo) UnmarshalCBOR(r io.Reader) (err error) {
 				}
 
 				t.CandidateReplicas = int64(extraI)
+			}
+			// t.ReplenishReplicas (int64) (int64)
+		case "ReplenishReplicas":
+			{
+				maj, extra, err := cr.ReadHeader()
+				var extraI int64
+				if err != nil {
+					return err
+				}
+				switch maj {
+				case cbg.MajUnsignedInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 positive overflow")
+					}
+				case cbg.MajNegativeInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 negative overflow")
+					}
+					extraI = -1 - extraI
+				default:
+					return fmt.Errorf("wrong type for int64 field: %d", maj)
+				}
+
+				t.ReplenishReplicas = int64(extraI)
 			}
 			// t.EdgeReplicaFailures ([]string) (slice)
 		case "EdgeReplicaFailures":

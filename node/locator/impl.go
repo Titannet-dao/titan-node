@@ -13,6 +13,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/common"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/handler"
 	"github.com/Filecoin-Titan/titan/region"
 	"github.com/filecoin-project/go-jsonrpc"
@@ -23,10 +24,7 @@ import (
 var log = logging.Logger("locator")
 
 const (
-	// 3 seconds
-	connectTimeout = 3
-	defaultAreaID  = "CN-GD-Shenzhen"
-	unknownAreaID  = "unknown-unknown-unknown"
+	unknownAreaID = "unknown-unknown-unknown"
 )
 
 type Storage interface {
@@ -39,6 +37,7 @@ type Locator struct {
 	*common.CommonAPI
 	region.Region
 	Storage
+	*config.LocatorCfg
 }
 
 type schedulerAPI struct {
@@ -56,14 +55,14 @@ func (l *Locator) GetAccessPoints(ctx context.Context, nodeID, areaID string) ([
 	if len(nodeID) == 0 || len(areaID) == 0 {
 		return nil, fmt.Errorf("params nodeID or areaID can not empty")
 	}
+
 	log.Debugf("GetAccessPoints, nodeID %s, areaID %s", nodeID, areaID)
+
 	configs, err := l.GetSchedulerConfigs(areaID)
 	if err != nil {
 		return nil, err
 	}
-	for _, cfg := range configs {
-		log.Debugf("cfg:%#v", *cfg)
-	}
+
 	schedulerAPIs, err := l.newSchedulerAPIs(configs)
 	if err != nil {
 		return nil, err
@@ -72,12 +71,17 @@ func (l *Locator) GetAccessPoints(ctx context.Context, nodeID, areaID string) ([
 	return l.selectBestSchedulers(schedulerAPIs, nodeID)
 }
 
-func (locator *Locator) selectBestSchedulers(apis []*schedulerAPI, nodeID string) ([]string, error) {
+func (l *Locator) selectBestSchedulers(apis []*schedulerAPI, nodeID string) ([]string, error) {
 	if len(apis) == 0 {
 		return nil, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout*time.Second)
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
 	defer cancel()
 
 	urlCh := make(chan string)
@@ -144,7 +148,7 @@ func (l *Locator) newSchedulerAPI(config *types.SchedulerCfg) (*schedulerAPI, er
 	return &schedulerAPI{api, close, config.SchedulerURL}, nil
 }
 
-func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) (*types.EdgeDownloadInfoList, error) {
+func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.EdgeDownloadInfoList, error) {
 	remoteAddr := handler.GetRemoteAddr(ctx)
 	areaID, err := l.getAreaID(remoteAddr)
 	if err != nil {
@@ -161,17 +165,23 @@ func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) (*types.Edg
 		return nil, err
 	}
 
+	if len(schedulerAPIs) == 0 {
+		return nil, fmt.Errorf("area %s no scheduler exist", areaID)
+	}
+
+	log.Debugf("EdgeDownloadInfos, schedulerAPIs %#v", schedulerAPIs)
+
 	return l.getEdgeDownloadInfoFromBestScheduler(schedulerAPIs, cid)
 }
 
 // getAreaID get areaID from remote address
-func (locator *Locator) getAreaID(remoteAddr string) (string, error) {
+func (l *Locator) getAreaID(remoteAddr string) (string, error) {
 	ip, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		return "", err
 	}
 
-	geoInfo, err := locator.GetGeoInfo(ip)
+	geoInfo, err := l.GetGeoInfo(ip)
 	if err != nil {
 		log.Errorf("getAreaID error %s", err.Error())
 		return "", err
@@ -181,15 +191,20 @@ func (locator *Locator) getAreaID(remoteAddr string) (string, error) {
 		return geoInfo.Geo, nil
 	}
 
-	return defaultAreaID, nil
+	return l.DefaultAreaID, nil
 }
 
-func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid string) (*types.EdgeDownloadInfoList, error) {
+func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid string) ([]*types.EdgeDownloadInfoList, error) {
 	if len(apis) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("scheduler api is empty")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout*time.Second)
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
 	defer cancel()
 
 	infoListCh := make(chan *types.EdgeDownloadInfoList)
@@ -215,24 +230,33 @@ func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid
 		select {
 		case infosList := <-infoListCh:
 			resultCount++
-			results = append(results, infosList)
+			if infosList != nil {
+				results = append(results, infosList)
+			}
 		case err := <-errCh:
 			log.Debugf("get edge download infos error:%s", err.Error())
 			resultCount++
 		}
 
 		if resultCount == len(apis) {
-			if len(results) > 0 {
-				return results[0], nil
-			}
-			return nil, nil
+			return results, nil
 		}
 	}
 }
 
 // GetUserAccessPoint get user access point for special user ip
 func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.AccessPoint, error) {
-	areaID := defaultAreaID
+	areaID := l.DefaultAreaID
+	if len(userIP) == 0 {
+		remoteAddr := handler.GetRemoteAddr(ctx)
+		host, _, err := net.SplitHostPort(remoteAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		userIP = host
+	}
+
 	geoInfo, err := l.GetGeoInfo(userIP)
 	if err != nil {
 		return nil, err

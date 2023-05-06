@@ -98,7 +98,11 @@ func (device *Device) GetNodeInfo(ctx context.Context) (types.NodeInfo, error) {
 		log.Errorf("getCpuInfo: %s", err.Error())
 	}
 
-	info.CPUUsage = cpuPercent[0]
+	if len(cpuPercent) > 0 {
+		info.CPUUsage = cpuPercent[0]
+	} else {
+		log.Warn("can not get cpu percent")
+	}
 	info.CPUCores, _ = cpu.Counts(false)
 	info.DiskSpace, info.DiskUsage = device.storage.GetDiskUsageStat()
 	info.IoSystem = device.storage.GetFileSystemType()

@@ -11,20 +11,11 @@ type MetadataDS datastore.Batching
 // GeoDBPath the location of a geo database
 type GeoDBPath string
 
-// DatabaseAddress the DSN to connect to the database
-type DatabaseAddress string
-
 // EtcdAddresses the locator to connect to the database
 type EtcdAddresses []string
 
-// PermissionWriteToken token with write permission
-type PermissionWriteToken string
-
-// PermissionAdminToken token with admin permission
-type PermissionAdminToken string
-
-// SessionCallbackFunc callback function when the node connects
-type SessionCallbackFunc func(string, string) error
+// PermissionWebToken token with admin permission
+type PermissionWebToken string
 
 // LocatorUUID the locator unique identifier
 type LocatorUUID string
@@ -35,8 +26,10 @@ type NodeID string
 // InternalIP local network address
 type InternalIP string
 
-type NodeMetadataPath string
-type AssetsPaths []string
+type (
+	NodeMetadataPath string
+	AssetsPaths      []string
+)
 
 // ServerID server id
 type ServerID string

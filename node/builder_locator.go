@@ -10,7 +10,6 @@ import (
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	"github.com/Filecoin-Titan/titan/region"
-	"github.com/jmoiron/sqlx"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 )
@@ -45,12 +44,8 @@ func ConfigLocator(c interface{}) Option {
 	return Options(
 		Override(new(*config.LocatorCfg), cfg),
 		Override(new(dtypes.ServerID), modules.NewServerID),
-		Override(new(*sqlx.DB), modules.NewDB),
 		Override(new(region.Region), modules.NewRegion),
 		Override(new(locator.Storage), modules.NewLocatorStorage),
-		Override(new(dtypes.SessionCallbackFunc), func() dtypes.SessionCallbackFunc {
-			return func(s string, s2 string) error { return nil }
-		}),
 		Override(new(dtypes.EtcdAddresses), func() dtypes.EtcdAddresses {
 			return dtypes.EtcdAddresses(cfg.EtcdAddresses)
 		}),

@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/lib/etcdcli"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/modules"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
@@ -13,6 +14,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	"github.com/Filecoin-Titan/titan/node/scheduler/nat"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/Filecoin-Titan/titan/node/scheduler/sync"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
@@ -54,20 +56,18 @@ func ConfigScheduler(c interface{}) Option {
 	return Options(
 		Override(new(dtypes.ServerID), modules.NewServerID),
 		Override(new(*config.SchedulerCfg), cfg),
-		Override(RegisterEtcd, modules.RegisterToEtcd),
-		Override(new(*pubsub.PubSub), modules.NewPubSub),
+		Override(new(*etcdcli.Client), modules.RegisterToEtcd),
 		Override(new(*sqlx.DB), modules.NewDB),
 		Override(new(*db.SQLDB), db.NewSQLDB),
+		Override(new(*pubsub.PubSub), modules.NewPubSub),
+		Override(InitDataTables, db.InitTables),
 		Override(new(*node.Manager), node.NewManager),
-		Override(new(dtypes.SessionCallbackFunc), node.KeepaliveCallBackFunc),
 		Override(new(dtypes.MetadataDS), modules.Datastore),
 		Override(new(*assets.Manager), modules.NewStorageManager),
 		Override(new(*sync.DataSync), sync.NewDataSync),
 		Override(new(*validation.Manager), modules.NewValidation),
+		Override(new(*nat.Manager), nat.NewManager),
 		Override(new(*scheduler.EdgeUpdateManager), scheduler.NewEdgeUpdateManager),
-		Override(new(dtypes.DatabaseAddress), func() dtypes.DatabaseAddress {
-			return dtypes.DatabaseAddress(cfg.DatabaseAddress)
-		}),
 		Override(new(dtypes.SetSchedulerConfigFunc), modules.NewSetSchedulerConfigFunc),
 		Override(new(dtypes.GetSchedulerConfigFunc), modules.NewGetSchedulerConfigFunc),
 		Override(new(*rsa.PrivateKey), func() (*rsa.PrivateKey, error) {

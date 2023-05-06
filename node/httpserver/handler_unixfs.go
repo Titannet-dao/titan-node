@@ -11,11 +11,11 @@ import (
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
-func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, credentials *types.Credentials) {
+func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	root, err := cid.Decode(credentials.AssetCID)
+	root, err := cid.Decode(tkPayload.AssetCID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("decode car cid error: %s", err.Error()), http.StatusBadRequest)
 		return
@@ -38,7 +38,7 @@ func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, creden
 	// Handling Unixfs file
 	if f, ok := dr.(files.File); ok {
 		log.Debugw("serving unixfs file", "path", contentPath)
-		hs.serveFile(w, r, credentials, f)
+		hs.serveFile(w, r, tkPayload, f)
 		return
 	}
 
@@ -50,9 +50,9 @@ func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, creden
 	}
 
 	log.Debugw("serving unixfs directory", "path", contentPath)
-	hs.serveDirectory(w, r, credentials, dir)
+	hs.serveDirectory(w, r, tkPayload, dir)
 }
 
-func (hs *HttpServer) serveDirectory(w http.ResponseWriter, r *http.Request, ticket *types.Credentials, dir files.Directory) {
+func (hs *HttpServer) serveDirectory(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload, dir files.Directory) {
 	http.Error(w, "dir list not support now", http.StatusBadRequest)
 }

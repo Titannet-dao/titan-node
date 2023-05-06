@@ -7,6 +7,7 @@ import (
 	gopath "path"
 
 	"github.com/Filecoin-Titan/titan/api"
+	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	bsfetcher "github.com/ipfs/go-fetcher/impl/blockservice"
@@ -23,23 +24,52 @@ import (
 	"github.com/ipld/go-ipld-prime/schema"
 )
 
+type Validation interface {
+	SetFunc(func() uint32)
+	StopValidation()
+}
+
 type HttpServer struct {
-	asset              Asset
-	scheduler          api.Scheduler
-	privateKey         *rsa.PrivateKey
-	schedulerPublicKey *rsa.PublicKey
+	asset               Asset
+	scheduler           api.Scheduler
+	privateKey          *rsa.PrivateKey
+	schedulerPublicKey  *rsa.PublicKey
+	reporter            *reporter
+	validation          Validation
+	downloadThreadCount uint32
 }
 
 // NewHttpServer creates a new HttpServer with the given Asset, Scheduler, and RSA private key.
-func NewHttpServer(asset Asset, scheduler api.Scheduler, privateKey *rsa.PrivateKey) *HttpServer {
-	hs := &HttpServer{asset: asset, scheduler: scheduler, privateKey: privateKey}
+func NewHttpServer(asset Asset, scheduler api.Scheduler, privateKey *rsa.PrivateKey, validation Validation) *HttpServer {
+	hs := &HttpServer{asset: asset, scheduler: scheduler, privateKey: privateKey, validation: validation}
+	hs.reporter = newReporter(hs)
+
+	if validation != nil {
+		validation.SetFunc(hs.DownloadThreadCount)
+	}
 
 	return hs
 }
 
 // SetSchedulerPublicKey sets the public key of the scheduler.
-func (hs *HttpServer) SetSchedulerPublicKey(publicKey *rsa.PublicKey) {
+func (hs *HttpServer) UpdateSchedulerPublicKey() error {
+	pem, err := hs.scheduler.GetSchedulerPublicKey(context.Background())
+	if err != nil {
+		return err
+	}
+
+	publicKey, err := titanrsa.Pem2PublicKey([]byte(pem))
+	if err != nil {
+		return err
+	}
+
 	hs.schedulerPublicKey = publicKey
+	return nil
+}
+
+// GetDownloadThreadCount get download thread count of httpserver
+func (hs *HttpServer) DownloadThreadCount() uint32 {
+	return hs.downloadThreadCount
 }
 
 // resolvePath resolves an IPFS path to a ResolvedPath, given the asset CID.

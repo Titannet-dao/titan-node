@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
@@ -30,16 +31,23 @@ func NewNodeStorageManager(metadataPaths dtypes.NodeMetadataPath, assetsPaths dt
 }
 
 // NewAssetsManager creates a function that generates new instances of asset.Manager.
-func NewAssetsManager(fetchBatch int) func(storageMgr *storage.Manager, bFetcher fetcher.BlockFetcher) (*asset.Manager, error) {
-	return func(storageMgr *storage.Manager, bFetcher fetcher.BlockFetcher) (*asset.Manager, error) {
-		opts := &asset.ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: fetchBatch}
+func NewAssetsManager(pullParallel int, pullTimeout int, pullRetry int) func(storageMgr *storage.Manager, bFetcher fetcher.BlockFetcher, schedulerAPI api.Scheduler) (*asset.Manager, error) {
+	return func(storageMgr *storage.Manager, bFetcher fetcher.BlockFetcher, schedulerAPI api.Scheduler) (*asset.Manager, error) {
+		opts := &asset.ManagerOptions{
+			Storage:      storageMgr,
+			BFetcher:     bFetcher,
+			SchedulerAPI: schedulerAPI,
+			PullParallel: pullParallel,
+			PullTimeout:  pullTimeout,
+			PullRetry:    pullRetry,
+		}
 		return asset.NewManager(opts)
 	}
 }
 
 // NewBlockFetcherFromCandidate creates a new instance of fetcher.BlockFetcher for the candidate network.
 func NewBlockFetcherFromCandidate(cfg *config.EdgeCfg) fetcher.BlockFetcher {
-	return fetcher.NewCandidateFetcher(cfg.FetchBlockTimeout, cfg.FetchBlockRetry)
+	return fetcher.NewCandidateFetcher()
 }
 
 // NewDataSync creates a new instance of datasync.DataSync with the given asset.Manager.

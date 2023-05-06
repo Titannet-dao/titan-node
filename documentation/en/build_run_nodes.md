@@ -38,7 +38,10 @@ If --locator=false is in step 3, you need to set the scheduler address:
 
     export SCHEDULER_API_INFO=https://your_scheduler_server_ip:port
 
-## 5 Run Candidate or Edge
+## 5 Set file descriptor limit
+    ulimit -n 100000
+
+## 6 Run Candidate or Edge
     titan-candidate run
     titan-edge run
 

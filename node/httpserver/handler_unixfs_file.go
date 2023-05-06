@@ -17,11 +17,11 @@ import (
 )
 
 // serveFile serves a single file to the client.
-func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, credentials *types.Credentials, file files.File) {
+func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload, file files.File) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	root, err := cid.Decode(credentials.AssetCID)
+	root, err := cid.Decode(tkPayload.AssetCID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("decode car cid error: %s", err.Error()), http.StatusBadRequest)
 		return

@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
@@ -28,11 +29,22 @@ const (
 
 // getHandler dispatches incoming requests to the appropriate handler based on the format requested in the Accept header or 'format' query parameter
 func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
-	ticket, err := hs.verifyCredentials(w, r)
+	tkPayload, err := hs.verifyToken(w, r)
 	if err != nil {
-		log.Warnf("verify credential error:%s", err.Error())
-		http.Error(w, fmt.Sprintf("verify ticket error : %s", err.Error()), http.StatusUnauthorized)
+		log.Warnf("verify token error:%s", err.Error())
+		http.Error(w, fmt.Sprintf("verify token error : %s", err.Error()), http.StatusUnauthorized)
 		return
+	}
+
+	atomic.AddUint32(&hs.downloadThreadCount, 1)
+	defer func() {
+		atomic.AddUint32(&hs.downloadThreadCount, ^uint32(0))
+	}()
+
+	if hs.validation != nil {
+		hs.validation.StopValidation()
+	} else {
+		log.Warn("not setting validation")
 	}
 
 	respFormat, formatParams, err := customResponseFormat(r)
@@ -43,23 +55,23 @@ func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch respFormat {
 	case "", formatJSON, formatCbor: // The implicit response format is UnixFS
-		hs.serveUnixFS(w, r, ticket)
+		hs.serveUnixFS(w, r, tkPayload)
 	case formatRaw:
-		hs.serveRawBlock(w, r, ticket)
+		hs.serveRawBlock(w, r, tkPayload)
 	case formatCar:
-		hs.serveCar(w, r, ticket, formatParams["version"])
+		hs.serveCar(w, r, tkPayload, formatParams["version"])
 	case formatTar:
-		hs.serveTAR(w, r, ticket)
+		hs.serveTAR(w, r, tkPayload)
 	case formatDagJSON, formatDagCbor:
-		hs.serveCodec(w, r, ticket)
+		hs.serveCodec(w, r, tkPayload)
 	default: // catch-all for unsuported application/vnd.*
 		http.Error(w, fmt.Sprintf("unsupported format %s", respFormat), http.StatusBadRequest)
 		return
 	}
 }
 
-// verifyCredentials checks the request's credentials to make sure it was authorized
-func (hs *HttpServer) verifyCredentials(w http.ResponseWriter, r *http.Request) (*types.Credentials, error) {
+// verifyToken checks the request's token to make sure it was authorized
+func (hs *HttpServer) verifyToken(w http.ResponseWriter, r *http.Request) (*types.TokenPayload, error) {
 	if hs.schedulerPublicKey == nil {
 		return nil, fmt.Errorf("scheduler public key not exist, can not verify sign")
 	}
@@ -72,29 +84,29 @@ func (hs *HttpServer) verifyCredentials(w http.ResponseWriter, r *http.Request) 
 	buffer := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buffer)
 
-	gwCredentials := &types.GatewayCredentials{}
-	err = dec.Decode(gwCredentials)
+	esc := &types.Token{}
+	err = dec.Decode(esc)
 	if err != nil {
-		return nil, xerrors.Errorf("decode GatewayCredentials error %w", err)
+		return nil, xerrors.Errorf("decode token error %w", err)
 	}
 
-	sign, err := hex.DecodeString(gwCredentials.Sign)
+	sign, err := hex.DecodeString(esc.Sign)
 	if err != nil {
 		return nil, err
 	}
 
-	ciphertext, err := hex.DecodeString(gwCredentials.Ciphertext)
+	cipherText, err := hex.DecodeString(esc.CipherText)
 	if err != nil {
 		return nil, err
 	}
 
 	rsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	err = rsa.VerifySign(hs.schedulerPublicKey, sign, ciphertext)
+	err = rsa.VerifySign(hs.schedulerPublicKey, sign, cipherText)
 	if err != nil {
 		return nil, err
 	}
 
-	mgs, err := rsa.Decrypt(ciphertext, hs.privateKey)
+	mgs, err := rsa.Decrypt(cipherText, hs.privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -102,12 +114,12 @@ func (hs *HttpServer) verifyCredentials(w http.ResponseWriter, r *http.Request) 
 	buffer = bytes.NewBuffer(mgs)
 	dec = gob.NewDecoder(buffer)
 
-	credentials := &types.Credentials{}
-	err = dec.Decode(credentials)
+	tkPayload := &types.TokenPayload{}
+	err = dec.Decode(tkPayload)
 	if err != nil {
 		return nil, err
 	}
-	return credentials, nil
+	return tkPayload, nil
 }
 
 // customResponseFormat checks the request's Accept header and query parameters to determine the desired response format

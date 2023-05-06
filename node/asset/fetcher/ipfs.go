@@ -2,10 +2,10 @@ package fetcher
 
 import (
 	"context"
+	"errors"
 	"io/ioutil"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
@@ -19,19 +19,17 @@ var log = logging.Logger("asset/fetcher")
 
 // IPFSClient
 type IPFSClient struct {
-	httpAPI    *httpapi.HttpApi
-	timeout    int
-	retryCount int
+	httpAPI *httpapi.HttpApi
 }
 
 // NewIPFSClient creates a new IPFSClient with the given API URL, timeout, and retry count
-func NewIPFSClient(ipfsAPIURL string, timeout, retryCount int) *IPFSClient {
+func NewIPFSClient(ipfsAPIURL string) *IPFSClient {
 	httpAPI, err := httpapi.NewURLApiWithClient(ipfsAPIURL, &http.Client{})
 	if err != nil {
 		log.Panicf("new ipfs error:%s, url:%s", err.Error(), ipfsAPIURL)
 	}
 
-	return &IPFSClient{httpAPI: httpAPI, timeout: timeout, retryCount: retryCount}
+	return &IPFSClient{httpAPI: httpAPI}
 }
 
 // FetchBlocks retrieves blocks from IPFSClient using the provided context, CIDs, and download info
@@ -40,10 +38,7 @@ func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, dss []*t
 }
 
 // retrieveBlock gets a block from IPFSClient with the specified CID
-func (ipfs *IPFSClient) retrieveBlock(cidStr string) (blocks.Block, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ipfs.timeout)*time.Second)
-	defer cancel()
-
+func (ipfs *IPFSClient) retrieveBlock(ctx context.Context, cidStr string) (blocks.Block, error) {
 	reader, err := ipfs.httpAPI.Block().Get(ctx, path.New(cidStr))
 	if err != nil {
 		return nil, err
@@ -65,27 +60,27 @@ func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]bl
 	var wg sync.WaitGroup
 
 	for _, cid := range cids {
-		cidStr := cid
 		wg.Add(1)
 
-		go func() {
+		go func(cid string) {
 			defer wg.Done()
 
-			for i := 0; i < ipfs.retryCount; i++ {
-				b, err := ipfs.retrieveBlock(cidStr)
-				if err != nil {
-					log.Errorf("getBlock error:%s, cid:%s", err.Error(), cidStr)
-					continue
-				}
-
-				blksLock.Lock()
-				blks = append(blks, b)
-				blksLock.Unlock()
+			b, err := ipfs.retrieveBlock(ctx, cid)
+			if err != nil {
+				log.Errorf("getBlock error: %s, cid: %s", err.Error(), cid)
 				return
 			}
-		}()
+
+			blksLock.Lock()
+			blks = append(blks, b)
+			blksLock.Unlock()
+		}(cid)
 	}
 	wg.Wait()
+
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return blks, ctx.Err()
+	}
 
 	return blks, nil
 }

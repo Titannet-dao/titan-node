@@ -40,9 +40,9 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 	}
 
 	// find nodes
-	nodes := m.chooseCandidateNodesForAssetReplica(seedReplicaCount, info.CandidateReplicaSucceeds)
+	nodes, str := m.chooseCandidateNodesForAssetReplica(seedReplicaCount, info.CandidateReplicaSucceeds)
 	if len(nodes) < 1 {
-		return ctx.Send(SelectFailed{error: xerrors.New("node not found")})
+		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found %s", str)})
 	}
 
 	// save to db
@@ -95,9 +95,9 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 	}
 
 	// find nodes
-	nodes := m.chooseCandidateNodesForAssetReplica(int(needCount), info.CandidateReplicaSucceeds)
+	nodes, str := m.chooseCandidateNodesForAssetReplica(int(needCount), info.CandidateReplicaSucceeds)
 	if len(nodes) < 1 {
-		return ctx.Send(SelectFailed{error: xerrors.New("node not found")})
+		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found %s", str)})
 	}
 
 	// save to db
@@ -143,9 +143,15 @@ func (m *Manager) handleCandidatesPulling(ctx statemachine.Context, info AssetPu
 
 // handleEdgesSelect handles the selection of edge nodes for asset pull
 func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle edges select , %s", info.CID)
+	log.Debugf("handle edges select , %s , %d", info.CID, info.ReplenishReplicas)
 
 	needCount := info.EdgeReplicas - int64(len(info.EdgeReplicaSucceeds))
+
+	if info.ReplenishReplicas > 0 {
+		// Check to node offline while replenishing the temporary replica
+		needCount = info.ReplenishReplicas
+	}
+
 	if needCount < 1 {
 		// The number of edge node replicas has reached the requirement
 		return ctx.Send(SkipStep{})
@@ -157,9 +163,9 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 	}
 
 	// find nodes
-	nodes := m.chooseEdgeNodesForAssetReplica(int(needCount), info.EdgeReplicaSucceeds)
+	nodes, str := m.chooseEdgeNodesForAssetReplica(int(needCount), info.EdgeReplicaSucceeds)
 	if len(nodes) < 1 {
-		return ctx.Send(SelectFailed{error: xerrors.New("node not found")})
+		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found %s", str)})
 	}
 
 	// save to db
@@ -218,7 +224,7 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 		return nil
 	}
 
-	log.Debugf("handle pulls failed: %s, retries: %d", info.CID, info.RetryCount+1)
+	log.Debugf("handle pulls failed: %s, retries: %d", info.CID, info.RetryCount)
 
 	if err := failedCoolDown(ctx, info); err != nil {
 		return err

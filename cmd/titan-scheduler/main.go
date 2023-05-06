@@ -136,7 +136,7 @@ var getAPIKeyCmd = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "perm",
-			Usage: "permission to assign to the token, one of: read, write, sign, admin",
+			Usage: "permission to assign to the token, one of: web, candidate, edge, locator,admin",
 			Value: "",
 		},
 	},
@@ -150,19 +150,7 @@ var getAPIKeyCmd = &cli.Command{
 		perm := cctx.String("perm")
 
 		p := jwtPayload{}
-
-		idx := 0
-		for i, p := range api.AllPermissions {
-			if auth.Permission(perm) == p {
-				idx = i + 1
-			}
-		}
-
-		if idx == 0 {
-			return fmt.Errorf("--perm flag has to be one of: %s", api.AllPermissions)
-		}
-
-		p.Allow = api.AllPermissions[:idx]
+		p.Allow = []auth.Permission{auth.Permission(perm)}
 
 		authKey, err := secret.APISecret(lr)
 		if err != nil {

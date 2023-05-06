@@ -52,7 +52,7 @@ func ConfigCandidate(c interface{}) Option {
 		Override(new(*device.Device), modules.NewDevice(cfg.BandwidthUp, cfg.BandwidthDown)),
 		Override(new(dtypes.NodeMetadataPath), dtypes.NodeMetadataPath(cfg.MetadataPath)),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
-		Override(new(*asset.Manager), modules.NewAssetsManager(cfg.FetchBatch)),
+		Override(new(*asset.Manager), modules.NewAssetsManager(cfg.PullBlockParallel, cfg.PullBlockTimeout, cfg.PullBlockRetry)),
 		Override(new(*validation.Validation), modules.NewNodeValidation),
 		Override(new(*rate.Limiter), modules.NewRateLimiter),
 		Override(new(*asset.Asset), asset.NewAsset),

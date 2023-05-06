@@ -32,7 +32,6 @@ titan-scheduler: $(BUILD_DEPS)
 	$(GOCC) build $(GOFLAGS) -o titan-scheduler ./cmd/titan-scheduler
 .PHONY: titan-scheduler
 
-
 titan-candidate: $(BUILD_DEPS)
 	rm -f titan-candidate
 	$(GOCC) build $(GOFLAGS) -o titan-candidate ./cmd/titan-candidate
@@ -54,6 +53,11 @@ titan-candidate-arm: $(BUILD_DEPS)
 	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -o titan-candidate-arm ./cmd/titan-candidate
 .PHONY: titan-candidate-arm
 
+
+titan-scheduler-arm: $(BUILD_DEPS)
+	rm -f titan-scheduler-arm
+	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -o titan-scheduler-arm ./cmd/titan-scheduler
+.PHONY: titan-scheduler-arm
 
 
 titan-locator: $(BUILD_DEPS)

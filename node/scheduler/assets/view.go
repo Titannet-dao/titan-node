@@ -1,10 +1,14 @@
 package assets
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"database/sql"
+	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
+	"math/rand"
 	"sort"
 
 	"github.com/ipfs/go-cid"
@@ -20,14 +24,25 @@ func (m *Manager) removeAssetFromView(nodeID string, assetCID string) error {
 
 	bucketNumber := determineBucketNumber(c)
 	bucketID := fmt.Sprintf("%s:%d", nodeID, bucketNumber)
-	assetHashes, err := m.LoadBucket(bucketID)
+	bytes, err := m.LoadBucket(bucketID)
 	if err != nil {
 		return xerrors.Errorf("load bucket error %w", err)
 	}
+
+	assetHashes := make([]string, 0)
+	if err = decode(bytes, &assetHashes); err != nil {
+		return err
+	}
+
 	assetHashes = removeTargetHash(assetHashes, c.Hash().String())
 
-	bucketHashes, err := m.LoadBucketHashes(nodeID)
+	bytes, err = m.LoadBucketHashes(nodeID)
 	if err != nil {
+		return err
+	}
+
+	bucketHashes := make(map[uint32]string)
+	if err = decode(bytes, &bucketHashes); err != nil {
 		return err
 	}
 
@@ -47,12 +62,21 @@ func (m *Manager) removeAssetFromView(nodeID string, assetCID string) error {
 		return err
 	}
 
-	if err := m.SaveAssetsView(nodeID, topHash, bucketHashes); err != nil {
+	bytes, err = encode(bucketHashes)
+	if err != nil {
+		return err
+	}
+
+	if err := m.SaveAssetsView(nodeID, topHash, bytes); err != nil {
 		return err
 	}
 
 	if len(assetHashes) > 0 {
-		return m.SaveBucket(bucketID, assetHashes)
+		bytes, err = encode(assetHashes)
+		if err != nil {
+			return err
+		}
+		return m.SaveBucket(bucketID, bytes)
 	}
 	return nil
 }
@@ -65,9 +89,14 @@ func (m *Manager) addAssetToView(nodeID string, assetCID string) error {
 	}
 	bucketNumber := determineBucketNumber(c)
 	bucketID := fmt.Sprintf("%s:%d", nodeID, bucketNumber)
-	assetHashes, err := m.LoadBucket(bucketID)
+	bytes, err := m.LoadBucket(bucketID)
 	if err != nil {
 		return xerrors.Errorf("load bucket error %w", err)
+	}
+
+	assetHashes := make([]string, 0)
+	if err = decode(bytes, &assetHashes); err != nil {
+		return err
 	}
 
 	if contains(assetHashes, c.Hash().String()) {
@@ -82,10 +111,16 @@ func (m *Manager) addAssetToView(nodeID string, assetCID string) error {
 		return err
 	}
 
-	bucketHashes, err := m.LoadBucketHashes(nodeID)
+	bytes, err = m.LoadBucketHashes(nodeID)
 	if err != nil {
 		return err
 	}
+
+	bucketHashes := make(map[uint32]string)
+	if err = decode(bytes, &bucketHashes); err != nil {
+		return err
+	}
+
 	bucketHashes[bucketNumber] = hash
 
 	topHash, err := calculateOverallHash(bucketHashes)
@@ -93,11 +128,20 @@ func (m *Manager) addAssetToView(nodeID string, assetCID string) error {
 		return err
 	}
 
-	if err := m.SaveAssetsView(nodeID, topHash, bucketHashes); err != nil {
+	bytes, err = encode(bucketHashes)
+	if err != nil {
 		return err
 	}
 
-	return m.SaveBucket(bucketID, assetHashes)
+	if err := m.SaveAssetsView(nodeID, topHash, bytes); err != nil {
+		return err
+	}
+
+	bytes, err = encode(assetHashes)
+	if err != nil {
+		return err
+	}
+	return m.SaveBucket(bucketID, bytes)
 }
 
 // determineBucketNumber calculates the bucket number for a given CID
@@ -135,9 +179,16 @@ func computeBucketHash(hashes []string) (string, error) {
 
 // calculateOverallHash computes the top hash for a given map of bucket hashes
 func calculateOverallHash(hashes map[uint32]string) (string, error) {
+	keys := make([]int, 0, len(hashes))
+	for k := range hashes {
+		keys = append(keys, int(k))
+	}
+
+	sort.Ints(keys)
+
 	hash := sha256.New()
-	for _, h := range hashes {
-		if cs, err := hex.DecodeString(h); err != nil {
+	for _, key := range keys {
+		if cs, err := hex.DecodeString(hashes[uint32(key)]); err != nil {
 			return "", err
 		} else if _, err := hash.Write(cs); err != nil {
 			return "", err
@@ -154,4 +205,79 @@ func contains(hashes []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func decode(data []byte, out interface{}) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	buffer := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buffer)
+	return dec.Decode(out)
+}
+
+func encode(in interface{}) ([]byte, error) {
+	var buffer bytes.Buffer
+	enc := gob.NewEncoder(&buffer)
+	err := enc.Encode(in)
+	if err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+// RandomAsset get node asset with random seed
+func (m *Manager) RandomAsset(nodeID string, seed int64) (*cid.Cid, error) {
+	r := rand.New(rand.NewSource(seed))
+	bytes, err := m.LoadBucketHashes(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	hashes := make(map[uint32]string)
+	if err := decode(bytes, &hashes); err != nil {
+		return nil, err
+	}
+
+	if len(hashes) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	// TODO　save bucket hashes as array
+	bucketIDs := make([]int, 0, len(hashes))
+	for k := range hashes {
+		bucketIDs = append(bucketIDs, int(k))
+	}
+
+	sort.Ints(bucketIDs)
+
+	index := r.Intn(len(bucketIDs))
+	bucketID := bucketIDs[index]
+
+	id := fmt.Sprintf("%s:%d", nodeID, bucketID)
+	bytes, err = m.LoadBucket(id)
+	if err != nil {
+		return nil, err
+	}
+
+	assetHashes := make([]string, 0)
+	if err = decode(bytes, &assetHashes); err != nil {
+		return nil, err
+	}
+
+	if len(assetHashes) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	index = r.Intn(len(assetHashes))
+	hash := assetHashes[index]
+
+	bytes, err = hex.DecodeString(hash)
+	if err != nil {
+		return nil, err
+	}
+
+	c := cid.NewCidV0(bytes)
+	return &c, nil
 }

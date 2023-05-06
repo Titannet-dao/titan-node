@@ -129,7 +129,7 @@ func (a *Asset) GetPullingAssetInfo(ctx context.Context) (*types.InProgressAsset
 }
 
 // GetBlocksOfAsset returns a random subset of blocks for the given asset.
-func (a *Asset) GetBlocksOfAsset(assetCID string, randomSeed int64, randomCount int) (map[int]string, error) {
+func (a *Asset) GetBlocksOfAsset(assetCID string, randomSeed int64, randomCount int) ([]string, error) {
 	root, err := cid.Decode(assetCID)
 	if err != nil {
 		return nil, err

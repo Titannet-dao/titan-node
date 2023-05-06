@@ -2,6 +2,7 @@ package validation
 
 import (
 	"context"
+	"database/sql"
 	"math/rand"
 	"time"
 
@@ -9,7 +10,6 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/google/uuid"
-	"golang.org/x/xerrors"
 )
 
 const (
@@ -28,6 +28,8 @@ func (m *Manager) startValidationTicker(ctx context.Context) {
 			if enable := m.isEnabled(); !enable {
 				continue
 			}
+
+			m.profit = m.getValidationProfit()
 
 			if err := m.startValidate(); err != nil {
 				log.Errorf("start new round: %v", err)
@@ -52,6 +54,17 @@ func (m *Manager) isEnabled() bool {
 	}
 
 	return cfg.EnableValidation
+}
+
+// get the profit of validation
+func (m *Manager) getValidationProfit() float64 {
+	cfg, err := m.config()
+	if err != nil {
+		log.Errorf("get config err:%s", err.Error())
+		return 0
+	}
+
+	return cfg.ValidationProfit
 }
 
 // startValidate is a method of the Manager that starts a new validation round.
@@ -115,9 +128,11 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 		}
 
 		for nodeID := range vr.ValidatableNodes {
-			cid, err := m.getNodeValidationCID(nodeID)
+			cid, err := m.assetMgr.RandomAsset(nodeID, m.seed)
 			if err != nil {
-				log.Errorf("%s getNodeValidationCID err:%s", nodeID, err.Error())
+				if err != sql.ErrNoRows {
+					log.Errorf("%s RandomAsset err:%s", nodeID, err.Error())
+				}
 				continue
 			}
 
@@ -126,7 +141,9 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 				NodeID:      nodeID,
 				ValidatorID: vID,
 				Status:      types.ValidationStatusCreate,
-				Cid:         cid,
+				Cid:         cid.String(),
+				StartTime:   time.Now(),
+				EndTime:     time.Now(),
 			}
 			vrInfos = append(vrInfos, dbInfo)
 
@@ -143,33 +160,6 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 	return bReqs, vrInfos
 }
 
-// getNodeValidationCID retrieves a random validation CID from the node with the given ID.
-func (m *Manager) getNodeValidationCID(nodeID string) (string, error) {
-	count, err := m.nodeMgr.LoadNodeReplicaCount(nodeID)
-	if err != nil {
-		return "", err
-	}
-
-	if count < 1 {
-		return "", xerrors.New("Node has no replica")
-	}
-
-	rand := rand.New(rand.NewSource(time.Now().UnixNano()))
-	// rand count
-	offset := rand.Intn(count)
-
-	cids, err := m.nodeMgr.LoadAssetCIDsByNodeID(nodeID, 1, offset)
-	if err != nil {
-		return "", err
-	}
-
-	if len(cids) < 1 {
-		return "", xerrors.New("Node has no replica")
-	}
-
-	return cids[0], nil
-}
-
 // getRandNum generates a random number up to a given maximum value.
 func (m *Manager) getRandNum(max int, r *rand.Rand) int {
 	if max > 0 {
@@ -180,7 +170,7 @@ func (m *Manager) getRandNum(max int, r *rand.Rand) int {
 }
 
 // updateResultInfo updates the validation result information for a given node.
-func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult) error {
+func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult, profit float64) error {
 	resultInfo := &types.ValidationResultInfo{
 		RoundID:     m.curRoundID,
 		NodeID:      vr.NodeID,
@@ -188,20 +178,20 @@ func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.Valida
 		BlockNumber: int64(len(vr.Cids)),
 		Bandwidth:   vr.Bandwidth,
 		Duration:    vr.CostTime,
+		Profit:      profit,
 	}
 
 	return m.nodeMgr.UpdateValidationResultInfo(resultInfo)
 }
 
 // HandleResult handles the validation result for a given node.
-func (m *Manager) HandleResult(vr *api.ValidationResult) error {
-	log.Debugf("HandleResult roundID :%s , vr.Cids :%v", vr.RoundID, vr.Cids)
-
+func (m *Manager) HandleResult(vr *api.ValidationResult) {
 	var status types.ValidationStatus
 	nodeID := vr.NodeID
+	profit := float64(0)
 
 	defer func() {
-		err := m.updateResultInfo(status, vr)
+		err := m.updateResultInfo(status, vr, profit)
 		if err != nil {
 			log.Errorf("updateResultInfo [%s] fail : %s", nodeID, err.Error())
 		}
@@ -209,48 +199,78 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) error {
 
 	if vr.IsCancel {
 		status = types.ValidationStatusCancel
-		return nil
+		return
 	}
 
 	if vr.IsTimeout {
 		status = types.ValidationStatusNodeTimeOut
-		return nil
+		return
 	}
 
 	cidCount := len(vr.Cids)
 	if cidCount < 1 {
 		status = types.ValidationStatusValidateFail
-		return nil
+		return
 	}
 
 	vInfo, err := m.nodeMgr.LoadNodeValidationInfo(m.curRoundID, nodeID)
 	if err != nil {
 		status = types.ValidationStatusLoadDBErr
 		log.Errorf("LoadNodeValidationCID %s , %s, err:%s", m.curRoundID, nodeID, err.Error())
-		return nil
+		return
 	}
 
 	if vInfo.ValidatorID != vr.Validator {
 		status = types.ValidationStatusValidatorMismatch
-		return nil
+		return
 	}
 
 	hash, err := cidutil.CIDToHash(vInfo.Cid)
 	if err != nil {
 		status = types.ValidationStatusCIDToHashErr
 		log.Errorf("CIDString2HashString %s, err:%s", vInfo.Cid, err.Error())
-		return nil
+		return
 	}
 
-	rows, err := m.nodeMgr.LoadReplicasByHash(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	cids, err := m.getAssetBlocksFromCandidate(hash, vInfo.Cid, nodeID, cidCount)
 	if err != nil {
 		status = types.ValidationStatusLoadDBErr
+		return
+	}
+
+	if len(cids) <= 0 {
+		status = types.ValidationStatusGetValidatorBlockErr
+		log.Errorf("handleValidationResult candidate map is nil , %s", vr.CID)
+		return
+	}
+
+	// do validate
+	for i := 0; i < cidCount; i++ {
+		resultCid := vr.Cids[i]
+		validatorCid := cids[i]
+
+		// TODO Penalize the candidate if vCid error
+
+		if !m.compareCid(resultCid, validatorCid) {
+			status = types.ValidationStatusValidateFail
+			log.Errorf("round [%s] and nodeID [%s], validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, nodeID, resultCid, validatorCid, i)
+			return
+		}
+	}
+
+	profit = m.profit
+	status = types.ValidationStatusSuccess
+}
+
+func (m *Manager) getAssetBlocksFromCandidate(hash, cid string, filterNode string, cidCount int) ([]string, error) {
+	rows, err := m.nodeMgr.LoadReplicasByHash(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	if err != nil {
 		log.Errorf("LoadReplicasByHash %s , err:%s", hash, err.Error())
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 
-	var cCidMap map[int]string
+	var cids []string
 
 	for rows.Next() {
 		rInfo := &types.ReplicaInfo{}
@@ -261,7 +281,7 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) error {
 		}
 
 		cNodeID := rInfo.NodeID
-		if cNodeID == nodeID {
+		if cNodeID == filterNode {
 			continue
 		}
 
@@ -270,7 +290,7 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) error {
 			continue
 		}
 
-		cCidMap, err = node.GetBlocksOfAsset(context.Background(), vInfo.Cid, m.seed, cidCount)
+		cids, err = node.GetBlocksOfAsset(context.Background(), cid, m.seed, cidCount)
 		if err != nil {
 			log.Errorf("candidate %s GetBlocksOfAsset err:%s", cNodeID, err.Error())
 			continue
@@ -279,37 +299,7 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) error {
 		break
 	}
 
-	if len(cCidMap) <= 0 {
-		status = types.ValidationStatusGetValidatorBlockErr
-		log.Errorf("handleValidationResult candidate map is nil , %s", vr.CID)
-		return nil
-	}
-
-	record, err := m.nodeMgr.LoadAssetRecord(hash)
-	if err != nil {
-		status = types.ValidationStatusLoadDBErr
-		log.Errorf("handleValidationResult asset record %s , err:%s", vr.CID, err.Error())
-		return nil
-	}
-
-	r := rand.New(rand.NewSource(m.seed))
-	// do validate
-	for i := 0; i < cidCount; i++ {
-		resultCid := vr.Cids[i]
-		randNum := m.getRandNum(int(record.TotalBlocks), r)
-		vCid := cCidMap[randNum]
-
-		// TODO Penalize the candidate if vCid error
-
-		if !m.compareCid(resultCid, vCid) {
-			status = types.ValidationStatusValidateFail
-			log.Errorf("round [%d] and nodeID [%s], validator fail resultCid:%s, vCid:%s,randNum:%d,index:%d", m.curRoundID, nodeID, resultCid, vCid, randNum, i)
-			return nil
-		}
-	}
-
-	status = types.ValidationStatusSuccess
-	return nil
+	return cids, nil
 }
 
 // compares two CID strings and returns true if they are equal, false otherwise

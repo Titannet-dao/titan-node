@@ -155,11 +155,6 @@ var generateRsaKey = &cli.Command{
 		if err := lr.SetPrivateKey(privatePem); err != nil {
 			return err
 		}
-
-		publicKey := privateKey.PublicKey
-		publicPem := titanrsa.PublicKey2Pem(&publicKey)
-
-		fmt.Println(string(publicPem))
 		return nil
 	},
 }
@@ -168,7 +163,11 @@ var showKey = &cli.Command{
 	Name:  "show",
 	Usage: "show key",
 	Action: func(cctx *cli.Context) error {
-		repoPath := getRepoPath(cctx)
+		repoPath, err := getRepoPath(cctx)
+		if err != nil {
+			return err
+		}
+
 		r, err := repo.NewFS(repoPath)
 		if err != nil {
 			return err
@@ -213,11 +212,6 @@ var importKey = &cli.Command{
 		if err := lr.SetPrivateKey(privatePem); err != nil {
 			return err
 		}
-
-		publicKey := privateKey.PublicKey
-		publicPem := titanrsa.PublicKey2Pem(&publicKey)
-
-		fmt.Println(string(publicPem))
 		return nil
 	},
 }
@@ -244,7 +238,11 @@ var exportKey = &cli.Command{
 			return fmt.Errorf("pk-path or sk-path can not empty")
 		}
 
-		repoPath := getRepoPath(cctx)
+		repoPath, err := getRepoPath(cctx)
+		if err != nil {
+			return err
+		}
+
 		r, err := repo.NewFS(repoPath)
 		if err != nil {
 			return err
@@ -278,8 +276,17 @@ var exportKey = &cli.Command{
 }
 
 func openRepo(cctx *cli.Context) (repo.LockedRepo, error) {
-	repoPath := getRepoPath(cctx)
+	repoPath, err := getRepoPath(cctx)
+	if err != nil {
+		return nil, err
+	}
+
 	r, err := repo.NewFS(repoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	repoType, err := getRepoType(cctx)
 	if err != nil {
 		return nil, err
 	}
@@ -289,12 +296,12 @@ func openRepo(cctx *cli.Context) (repo.LockedRepo, error) {
 		return nil, err
 	}
 	if !ok {
-		if err := r.Init(repo.Edge); err != nil {
+		if err := r.Init(repoType); err != nil {
 			return nil, err
 		}
 	}
 
-	lr, err := r.Lock(repo.Edge)
+	lr, err := r.Lock(repoType)
 	if err != nil {
 		return nil, err
 	}
@@ -302,25 +309,34 @@ func openRepo(cctx *cli.Context) (repo.LockedRepo, error) {
 	return lr, nil
 }
 
-func getRepoPath(cctx *cli.Context) string {
-	ti, ok := cctx.App.Metadata["repoType"]
-	if !ok {
-		return ""
-	}
-
-	t, ok := ti.(repo.RepoType)
-	if !ok {
-		log.Errorf("repoType type does not match the type of repo.RepoType")
+func getRepoPath(cctx *cli.Context) (string, error) {
+	t, err := getRepoType(cctx)
+	if err != nil {
+		return "", err
 	}
 
 	repoFlags := t.RepoFlags()
 	if len(repoFlags) == 0 {
-		return ""
+		return "", fmt.Errorf("not setting repo flags")
 	}
 
-	return cctx.String(repoFlags[0])
+	return cctx.String(repoFlags[0]), nil
 }
 
+func getRepoType(cctx *cli.Context) (repo.RepoType, error) {
+	ti, ok := cctx.App.Metadata["repoType"]
+	if !ok {
+		return nil, fmt.Errorf("not setting repo type in app metadata")
+	}
+
+	t, ok := ti.(repo.RepoType)
+	if !ok {
+		return nil, fmt.Errorf("type does not match the type of repo.RepoType")
+	}
+
+	return t, nil
+
+}
 func readPrivateKey(path string) (*rsa.PrivateKey, error) {
 	pem, err := os.ReadFile(path)
 	if err != nil {
@@ -354,6 +370,28 @@ var configCmds = &cli.Command{
 	Usage: "set config",
 	Subcommands: []*cli.Command{
 		setConfigCmd,
+		showConfigCmd,
+	},
+}
+
+var showConfigCmd = &cli.Command{
+	Name:  "show",
+	Usage: "show config",
+	Flags: []cli.Flag{},
+	Action: func(cctx *cli.Context) error {
+		lr, err := openRepo(cctx)
+		if err != nil {
+			return err
+		}
+		defer lr.Close() //nolint:errcheck  // ignore error
+
+		cfg, err := lr.Config()
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%#v\n", cfg)
+		return nil
 	},
 }
 
@@ -363,42 +401,42 @@ var setConfigCmd = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "listen-address",
-			Usage: "local listen address, example: --listen-address=0.0.0.0:1234",
+			Usage: "local listen address, example: --listen-address=local_server_ip:port",
 			Value: "0.0.0.0:1234",
 		},
 		&cli.StringFlag{
 			Name:  "timeout",
-			Usage: "network connect timeout. example: --timeout=30s",
+			Usage: "network connect timeout. example: --timeout=timeout",
 			Value: "30s",
 		},
 		&cli.StringFlag{
 			Name:  "node-id",
 			Usage: "example: --node-id=your_node_id",
-			Value: "your_node_id",
+			Value: "",
 		},
 		&cli.StringFlag{
 			Name:  "area-id",
 			Usage: "example: --area-id=your_area_id",
-			Value: "your_area_id",
+			Value: "",
 		},
 		&cli.StringFlag{
 			Name:  "metadata-path",
 			Usage: "metadata path, example: --metadata-path=/path/to/metadata",
 			Value: "",
 		},
-		&cli.StringFlag{
+		&cli.StringSliceFlag{
 			Name:  "assets-paths",
 			Usage: "assets paths, example: --assets-paths=/path/to/assets1,/path/to/assets2",
-			Value: "",
+			Value: &cli.StringSlice{},
 		},
-		&cli.IntFlag{
+		&cli.Int64Flag{
 			Name:  "bandwidth-up",
-			Usage: "example: --bandwidth-up=104857600",
+			Usage: "example: --bandwidth-up=your_bandwidth_up",
 			Value: 104857600,
 		},
-		&cli.IntFlag{
+		&cli.Int64Flag{
 			Name:  "bandwidth-down",
-			Usage: "example: --bandwidth-down=1073741824",
+			Usage: "example: --bandwidth-down=your_bandwidth_down",
 			Value: 1073741824,
 		},
 		&cli.BoolFlag{
@@ -409,32 +447,47 @@ var setConfigCmd = &cli.Command{
 		&cli.StringFlag{
 			Name:  "certificate-path",
 			Usage: "example: --certificate-path=/path/to/certificate",
-			Value: "/path/to/certificate",
+			Value: "",
 		},
 		&cli.StringFlag{
 			Name:  "private-key-path",
 			Usage: "example: --private-key-path=/path/to/private.key",
-			Value: "/path/to/private.key",
+			Value: "",
 		},
 		&cli.StringFlag{
 			Name:  "ca-certificate-path",
 			Usage: "example: --ca-certificate-path=/path/to/ca-certificate",
-			Value: "/path/to/ca-certificate",
+			Value: "",
 		},
 		&cli.IntFlag{
 			Name:  "fetch-block-timeout",
-			Usage: "fetch block timeout, unit is seconds, example: --fetch-block-timeout=3",
+			Usage: "fetch block timeout, unit is seconds, example: --fetch-block-timeout=timeout",
 			Value: 3,
 		},
 		&cli.IntFlag{
 			Name:  "fetch-block-retry",
-			Usage: "retry number when fetch block failed, example: --fetch-block-retry=2",
+			Usage: "retry of times when fetch block failed, example: --fetch-block-retry=retry_count",
 			Value: 2,
 		},
 		&cli.IntFlag{
 			Name:  "fetch-batch",
-			Usage: "example: --fetch-batch=5",
+			Usage: "example: --fetch-batch=fetch_batch",
 			Value: 5,
+		},
+		&cli.StringFlag{
+			Name:  "tcp-server-addr",
+			Usage: "only use for candidate, example: --tcp-server-addr=local_server_ip:port",
+			Value: "0.0.0.0:9000",
+		},
+		&cli.StringFlag{
+			Name:  "ipfs-api-url",
+			Usage: "only use for candidate, example: --ipfs-api-url=http://ipfs-server:api_port_of_ipfs_server",
+			Value: "",
+		},
+		&cli.IntFlag{
+			Name:  "validate-duration",
+			Usage: "only use for candidate, example: --validate-duration=duration",
+			Value: 10,
 		},
 	},
 
@@ -448,7 +501,12 @@ var setConfigCmd = &cli.Command{
 		lr.SetConfig(func(raw interface{}) {
 			cfg, ok := raw.(*config.EdgeCfg)
 			if !ok {
-				return
+				candidateCfg, ok := raw.(*config.CandidateCfg)
+				if !ok {
+					log.Errorf("can not convert interface to CandidateCfg")
+					return
+				}
+				cfg = &candidateCfg.EdgeCfg
 			}
 
 			if cctx.IsSet("listen-address") {
@@ -487,15 +545,28 @@ var setConfigCmd = &cli.Command{
 			if cctx.IsSet("ca-certificate-path") {
 				cfg.CaCertificatePath = cctx.String("ca-certificate-path")
 			}
-			if cctx.IsSet("fetch-block-timeout") {
-				cfg.FetchBlockTimeout = cctx.Int("fetch-block-timeout")
+			if cctx.IsSet("pull-block-timeout") {
+				cfg.PullBlockTimeout = cctx.Int("pull-block-timeout")
 			}
-			if cctx.IsSet("fetch-block-retry") {
-				cfg.FetchBlockRetry = cctx.Int("fetch-block-retry")
+			if cctx.IsSet("pull-block-retry") {
+				cfg.PullBlockRetry = cctx.Int("pull-block-retry")
 			}
-			if cctx.IsSet("fetch-batch") {
-				cfg.FetchBatch = cctx.Int("fetch-batch")
+			if cctx.IsSet("pull-block-parallel") {
+				cfg.PullBlockParallel = cctx.Int("pull-block-parallel")
 			}
+
+			if cctx.IsSet("tcp-server-addr") {
+				cfg.TCPSrvAddr = cctx.String("tcp-server-addr")
+			}
+
+			if cctx.IsSet("ipfs-api-url") {
+				cfg.IPFSAPIURL = cctx.String("ipfs-api-url")
+			}
+
+			if cctx.IsSet("validate-duration") {
+				cfg.ValidateDuration = cctx.Int("validate-duration")
+			}
+
 		})
 
 		return nil

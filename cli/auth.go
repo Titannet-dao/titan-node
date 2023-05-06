@@ -8,7 +8,6 @@ import (
 
 	"github.com/filecoin-project/go-jsonrpc/auth"
 
-	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/repo"
 )
 
@@ -27,7 +26,7 @@ var AuthCreateAdminToken = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "perm",
-			Usage: "permission to assign to the token, one of: read, write, sign, admin",
+			Usage: "permission to assign to the token, one of: web, candidate, edge, locator,admin",
 		},
 	},
 
@@ -45,19 +44,7 @@ var AuthCreateAdminToken = &cli.Command{
 		}
 
 		perm := cctx.String("perm")
-		idx := 0
-		for i, p := range api.AllPermissions {
-			if auth.Permission(perm) == p {
-				idx = i + 1
-			}
-		}
-
-		if idx == 0 {
-			return fmt.Errorf("--perm flag has to be one of: %s", api.AllPermissions)
-		}
-
-		// slice on [:idx] so for example: 'sign' gives you [read, write, sign]
-		token, err := napi.AuthNew(ctx, api.AllPermissions[:idx])
+		token, err := napi.AuthNew(ctx, []auth.Permission{auth.Permission(perm)})
 		if err != nil {
 			return err
 		}
@@ -75,7 +62,7 @@ var AuthAPIInfoToken = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "perm",
-			Usage: "permission to assign to the token, one of: read, write, sign, admin",
+			Usage: "permission to assign to the token, one of: web, candidate, edge, locator,admin",
 		},
 	},
 
@@ -89,23 +76,11 @@ var AuthAPIInfoToken = &cli.Command{
 		ctx := ReqContext(cctx)
 
 		if !cctx.IsSet("perm") {
-			return xerrors.New("--perm flag not set, use with one of: read, write, sign, admin")
+			return xerrors.New("--perm flag not set, use with one of: web, candidate, edge, locator,admin")
 		}
 
 		perm := cctx.String("perm")
-		idx := 0
-		for i, p := range api.AllPermissions {
-			if auth.Permission(perm) == p {
-				idx = i + 1
-			}
-		}
-
-		if idx == 0 {
-			return fmt.Errorf("--perm flag has to be one of: %s", api.AllPermissions)
-		}
-
-		// slice on [:idx] so for example: 'sign' gives you [read, write, sign]
-		token, err := napi.AuthNew(ctx, api.AllPermissions[:idx])
+		token, err := napi.AuthNew(ctx, []auth.Permission{auth.Permission(perm)})
 		if err != nil {
 			return err
 		}

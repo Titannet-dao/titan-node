@@ -53,4 +53,18 @@ var (
 		EdgesSelect.String(),
 		EdgesPulling.String(),
 	}
+
+	// AllStates contains a list of asset pull states that represent all.
+	AllStates = []string{
+		SeedSelect.String(),
+		SeedPulling.String(),
+		CandidatesSelect.String(),
+		CandidatesPulling.String(),
+		EdgesSelect.String(),
+		EdgesPulling.String(),
+		SeedFailed.String(),
+		CandidatesFailed.String(),
+		EdgesFailed.String(),
+		Servicing.String(),
+	}
 )

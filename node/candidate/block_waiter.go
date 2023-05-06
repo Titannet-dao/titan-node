@@ -1,13 +1,20 @@
 package candidate
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
+	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
+	"golang.org/x/xerrors"
 )
 
 // blockWaiter holds the information necessary to wait for blocks from a node
@@ -16,16 +23,31 @@ type blockWaiter struct {
 	result   *api.ValidationResult
 	duration int
 	NodeValidatedResulter
+	privateKey *rsa.PrivateKey
+}
+
+type blockWaiterOptions struct {
+	nodeID     string
+	ch         chan tcpMsg
+	duration   int
+	resulter   NodeValidatedResulter
+	privateKey *rsa.PrivateKey
 }
 
 // NodeValidatedResulter is the interface to return the validation result
 type NodeValidatedResulter interface {
-	NodeValidationResult(ctx context.Context, vr api.ValidationResult) error
+	NodeValidationResult(ctx context.Context, vr api.ValidationResult, sign string) error
 }
 
 // newBlockWaiter creates a new blockWaiter instance
-func newBlockWaiter(nodeID string, ch chan tcpMsg, duration int, resulter NodeValidatedResulter) *blockWaiter {
-	bw := &blockWaiter{ch: ch, duration: duration, result: &api.ValidationResult{NodeID: nodeID}, NodeValidatedResulter: resulter}
+func newBlockWaiter(opts *blockWaiterOptions) *blockWaiter {
+	bw := &blockWaiter{
+		ch:                    opts.ch,
+		duration:              opts.duration,
+		result:                &api.ValidationResult{NodeID: opts.nodeID},
+		NodeValidatedResulter: opts.resulter,
+		privateKey:            opts.privateKey,
+	}
 	go bw.wait()
 
 	return bw
@@ -37,13 +59,14 @@ func (bw *blockWaiter) wait() {
 	now := time.Now()
 
 	defer func() {
-		bw.calculateBandwidth(int64(time.Since(now)), size)
+		bw.result.CostTime = int64(time.Since(now) / time.Second)
+		bw.calculateBandwidth(size)
 		if err := bw.sendValidateResult(); err != nil {
 			log.Errorf("send validate result %s", err.Error())
 		}
 
-		log.Debugf("validator %s %d block, bandwidth:%f, cost time:%d, IsTimeout:%v, duration:%d, size:%d, randCount:%d",
-			bw.result.NodeID, len(bw.result.Cids), bw.result.Bandwidth, bw.result.CostTime, bw.result.IsTimeout, bw.duration, size, bw.result.RandomCount)
+		log.Debugf("validate %s %d block, bandwidth:%f, cost time:%d, IsTimeout:%v, duration:%d, size:%d, randCount:%d, isCancel:%t",
+			bw.result.NodeID, len(bw.result.Cids), bw.result.Bandwidth, bw.result.CostTime, bw.result.IsTimeout, bw.duration, size, bw.result.RandomCount, bw.result.IsCancel)
 	}()
 
 	for {
@@ -72,12 +95,25 @@ func (bw *blockWaiter) wait() {
 
 // sendValidateResult sends the validation result
 func (bw *blockWaiter) sendValidateResult() error {
-	return bw.NodeValidationResult(context.Background(), *bw.result)
+	var buffer bytes.Buffer
+	enc := gob.NewEncoder(&buffer)
+	err := enc.Encode(bw.result)
+	if err != nil {
+		return err
+	}
+
+	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	sign, err := titanRsa.Sign(bw.privateKey, buffer.Bytes())
+	if err != nil {
+		return xerrors.Errorf("sign validate result error: %w", err.Error())
+	}
+
+	return bw.NodeValidationResult(context.Background(), *bw.result, hex.EncodeToString(sign))
 }
 
 // calculateBandwidth calculates the bandwidth based on the block size and duration
-func (bw *blockWaiter) calculateBandwidth(costTime int64, size int64) {
-	bw.result.CostTime = costTime
+func (bw *blockWaiter) calculateBandwidth(size int64) {
+	costTime := bw.result.CostTime
 	if costTime < int64(bw.duration) {
 		costTime = int64(bw.duration)
 	}

@@ -14,11 +14,11 @@ import (
 )
 
 // serveTAR responds to an HTTP request with the content at the specified path in a TAR archive format.
-func (hs *HttpServer) serveTAR(w http.ResponseWriter, r *http.Request, credentials *types.Credentials) {
+func (hs *HttpServer) serveTAR(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	assetCID, err := cid.Decode(credentials.AssetCID)
+	assetCID, err := cid.Decode(tkPayload.AssetCID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("decode car cid error: %s", err.Error()), http.StatusBadRequest)
 		return

@@ -52,7 +52,6 @@ type NodeInfo struct {
 	DownloadBlocks  int             `json:"download_blocks" form:"downloadCount" gorm:"column:download_blocks;comment:;" db:"download_blocks"`
 	PortMapping     string          `db:"port_mapping"`
 	LastSeen        time.Time       `db:"last_seen"`
-	IsQuitted       bool            `db:"quitted"`
 	SchedulerID     dtypes.ServerID `db:"scheduler_sid"`
 }
 
@@ -102,4 +101,9 @@ const (
 
 func (t EventTopics) String() string {
 	return string(t)
+}
+
+// ValidationInfo Validation, election related information
+type ValidationInfo struct {
+	NextElectionTime time.Time
 }

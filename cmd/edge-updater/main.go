@@ -53,8 +53,8 @@ var runCmd = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "update-server",
-			Usage: "update server url",
-			Value: "http://192.168.0.132:3456/rpc/v0",
+			Usage: "update server url, example: --update-server=http://update_server:port/rpc/v0",
+			Value: "",
 		},
 		&cli.StringFlag{
 			Name:  "install-path",

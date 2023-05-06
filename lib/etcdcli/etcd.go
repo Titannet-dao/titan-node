@@ -4,18 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
-	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
-
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
 	"golang.org/x/xerrors"
 )
 
 const (
 	connectServerTimeoutTime = 5  // Second
 	serverKeepAliveDuration  = 10 // Second
+
+	validationResultAliveDuration = 60 // Second
+
+	masterName = "/master/%s"
 )
 
 // Client ...
@@ -29,6 +32,17 @@ func New(addrs []string) (*Client, error) {
 		Endpoints:   addrs,
 		DialTimeout: connectServerTimeoutTime * time.Second,
 	}
+
+	// set username and password
+	userName := os.Getenv("ETCD_USERNAME")
+	password := os.Getenv("ETCD_PASSWORD")
+	if len(userName) > 0 {
+		config.Username = userName
+	}
+	if len(password) > 0 {
+		config.Password = password
+	}
+
 	// connect
 	cli, err := clientv3.New(config)
 	if err != nil {
@@ -43,43 +57,36 @@ func New(addrs []string) (*Client, error) {
 }
 
 // ServerRegister register to etcd , If already register in, return an error
-func (c *Client) ServerRegister(t context.Context, serverID dtypes.ServerID, value string) error {
+func (c *Client) ServerRegister(t context.Context, serverID, nodeType, value string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
 	defer cancel()
 
-	serverKey := fmt.Sprintf("/%s/%s", types.RunningNodeType.String(), serverID)
+	serverKey := fmt.Sprintf("/%s/%s", nodeType, serverID)
 
 	// get a lease
-	lease := clientv3.NewLease(c.cli)
-	leaseRsp, err := lease.Grant(ctx, serverKeepAliveDuration)
+	leaseRsp, err := c.cli.Grant(ctx, serverKeepAliveDuration)
 	if err != nil {
 		return xerrors.Errorf("Grant lease err:%s", err.Error())
 	}
 
 	leaseID := leaseRsp.ID
 
-	kv := clientv3.NewKV(c.cli)
-	// Create transaction
-	txn := kv.Txn(ctx)
-
-	// If the revision of key is equal to 0
-	txn.If(clientv3.Compare(clientv3.CreateRevision(serverKey), "=", 0)).
+	txn := c.cli.Txn(context.Background())
+	resp, err := txn.
+		If(clientv3.Compare(clientv3.CreateRevision(serverKey), "=", 0)).
 		Then(clientv3.OpPut(serverKey, value, clientv3.WithLease(leaseID))).
-		Else(clientv3.OpGet(serverKey))
-
-	// Commit transaction
-	txnResp, err := txn.Commit()
+		Else().
+		Commit()
 	if err != nil {
 		return err
 	}
 
-	// already exists
-	if !txnResp.Succeeded {
-		return xerrors.Errorf("Server key already exists")
+	if !resp.Succeeded {
+		return xerrors.Errorf("key already exists")
 	}
 
 	// KeepAlive
-	keepRespChan, err := lease.KeepAlive(context.TODO(), leaseID)
+	keepRespChan, err := c.cli.KeepAlive(context.TODO(), leaseID)
 	if err != nil {
 		return err
 	}
@@ -94,8 +101,8 @@ func (c *Client) ServerRegister(t context.Context, serverID dtypes.ServerID, val
 }
 
 // WatchServers watch server login and logout
-func (c *Client) WatchServers(ctx context.Context, nodeType types.NodeType) clientv3.WatchChan {
-	prefix := fmt.Sprintf("/%s/", nodeType.String())
+func (c *Client) WatchServers(ctx context.Context, nodeType string) clientv3.WatchChan {
+	prefix := fmt.Sprintf("/%s/", nodeType)
 
 	watcher := clientv3.NewWatcher(c.cli)
 	watchRespChan := watcher.Watch(ctx, prefix, clientv3.WithPrefix())
@@ -103,47 +110,96 @@ func (c *Client) WatchServers(ctx context.Context, nodeType types.NodeType) clie
 	return watchRespChan
 }
 
-// ListServers list server
-func (c *Client) GetServers(nodeType types.NodeType) (*clientv3.GetResponse, error) {
+// GetServers get servers
+func (c *Client) GetServers(nodeType string) (*clientv3.GetResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
 	defer cancel()
 
-	serverKeyPrefix := fmt.Sprintf("/%s/", nodeType.String())
+	serverKeyPrefix := fmt.Sprintf("/%s/", nodeType)
 	kv := clientv3.NewKV(c.cli)
 
 	return kv.Get(ctx, serverKeyPrefix, clientv3.WithPrefix())
 }
 
 // ServerUnRegister UnRegister to etcd
-func (c *Client) ServerUnRegister(t context.Context, serverID dtypes.ServerID) error {
-	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
-	defer cancel()
+func (c *Client) ServerUnRegister(t context.Context, serverID, nodeType string) error {
+	serverKey := fmt.Sprintf("/%s/%s", nodeType, serverID)
+	_, err := c.cli.Delete(context.Background(), serverKey)
 
-	kv := clientv3.NewKV(c.cli)
-
-	serverKey := fmt.Sprintf("/%s/%s", types.RunningNodeType.String(), serverID)
-
-	_, err := kv.Delete(ctx, serverKey)
 	return err
 }
 
 // SCUnmarshal  Unmarshal SchedulerCfg
-func SCUnmarshal(v []byte) (*types.SchedulerCfg, error) {
-	s := &types.SchedulerCfg{}
-	err := json.Unmarshal(v, s)
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
+func SCUnmarshal(data []byte, out interface{}) error {
+	return json.Unmarshal(data, out)
 }
 
 // SCMarshal  Marshal SchedulerCfg
-func SCMarshal(s *types.SchedulerCfg) ([]byte, error) {
-	v, err := json.Marshal(s)
+func SCMarshal(s interface{}) ([]byte, error) {
+	return json.Marshal(s)
+}
+
+func (c *Client) acquireLock(lockPfx string, leaseID clientv3.LeaseID) error {
+	s, err := concurrency.NewSession(c.cli, concurrency.WithLease(leaseID))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return v, nil
+	m := concurrency.NewMutex(s, lockPfx)
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
+	defer cancel()
+
+	return m.Lock(ctx)
+}
+
+func (c *Client) releaseLock(lockPfx string, leaseID clientv3.LeaseID) error {
+	s, err := concurrency.NewSession(c.cli, concurrency.WithLease(leaseID))
+	if err != nil {
+		return err
+	}
+
+	m := concurrency.NewMutex(s, lockPfx)
+	// need to call the lock function first, then the myKey inside the Mutex object will have a value, and then you can unlock it later.
+	err = m.Lock(context.Background())
+	if err != nil {
+		return err
+	}
+
+	return m.Unlock(context.Background())
+}
+
+// AcquireMasterLock Request to become a master server
+func (c *Client) AcquireMasterLock(serverType string) (clientv3.LeaseID, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
+	defer cancel()
+
+	lease, err := c.cli.Grant(ctx, validationResultAliveDuration)
+	if err != nil {
+		return 0, err
+	}
+
+	err = c.acquireLock(fmt.Sprintf(masterName, serverType), lease.ID)
+	if err != nil {
+		return 0, err
+	}
+
+	// KeepAlive
+	keepRespChan, err := c.cli.KeepAlive(context.TODO(), lease.ID)
+	if err != nil {
+		return 0, err
+	}
+	// lease keepalive response queue capacity only 16 , so need to read it
+	go func() {
+		for {
+			<-keepRespChan
+		}
+	}()
+
+	return lease.ID, nil
+}
+
+// ReleaseMasterLock release master lock
+func (c *Client) ReleaseMasterLock(leaseID clientv3.LeaseID, serverType string) error {
+	return c.releaseLock(fmt.Sprintf(masterName, serverType), leaseID)
 }

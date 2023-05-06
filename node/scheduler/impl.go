@@ -1,10 +1,12 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rsa"
 	"database/sql"
+	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -12,7 +14,9 @@ import (
 
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
+	"github.com/Filecoin-Titan/titan/node/scheduler/nat"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
+	"github.com/google/uuid"
 
 	"go.uber.org/fx"
 
@@ -46,6 +50,7 @@ type Scheduler struct {
 	NodeManager            *node.Manager
 	ValidationMgr          *validation.Manager
 	AssetManager           *assets.Manager
+	NatManager             *nat.Manager
 	DataSync               *sync.DataSync
 	SchedulerCfg           *config.SchedulerCfg
 	SetSchedulerConfigFunc dtypes.SetSchedulerConfigFunc
@@ -79,11 +84,6 @@ func (s *Scheduler) VerifyNodeAuthToken(ctx context.Context, token string) ([]au
 
 // NodeLogin creates a new JWT token for a node.
 func (s *Scheduler) NodeLogin(ctx context.Context, nodeID, sign string) (string, error) {
-	p := jwtPayload{
-		Allow:  api.ReadWritePerms,
-		NodeID: nodeID,
-	}
-
 	remoteAddr := handler.GetRemoteAddr(ctx)
 	oldNode := s.NodeManager.GetNode(nodeID)
 	if oldNode != nil {
@@ -96,6 +96,11 @@ func (s *Scheduler) NodeLogin(ctx context.Context, nodeID, sign string) (string,
 	pem, err := s.NodeManager.LoadNodePublicKey(nodeID)
 	if err != nil {
 		return "", xerrors.Errorf("%s load node public key failed: %w", nodeID, err)
+	}
+
+	nType, err := s.NodeManager.LoadNodeType(nodeID)
+	if err != nil {
+		return "", xerrors.Errorf("%s load node type failed: %w", nodeID, err)
 	}
 
 	publicKey, err := titanrsa.Pem2PublicKey([]byte(pem))
@@ -112,6 +117,18 @@ func (s *Scheduler) NodeLogin(ctx context.Context, nodeID, sign string) (string,
 	err = rsa.VerifySign(publicKey, signBuf, []byte(nodeID))
 	if err != nil {
 		return "", err
+	}
+
+	p := jwtPayload{
+		NodeID: nodeID,
+	}
+
+	if nType == types.NodeEdge {
+		p.Allow = append(p.Allow, api.RoleEdge)
+	} else if nType == types.NodeCandidate {
+		p.Allow = append(p.Allow, api.RoleCandidate)
+	} else {
+		return "", xerrors.Errorf("Node type mismatch [%d]", nType)
 	}
 
 	tk, err := jwt.Sign(&p, s.APISecret)
@@ -131,8 +148,8 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 
 	cNode := s.NodeManager.GetNode(nodeID)
 	if cNode == nil {
-		if !s.nodeExists(nodeID, nodeType) {
-			return xerrors.Errorf("node not exists: %s , type: %d", nodeID, nodeType)
+		if err := s.NodeManager.NodeExists(nodeID, nodeType); err != nil {
+			return xerrors.Errorf("node: %s, type: %d, error: %w", nodeID, nodeType, err)
 		}
 		cNode = node.New()
 		alreadyConnect = false
@@ -193,11 +210,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		cNode.SetTCPPort(opts.TcpServerPort)
 		cNode.SetRemoteAddr(remoteAddr)
 
-		if nodeType == types.NodeEdge {
-			natType := s.determineNATType(context.Background(), cNode.API, remoteAddr)
-			nodeInfo.NATType = natType.String()
-		}
-
 		cNode.NodeInfo = &nodeInfo
 
 		err = s.NodeManager.NodeOnline(cNode)
@@ -205,6 +217,10 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 			log.Errorf("nodeConnect err:%s,nodeID:%s", err.Error(), nodeID)
 			return err
 		}
+	}
+
+	if nodeType == types.NodeEdge {
+		go s.NatManager.DetermineEdgeNATType(context.Background(), nodeID)
 	}
 
 	s.DataSync.AddNodeToList(nodeID)
@@ -229,15 +245,37 @@ func (s *Scheduler) GetExternalAddress(ctx context.Context) (string, error) {
 }
 
 // NodeValidationResult processes the validation result for a node
-func (s *Scheduler) NodeValidationResult(ctx context.Context, result api.ValidationResult) error {
+func (s *Scheduler) NodeValidationResult(ctx context.Context, result api.ValidationResult, sign string) error {
 	validator := handler.GetNodeID(ctx)
-	log.Debug("call back Validator block result, Validator is ", validator)
+	node := s.NodeManager.GetNode(validator)
+	if node == nil {
+		return fmt.Errorf("node %s not online", validator)
+	}
+
+	signBuf, err := hex.DecodeString(sign)
+	if err != nil {
+		return err
+	}
+
+	var buffer bytes.Buffer
+	enc := gob.NewEncoder(&buffer)
+	err = enc.Encode(result)
+	if err != nil {
+		return err
+	}
+
+	rsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	err = rsa.VerifySign(node.PublicKey(), signBuf, buffer.Bytes())
+	if err != nil {
+		return err
+	}
 
 	vs := &result
 	vs.Validator = validator
 
-	// s.Validator.PushResultToQueue(vs)
-	return s.ValidationMgr.HandleResult(vs)
+	s.ValidationMgr.HandleResult(vs)
+
+	return nil
 }
 
 // RegisterNode adds a new node to the scheduler with the specified node ID, public key, and node type
@@ -253,8 +291,6 @@ func (s *Scheduler) RegisterNode(ctx context.Context, pKey string, nodeType type
 
 // UnregisterNode removes a node from the scheduler with the specified node ID
 func (s *Scheduler) UnregisterNode(ctx context.Context, nodeID string) error {
-	s.NodeManager.NodesQuit([]string{nodeID})
-
 	return s.db.DeleteNodeInfo(nodeID)
 }
 
@@ -318,24 +354,10 @@ func (s *Scheduler) UpdateNodePort(ctx context.Context, nodeID, port string) err
 	return s.NodeManager.UpdatePortMapping(nodeID, port)
 }
 
-// nodeExists checks if the node with the specified ID exists.
-func (s *Scheduler) nodeExists(nodeID string, nodeType types.NodeType) bool {
-	err := s.NodeManager.NodeExists(nodeID, nodeType)
-	if err != nil {
-		log.Errorf("node exists %s", err.Error())
-		return false
-	}
-
-	return true
-}
-
 // NodeExists checks if the node with the specified ID exists.
 func (s *Scheduler) NodeExists(ctx context.Context, nodeID string) error {
 	if err := s.NodeManager.NodeExists(nodeID, types.NodeEdge); err != nil {
-		if err == sql.ErrNoRows {
-			return s.NodeManager.NodeExists(nodeID, types.NodeCandidate)
-		}
-		return err
+		return s.NodeManager.NodeExists(nodeID, types.NodeCandidate)
 	}
 
 	return nil
@@ -372,6 +394,13 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 		_, exist := validator[nodeInfo.NodeID]
 		if exist {
 			nodeInfo.Type = types.NodeValidator
+		}
+
+		nInfo := s.NodeManager.GetNode(nodeInfo.NodeID)
+		if nInfo != nil {
+			nodeInfo.IsOnline = true
+			nodeInfo.ExternalIP = nInfo.ExternalIP
+			nodeInfo.InternalIP = nInfo.InternalIP
 		}
 
 		nodeInfos = append(nodeInfos, *nodeInfo)
@@ -420,6 +449,8 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 	}
 	defer rows.Close()
 
+	tkPayloads := make([]*types.TokenPayload, 0)
+
 	for rows.Next() {
 		rInfo := &types.ReplicaInfo{}
 		err = rows.StructScan(rInfo)
@@ -438,22 +469,106 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 			continue
 		}
 
-		credentials, err := cNode.Credentials(cid, titanRsa, s.NodeManager.PrivateKey)
+		token, tkPayload, err := cNode.Token(cid, titanRsa, s.NodeManager.PrivateKey)
 		if err != nil {
 			continue
 		}
+		tkPayloads = append(tkPayloads, tkPayload)
+
 		source := &types.CandidateDownloadInfo{
-			URL:         cNode.DownloadAddr(),
-			Credentials: credentials,
+			URL: cNode.DownloadAddr(),
+			Tk:  token,
 		}
 
 		sources = append(sources, source)
 	}
 
+	if len(tkPayloads) > 0 {
+		if err = s.NodeManager.SaveTokenPayload(tkPayloads); err != nil {
+			return nil, err
+		}
+	}
+
 	return sources, nil
 }
 
-// GetAssetListForBucket retrieves a list of assets for the specified node's bucket.
-func (s *Scheduler) GetAssetListForBucket(ctx context.Context, nodeID string) ([]string, error) {
-	return nil, nil
+// GetAssetListForBucket retrieves a list of asset hashes for the specified node's bucket.
+func (s *Scheduler) GetAssetListForBucket(ctx context.Context, bucketID uint32) ([]string, error) {
+	nodeID := handler.GetNodeID(ctx)
+	id := fmt.Sprintf("%s:%d", nodeID, bucketID)
+	hashBytes, err := s.NodeManager.LoadBucket(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(hashBytes) == 0 {
+		return make([]string, 0), nil
+	}
+
+	buffer := bytes.NewBuffer(hashBytes)
+	dec := gob.NewDecoder(buffer)
+
+	out := make([]string, 0)
+	if err = dec.Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetValidationInfo  get information related to validation and election
+func (s *Scheduler) GetValidationInfo(ctx context.Context) (*types.ValidationInfo, error) {
+	eTime := s.ValidationMgr.GetNextElectionTime()
+
+	return &types.ValidationInfo{
+		NextElectionTime: eTime,
+	}, nil
+}
+
+// GetEdgeExternalServiceAddress returns the external service address of an edge node
+func (s *Scheduler) GetEdgeExternalServiceAddress(ctx context.Context, nodeID, candidateURL string) (string, error) {
+	eNode := s.NodeManager.GetEdgeNode(nodeID)
+	if eNode != nil {
+		return eNode.ExternalServiceAddress(ctx, candidateURL)
+	}
+
+	return "", fmt.Errorf("node %s offline or not exist", nodeID)
+}
+
+// NatPunch performs NAT traversal
+func (s *Scheduler) NatPunch(ctx context.Context, target *types.NatPunchReq) error {
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	sourceURL := fmt.Sprintf("https://%s/ping", remoteAddr)
+
+	eNode := s.NodeManager.GetEdgeNode(target.NodeID)
+	if eNode == nil {
+		return xerrors.Errorf("edge %n not exist", target.NodeID)
+	}
+
+	return eNode.UserNATPunch(context.Background(), sourceURL, target)
+}
+
+func (s *Scheduler) GetCandidateURLsForDetectNat(ctx context.Context) ([]string, error) {
+	return s.NatManager.GetCandidateURLsForDetectNat(ctx)
+}
+
+// NodeKeepalive candidate and edge keepalive
+func (s *Scheduler) NodeKeepalive(ctx context.Context) (uuid.UUID, error) {
+	uuid, err := s.CommonAPI.Session(ctx)
+
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	nodeID := handler.GetNodeID(ctx)
+	if nodeID != "" && remoteAddr != "" {
+		lastTime := time.Now()
+
+		node := s.NodeManager.GetNode(nodeID)
+		if node != nil {
+			node.SetLastRequestTime(lastTime)
+
+			if remoteAddr != node.RemoteAddr() {
+				return uuid, xerrors.New("remoteAddr inconsistent")
+			}
+		}
+	}
+
+	return uuid, err
 }

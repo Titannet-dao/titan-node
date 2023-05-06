@@ -14,6 +14,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
 	"github.com/Filecoin-Titan/titan/node/sqldb"
+	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/filecoin-project/pubsub"
 	logging "github.com/ipfs/go-log/v2"
 	"go.uber.org/fx"
@@ -27,31 +28,17 @@ import (
 var log = logging.Logger("modules")
 
 // NewDB returns an *sqlx.DB instance
-func NewDB(dbPath dtypes.DatabaseAddress) (*sqlx.DB, error) {
-	return sqldb.NewDB(string(dbPath))
-}
-
-// GenerateTokenWithWritePermission create a new token based on the given permissions
-func GenerateTokenWithWritePermission(ca *common.CommonAPI) (dtypes.PermissionWriteToken, error) {
-	token, err := ca.AuthNew(context.Background(), api.ReadWritePerms)
-	if err != nil {
-		return "", err
-	}
-	return dtypes.PermissionWriteToken(token), nil
+func NewDB(cfg *config.SchedulerCfg) (*sqlx.DB, error) {
+	return sqldb.NewDB(cfg.DatabaseAddress)
 }
 
 // GenerateTokenWithAdminPermission create a new token based on the given permissions
-func GenerateTokenWithAdminPermission(ca *common.CommonAPI) (dtypes.PermissionAdminToken, error) {
-	token, err := ca.AuthNew(context.Background(), api.AllPermissions)
+func GenerateTokenWithAdminPermission(ca *common.CommonAPI) (dtypes.PermissionWebToken, error) {
+	token, err := ca.AuthNew(context.Background(), []auth.Permission{api.RoleWeb})
 	if err != nil {
 		return "", err
 	}
-	return dtypes.PermissionAdminToken(token), nil
-}
-
-// DefaultSessionCallback returns a default session callback function
-func DefaultSessionCallback() dtypes.SessionCallbackFunc {
-	return func(s string, s2 string) error { return nil }
+	return dtypes.PermissionWebToken(token), nil
 }
 
 // StorageManagerParams Manager Params
@@ -92,8 +79,8 @@ func NewStorageManager(params StorageManagerParams) *assets.Manager {
 }
 
 // NewValidation creates a new validation manager instance
-func NewValidation(mctx helpers.MetricsCtx, lc fx.Lifecycle, m *node.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *validation.Manager {
-	v := validation.NewManager(m, configFunc, p)
+func NewValidation(mctx helpers.MetricsCtx, lc fx.Lifecycle, nm *node.Manager, am *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *validation.Manager {
+	v := validation.NewManager(nm, am, configFunc, p)
 
 	ctx := helpers.LifecycleCtx(mctx, lc)
 	lc.Append(fx.Hook{
@@ -115,8 +102,6 @@ func NewSetSchedulerConfigFunc(r repo.LockedRepo) func(config.SchedulerCfg) erro
 			if !ok {
 				return
 			}
-			scfg.SchedulerServer1 = cfg.SchedulerServer1
-			scfg.SchedulerServer2 = cfg.SchedulerServer2
 			scfg.EnableValidation = cfg.EnableValidation
 		})
 	}
@@ -146,10 +131,10 @@ func NewPubSub() *pubsub.PubSub {
 }
 
 // RegisterToEtcd registers the server to etcd
-func RegisterToEtcd(mctx helpers.MetricsCtx, lc fx.Lifecycle, configFunc dtypes.GetSchedulerConfigFunc, serverID dtypes.ServerID, token dtypes.PermissionAdminToken) error {
+func RegisterToEtcd(mctx helpers.MetricsCtx, lc fx.Lifecycle, configFunc dtypes.GetSchedulerConfigFunc, serverID dtypes.ServerID, token dtypes.PermissionWebToken) (*etcdcli.Client, error) {
 	cfg, err := configFunc()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	sCfg := &types.SchedulerCfg{
@@ -160,23 +145,23 @@ func RegisterToEtcd(mctx helpers.MetricsCtx, lc fx.Lifecycle, configFunc dtypes.
 
 	value, err := etcdcli.SCMarshal(sCfg)
 	if err != nil {
-		return xerrors.Errorf("cfg SCMarshal err:%s", err.Error())
+		return nil, xerrors.Errorf("cfg SCMarshal err:%s", err.Error())
 	}
 
 	eCli, err := etcdcli.New(cfg.EtcdAddresses)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ctx := helpers.LifecycleCtx(mctx, lc)
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
-			return eCli.ServerRegister(ctx, serverID, string(value))
+			return eCli.ServerRegister(ctx, string(serverID), types.RunningNodeType.String(), string(value))
 		},
 		OnStop: func(context.Context) error {
-			return eCli.ServerUnRegister(ctx, serverID)
+			return eCli.ServerUnRegister(ctx, string(serverID), types.RunningNodeType.String())
 		},
 	})
 
-	return nil
+	return eCli, nil
 }

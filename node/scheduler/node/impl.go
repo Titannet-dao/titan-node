@@ -4,34 +4,6 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 )
 
-// NodesQuit nodes quit and removes their replicas
-func (m *Manager) NodesQuit(nodeIDs []string) {
-	err := m.UpdateNodesQuitted(nodeIDs)
-	if err != nil {
-		log.Errorf("NodesQuit: UpdateNodesQuitted err:%s", err.Error())
-		return
-	}
-
-	log.Infof("node event , nodes quit:%v", nodeIDs)
-
-	hashes, err := m.LoadAssetHashesOfNodes(nodeIDs)
-	if err != nil {
-		log.Errorf("NodesQuit: LoadAssetHashesOfNodes err:%s", err.Error())
-		return
-	}
-
-	err = m.DeleteReplicasForNodes(nodeIDs)
-	if err != nil {
-		log.Errorf("NodesQuit: DeleteReplicasForNodes err:%s", err.Error())
-		return
-	}
-
-	for _, hash := range hashes {
-		// TODO change asset state
-		log.Infof("NodesQuit: Need to add replica for asset:%s", hash)
-	}
-}
-
 // GetAllCandidateNodes  returns a list of all candidate nodes
 func (m *Manager) GetAllCandidateNodes() []string {
 	var out []string
@@ -39,6 +11,18 @@ func (m *Manager) GetAllCandidateNodes() []string {
 		nodeID := key.(string)
 		out = append(out, nodeID)
 		return true
+	})
+
+	return out
+}
+
+// GetCandidateNodes return n candidate node
+func (m *Manager) GetCandidateNodes(n int) []*Node {
+	var out []*Node
+	m.candidateNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		out = append(out, node)
+		return len(out) < n
 	})
 
 	return out
@@ -99,22 +83,16 @@ func (m *Manager) GetOnlineNodeCount(nodeType types.NodeType) int {
 
 // NodeOnline registers a node as online
 func (m *Manager) NodeOnline(node *Node) error {
-	nodeID := node.NodeID
-
 	err := m.saveInfo(node.NodeInfo)
 	if err != nil {
 		return err
 	}
 
-	if node.Type == types.NodeEdge {
+	switch node.Type {
+	case types.NodeEdge:
 		m.storeEdgeNode(node)
-		return nil
-	}
-
-	if node.Type == types.NodeCandidate {
+	case types.NodeCandidate:
 		m.storeCandidateNode(node)
-		// update validator owner
-		return m.UpdateValidatorInfo(m.ServerID, nodeID)
 	}
 
 	return nil
