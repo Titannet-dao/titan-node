@@ -1,3 +1,5 @@
+<img width="1288" alt="image" src="https://github.com/Filecoin-Titan/titan/assets/125969858/09d536d1-59df-4187-b410-c90c74602d6b">
+
 #  Titan CDN+
 Titan is a Filecoin extension, backed by Filecoin and focused on last-mile **CDN+** networks.
 Currently, Titan's goals are:
