@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"strings"
-	"sync/atomic"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
@@ -36,15 +35,11 @@ func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	atomic.AddUint32(&hs.downloadThreadCount, 1)
-	defer func() {
-		atomic.AddUint32(&hs.downloadThreadCount, ^uint32(0))
-	}()
-
-	if hs.validation != nil {
-		hs.validation.StopValidation()
-	} else {
-		log.Warn("not setting validation")
+	if len(tkPayload.ID) > 0 {
+		hs.tokens.Store(tkPayload.ID, struct{}{})
+		defer func() {
+			hs.tokens.Delete(tkPayload.ID)
+		}()
 	}
 
 	respFormat, formatParams, err := customResponseFormat(r)
@@ -79,6 +74,15 @@ func (hs *HttpServer) verifyToken(w http.ResponseWriter, r *http.Request) (*type
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	// TODO check if come from browser
+	if len(data) == 0 && len(r.UserAgent()) > 0 {
+		rootCID, err := getCIDFromURLPath(r.URL.Path)
+		if err != nil {
+			return nil, err
+		}
+		return &types.TokenPayload{AssetCID: rootCID.String()}, nil
 	}
 
 	buffer := bytes.NewBuffer(data)

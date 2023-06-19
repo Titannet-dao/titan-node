@@ -1,17 +1,24 @@
 package cli
 
 import (
+	"context"
 	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/xerrors"
+	"github.com/Filecoin-Titan/titan/cli/util"
 )
 
 var EdgeCmds = []*cli.Command{
@@ -20,6 +27,7 @@ var EdgeCmds = []*cli.Command{
 	progressCmd,
 	keyCmds,
 	configCmds,
+	registerCmd,
 }
 
 var nodeInfoCmd = &cli.Command{
@@ -571,4 +579,115 @@ var setConfigCmd = &cli.Command{
 
 		return nil
 	},
+}
+
+var registerCmd = &cli.Command{
+	Name:  "register",
+	Usage: "register node",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:     "key",
+			Usage:    "activation key",
+			Required: true,
+		},
+		&cli.IntFlag{
+			Name:  "bits",
+			Usage: "generate private key bits",
+			Value: 1024,
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		lr, err := openRepo(cctx)
+		if err != nil {
+			return err
+		}
+		defer lr.Close() //nolint:errcheck  // ignore error
+
+		key := cctx.String("key")
+		jsonString, err := base64.StdEncoding.DecodeString(key)
+		if err != nil {
+			return err
+		}
+
+		var activation types.ActivationDetail
+		err = json.Unmarshal([]byte(jsonString), &activation)
+		if err != nil {
+			return err
+		}
+
+		udpPacketConn, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			return err
+		}
+		defer udpPacketConn.Close() //nolint:errcheck  // ignore error
+
+		httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, true, "")
+		if err != nil {
+			return xerrors.Errorf("new http3 client: %w", err)
+		}
+		jsonrpc.SetHttp3Client(httpClient)
+
+		schedulerURL, err := getAccessPoint(cctx, activation.NodeID, activation.AreaID)
+		if err != nil {
+			return err
+		}
+
+		schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, nil)
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		bits := cctx.Int("bits")
+		privateKey, err := titanrsa.GeneratePrivateKey(bits)
+		if err != nil {
+			return err
+		}
+
+		pem := titanrsa.PublicKey2Pem(&privateKey.PublicKey)
+
+		err = schedulerAPI.RegisterNode(context.Background(), activation.NodeID, string(pem), activation.ActivationKey)
+		if err != nil {
+			return err
+		}
+
+		privatePem := titanrsa.PrivateKey2Pem(privateKey)
+		if err := lr.SetPrivateKey(privatePem); err != nil {
+			return err
+		}
+
+		return lr.SetConfig(func(raw interface{}) {
+			cfg, ok := raw.(*config.EdgeCfg)
+			if !ok {
+				candidateCfg, ok := raw.(*config.CandidateCfg)
+				if !ok {
+					log.Errorf("can not convert interface to CandidateCfg")
+					return
+				}
+				cfg = &candidateCfg.EdgeCfg
+			}
+
+			cfg.NodeID = activation.NodeID
+			cfg.AreaID = activation.AreaID
+		})
+	},
+}
+
+func getAccessPoint(cctx *cli.Context, nodeID, areaID string) (string, error) {
+	locator, closer, err := GetLocatorAPI(cctx)
+	if err != nil {
+		return "", err
+	}
+	defer closer()
+
+	schedulerURLs, err := locator.GetAccessPoints(context.Background(), nodeID, areaID)
+	if err != nil {
+		return "", err
+	}
+
+	if len(schedulerURLs) <= 0 {
+		return "", fmt.Errorf("no access point in area %s for node %s", areaID, nodeID)
+	}
+
+	return schedulerURLs[0], nil
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
@@ -36,7 +37,7 @@ type blockWaiterOptions struct {
 
 // NodeValidatedResulter is the interface to return the validation result
 type NodeValidatedResulter interface {
-	NodeValidationResult(ctx context.Context, vr api.ValidationResult, sign string) error
+	NodeValidationResult(ctx context.Context, r io.Reader, sign string) error
 }
 
 // newBlockWaiter creates a new blockWaiter instance
@@ -65,8 +66,8 @@ func (bw *blockWaiter) wait() {
 			log.Errorf("send validate result %s", err.Error())
 		}
 
-		log.Debugf("validate %s %d block, bandwidth:%f, cost time:%d, IsTimeout:%v, duration:%d, size:%d, randCount:%d, isCancel:%t",
-			bw.result.NodeID, len(bw.result.Cids), bw.result.Bandwidth, bw.result.CostTime, bw.result.IsTimeout, bw.duration, size, bw.result.RandomCount, bw.result.IsCancel)
+		log.Debugf("validate %s %d block, bandwidth:%f, cost time:%d, IsTimeout:%v, duration:%d, size:%d, randCount:%d, isCancel:%t, token:%s",
+			bw.result.NodeID, len(bw.result.Cids), bw.result.Bandwidth, bw.result.CostTime, bw.result.IsTimeout, bw.duration, size, bw.result.RandomCount, bw.result.IsCancel, bw.result.Token)
 	}()
 
 	for {
@@ -78,6 +79,7 @@ func (bw *blockWaiter) wait() {
 		switch tcpMsg.msgType {
 		case api.TCPMsgTypeCancel:
 			bw.result.IsCancel = true
+			bw.result.Token = string(tcpMsg.msg)
 		case api.TCPMsgTypeBlock:
 			if tcpMsg.length > 0 {
 				if cid, err := cidFromData(tcpMsg.msg); err == nil {
@@ -108,7 +110,7 @@ func (bw *blockWaiter) sendValidateResult() error {
 		return xerrors.Errorf("sign validate result error: %w", err.Error())
 	}
 
-	return bw.NodeValidationResult(context.Background(), *bw.result, hex.EncodeToString(sign))
+	return bw.NodeValidationResult(context.Background(), &buffer, hex.EncodeToString(sign))
 }
 
 // calculateBandwidth calculates the bandwidth based on the block size and duration

@@ -6,19 +6,6 @@
 	make install
 ## 2 Install and start Vitess (this is a simple example, if it is a production environment, please refer to the official documentation to deploy https://vitess.io/docs/16.0 )
 Please refer to the official sample example documentation (https://vitess.io/docs/16.0/get-started/local/)
-Operate up to the 'Start a Single Keyspace Cluster' step
-Next, create a Keyspace for titan in Cluster, and initialize the data tables required by titan in the Keyspace, set mysql user and password for titan
-### 2.1 Copy the vitess example folder to the titan vitess-titan directory
-    cp -r examples ~/titan/vitess-titan
-    cp -r web ~/titan/vitess-titan
-    cd ~/titan/vitess-titan
-### 2.2 Create a mysql user and password for titan
-The mysql user and password are configured in mysql_auth_server_static_creds.json
-You need to add mysql_auth_server_static_creds to the vtgate-up.sh script
-
-    sed -i "s/--mysql_auth_server_impl none/--mysql_auth_server_impl static --mysql_auth_server_static_file mysql_auth_server_static_creds.json /g" examples/common/scripts/vtgate-up.sh
-### 2.3 Start the initialization cluster script
-    bash titan_initial_cluster.sh
 
 ## 3 Install and start etcd(this is a simple example, if it is a production environment, please refer to the official documentation to deploy https://etcd.io/docs/v3.4/op-guide/clustering/)
     cd ~

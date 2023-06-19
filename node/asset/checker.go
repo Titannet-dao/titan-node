@@ -22,11 +22,29 @@ type randomCheck struct {
 	lru *lruCache
 }
 
-// NewRandomCheck creates a new instance of randomCheck
-func NewRandomCheck(randomSeed int64, storage storage.Storage, lru *lruCache) (*randomCheck, error) {
+// newRandomCheck creates a new instance of randomCheck
+func newRandomCheck(randomSeed int64, storage storage.Storage, lru *lruCache) (*randomCheck, error) {
 	check := &randomCheck{randomSeed: randomSeed, Storage: storage, lru: lru}
 	if err := check.init(context.Background()); err != nil {
 		return nil, err
+	}
+	log.Debugf("NewRandomCheck, randomSeed:%d, asset %s", randomSeed, check.root.String())
+	return check, nil
+}
+
+func randomBlockFromAsset(root cid.Cid, randomSeed int64, lru *lruCache) (*randomCheck, error) {
+	check := &randomCheck{randomSeed: randomSeed, lru: lru}
+	check.rand = rand.New(rand.NewSource(randomSeed))
+	check.root = &root
+
+	idx, err := check.lru.assetIndex(root)
+	if err != nil {
+		return nil, xerrors.Errorf("asset index %w", err)
+	}
+
+	var ok bool
+	if check.idx, ok = idx.(*index.MultiIndexSorted); !ok {
+		return nil, xerrors.Errorf("idx is not MultiIndexSorted")
 	}
 	return check, nil
 }
@@ -50,10 +68,9 @@ func (rc *randomCheck) init(ctx context.Context) error {
 			return xerrors.Errorf("asset index %w", err)
 		}
 
-		if multiIndex, ok := idx.(*index.MultiIndexSorted); !ok {
+		var ok bool
+		if rc.idx, ok = idx.(*index.MultiIndexSorted); !ok {
 			return xerrors.Errorf("idx is not MultiIndexSorted")
-		} else {
-			rc.idx = multiIndex
 		}
 	}
 
@@ -65,7 +82,7 @@ func (rc *randomCheck) init(ctx context.Context) error {
 func (rc *randomCheck) GetBlock(ctx context.Context) (blocks.Block, error) {
 	sizeOfBucket := rc.idx.BucketCount()
 	index := rc.rand.Intn(int(sizeOfBucket))
-	records, err := rc.idx.GetBucketRecords(uint32(index))
+	_, records, err := rc.idx.GetBucketRecords(uint32(index))
 	if err != nil {
 		return nil, xerrors.Errorf("get bucket %w", err)
 	}

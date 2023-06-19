@@ -31,11 +31,11 @@ func NewNodeStorageManager(metadataPaths dtypes.NodeMetadataPath, assetsPaths dt
 }
 
 // NewAssetsManager creates a function that generates new instances of asset.Manager.
-func NewAssetsManager(pullParallel int, pullTimeout int, pullRetry int) func(storageMgr *storage.Manager, bFetcher fetcher.BlockFetcher, schedulerAPI api.Scheduler) (*asset.Manager, error) {
-	return func(storageMgr *storage.Manager, bFetcher fetcher.BlockFetcher, schedulerAPI api.Scheduler) (*asset.Manager, error) {
+func NewAssetsManager(pullParallel int, pullTimeout int, pullRetry int, ipfsAPIURL string) func(storageMgr *storage.Manager, schedulerAPI api.Scheduler) (*asset.Manager, error) {
+	return func(storageMgr *storage.Manager, schedulerAPI api.Scheduler) (*asset.Manager, error) {
 		opts := &asset.ManagerOptions{
 			Storage:      storageMgr,
-			BFetcher:     bFetcher,
+			IPFSAPIURL:   ipfsAPIURL,
 			SchedulerAPI: schedulerAPI,
 			PullParallel: pullParallel,
 			PullTimeout:  pullTimeout,

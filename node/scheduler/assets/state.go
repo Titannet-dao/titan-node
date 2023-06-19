@@ -5,12 +5,14 @@ type AssetState string
 
 // Constants defining various states of the asset pulling process.
 const (
-	// UndefinedState represents an undefined state.
-	UndefinedState AssetState = ""
 	// SeedSelect select first candidate to pull seed asset
 	SeedSelect AssetState = "SeedSelect"
 	// SeedPulling Waiting for candidate nodes to pull seed asset
-	SeedPulling AssetState = "SeedPulling "
+	SeedPulling AssetState = "SeedPulling"
+	// UploadInit Initialize user upload preparation
+	UploadInit AssetState = "UploadInit"
+	// SeedUploading Waiting for user to upload asset to candidate node
+	SeedUploading AssetState = "SeedUploading"
 	// CandidatesSelect select candidates to pull asset
 	CandidatesSelect AssetState = "CandidatesSelect"
 	// CandidatesPulling candidate nodes pulling asset
@@ -27,6 +29,8 @@ const (
 	CandidatesFailed AssetState = "CandidatesFailed"
 	// EdgesFailed  Unable to select edge nodes or failed to pull asset
 	EdgesFailed AssetState = "EdgesFailed"
+	// UploadFailed User failed to upload assets
+	UploadFailed AssetState = "UploadFailed"
 	// Remove remove
 	Remove AssetState = "Remove"
 )
@@ -42,29 +46,21 @@ var (
 		SeedFailed.String(),
 		CandidatesFailed.String(),
 		EdgesFailed.String(),
+		UploadFailed.String(),
 	}
 
 	// PullingStates contains a list of asset pull states that represent pulling.
 	PullingStates = []string{
 		SeedSelect.String(),
 		SeedPulling.String(),
+		UploadInit.String(),
+		SeedUploading.String(),
 		CandidatesSelect.String(),
 		CandidatesPulling.String(),
 		EdgesSelect.String(),
 		EdgesPulling.String(),
 	}
 
-	// AllStates contains a list of asset pull states that represent all.
-	AllStates = []string{
-		SeedSelect.String(),
-		SeedPulling.String(),
-		CandidatesSelect.String(),
-		CandidatesPulling.String(),
-		EdgesSelect.String(),
-		EdgesPulling.String(),
-		SeedFailed.String(),
-		CandidatesFailed.String(),
-		EdgesFailed.String(),
-		Servicing.String(),
-	}
+	// ActiveStates contains a list of asset pull states that represent active.
+	ActiveStates = append(append([]string{Servicing.String()}, FailedStates...), PullingStates...)
 )

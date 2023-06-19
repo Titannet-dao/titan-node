@@ -5,6 +5,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
+	"golang.org/x/xerrors"
 )
 
 var log = logging.Logger("datasync")
@@ -106,8 +107,11 @@ func (ds *DataSync) removeExtraAsset(ctx context.Context, buckets []uint32) erro
 		cars = append(cars, cs...)
 	}
 
+	log.Debugf("extra asset %d", len(cars))
 	for _, car := range cars {
-		ds.DeleteAsset(car)
+		if err := ds.DeleteAsset(car); err != nil {
+			log.Errorf("delete asset error %s", err.Error())
+		}
 	}
 	return nil
 }
@@ -116,15 +120,18 @@ func (ds *DataSync) removeExtraAsset(ctx context.Context, buckets []uint32) erro
 func (ds *DataSync) addLostAsset(ctx context.Context, buckets []uint32) error {
 	cars := make([]cid.Cid, 0)
 	for _, bucketID := range buckets {
-		cs, err := ds.GetAssetsOfBucket(ctx, bucketID, false)
+		cs, err := ds.GetAssetsOfBucket(context.Background(), bucketID, true)
 		if err != nil {
-			return err
+			return xerrors.Errorf("get assets of bucket %w", err)
 		}
 		cars = append(cars, cs...)
 	}
 
+	log.Debugf("lost asset %d", len(cars))
 	for _, car := range cars {
-		ds.AddLostAsset(car)
+		if err := ds.AddLostAsset(car); err != nil {
+			log.Errorf("AddLostAsset error: %s", err.Error())
+		}
 	}
 	return nil
 }
@@ -149,13 +156,17 @@ func (ds *DataSync) repairMismatchAsset(ctx context.Context, buckets []uint32) e
 		}
 
 	}
-
+	log.Debugf("extra asset %d, lost asset %d", len(extraCars), len(lostCars))
 	for _, car := range extraCars {
-		ds.DeleteAsset(car)
+		if err := ds.DeleteAsset(car); err != nil {
+			log.Errorf("DeleteAsset error: %s", err.Error())
+		}
 	}
 
 	for _, car := range lostCars {
-		ds.AddLostAsset(car)
+		if err := ds.AddLostAsset(car); err != nil {
+			log.Errorf("AddLostAsset error: %s", err.Error())
+		}
 	}
 	return nil
 }
@@ -166,7 +177,7 @@ func (ds *DataSync) compareBuckets(ctx context.Context, bucketID uint32) ([]cid.
 	if err != nil {
 		return nil, nil, err
 	}
-	remoteAssets, err := ds.GetAssetsOfBucket(ctx, bucketID, true)
+	remoteAssets, err := ds.GetAssetsOfBucket(context.Background(), bucketID, true)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -3,7 +3,6 @@ package common
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -11,7 +10,6 @@ import (
 	"github.com/Filecoin-Titan/titan/journal/alerting"
 	"github.com/Filecoin-Titan/titan/node/repo"
 
-	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
@@ -25,10 +23,6 @@ type CommonAPI struct {
 	Alerting     *alerting.Alerting
 	APISecret    *jwt.HMACSHA
 	ShutdownChan chan struct{}
-}
-
-type jwtPayload struct {
-	Allow []auth.Permission
 }
 
 // SessionCallbackFunc will be called after node connection
@@ -46,22 +40,22 @@ func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA) (CommonAPI, error) {
 }
 
 // AuthVerify verifies a JWT token and returns the permissions associated with it
-func (a *CommonAPI) AuthVerify(ctx context.Context, token string) ([]auth.Permission, error) {
-	var payload jwtPayload
+func (a *CommonAPI) AuthVerify(ctx context.Context, token string) (*types.JWTPayload, error) {
+	var payload types.JWTPayload
 	if _, err := jwt.Verify([]byte(token), a.APISecret, &payload); err != nil {
 		return nil, xerrors.Errorf("JWT Verification failed: %w", err)
 	}
 
-	return payload.Allow, nil
+	// replace ID to NodeID
+	if len(payload.NodeID) > 0 {
+		payload.ID = payload.NodeID
+	}
+	return &payload, nil
 }
 
 // AuthNew generates a new JWT token with the provided permissions
-func (a *CommonAPI) AuthNew(ctx context.Context, perms []auth.Permission) (string, error) {
-	p := jwtPayload{
-		Allow: perms, // TODO: consider checking validity
-	}
-
-	tk, err := jwt.Sign(&p, a.APISecret)
+func (a *CommonAPI) AuthNew(ctx context.Context, payload *types.JWTPayload) (string, error) {
+	tk, err := jwt.Sign(&payload, a.APISecret)
 	if err != nil {
 		return "", err
 	}
@@ -116,37 +110,4 @@ func (a *CommonAPI) Session(ctx context.Context) (uuid.UUID, error) {
 // Closing jsonrpc closing
 func (a *CommonAPI) Closing(context.Context) (<-chan struct{}, error) {
 	return make(chan struct{}), nil // relies on jsonrpc closing
-}
-
-// ShowLogFile returns the summary information of the log file
-func (a *CommonAPI) ShowLogFile(ctx context.Context) (*api.LogFile, error) {
-	logFilePath := os.Getenv("GOLOG_FILE")
-	if logFilePath == "" {
-		return nil, fmt.Errorf("GOLOG_FILE not config, example: export GOLOG_FILE=/path/log")
-	}
-	info, err := os.Stat(logFilePath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &api.LogFile{Name: info.Name(), Size: info.Size()}, nil
-}
-
-// DownloadLogFile return log file
-func (a *CommonAPI) DownloadLogFile(ctx context.Context) ([]byte, error) {
-	logFilePath := os.Getenv("GOLOG_FILE")
-	if logFilePath == "" {
-		return nil, fmt.Errorf("GOLOG_FILE not config, example: export GOLOG_FILE=/path/log")
-	}
-	return os.ReadFile(logFilePath)
-}
-
-// DeleteLogFile delete log file
-func (a *CommonAPI) DeleteLogFile(ctx context.Context) error {
-	logFilePath := os.Getenv("GOLOG_FILE")
-	if logFilePath == "" {
-		return nil
-	}
-
-	return os.WriteFile(logFilePath, []byte(""), 0o755)
 }

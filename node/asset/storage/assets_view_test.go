@@ -37,7 +37,10 @@ func TestBucket(t *testing.T) {
 	}
 
 	bucketID := bucket.bucketID(c1)
-	bucket.setAssetHashes(context.Background(), bucketID, []string{c1.Hash().String()})
+	if err = bucket.setAssetHashes(context.Background(), bucketID, []string{c1.Hash().String()}); err != nil {
+		t.Errorf("setAssetHashes error %s", err.Error())
+		return
+	}
 
 	cidStr = "QmUuNfFwuRrxbRFt5ze3EhuQgkGnutwZtsYMbAcYbtb6j3"
 	c2, err := cid.Decode(cidStr)
@@ -81,18 +84,20 @@ func TestBucket(t *testing.T) {
 }
 
 func TestAssetView(t *testing.T) {
-	assetsView, err := newAssetsView("C:/Users/aaa/.titancandidate-1/storage/assets-view", 128)
+	bucketSize := uint32(128)
+	assetsView, err := newAssetsView("C:/Users/aaa/.titanedge-1/storage/assets-view", bucketSize)
 	if err != nil {
 		t.Errorf("new assets view error:%s", err.Error())
 		return
 	}
 
-	if topHash, err := assetsView.getTopHash(context.Background()); err != nil {
+	var topHash string
+	if topHash, err = assetsView.getTopHash(context.Background()); err != nil {
 		t.Errorf("get top Hash error:%s", err.Error())
 		return
-	} else {
-		t.Logf("topHash: %s", topHash)
 	}
+
+	t.Logf("topHash: %s", topHash)
 
 	bucketHashes, err := assetsView.getBucketHashes(context.Background())
 	if err != nil {
@@ -138,7 +143,7 @@ func TestLoadAssetViewFromDB(t *testing.T) {
 		return
 	}
 
-	nodeID := "c_bd65d37c98124402be8b903ed4807ccd"
+	nodeID := "c_461705e502b945df97420312f5f3c2c1"
 	topHash, err := db.LoadTopHash(nodeID)
 	if err != nil {
 		t.Errorf("LoadTopHash error:%s", err.Error())
@@ -146,20 +151,30 @@ func TestLoadAssetViewFromDB(t *testing.T) {
 	}
 	t.Logf("topHash:%s", topHash)
 
-	bucketHashes, err := db.LoadBucketHashes(nodeID)
+	bucketHashBytes, err := db.LoadBucketHashes(nodeID)
 	if err != nil {
 		t.Errorf("LoadBucketHashes error:%s", err.Error())
 		return
 	}
 
-	t.Logf("bucketHashes: %#v", bucketHashes)
+	// t.Logf("bucketHashes: %#v", bucketHashes)
+	buffer := bytes.NewBuffer(bucketHashBytes)
+	dec := gob.NewDecoder(buffer)
 
-	bucketIDs := make([]int, 0, len(bucketHashes))
-	for k := range bucketHashes {
+	out := make(map[uint32]string)
+	if err = dec.Decode(&out); err != nil {
+		t.Errorf("Decode error:%s", err.Error())
+		return
+	}
+
+	bucketIDs := make([]int, 0, len(out))
+	for k := range out {
 		bucketIDs = append(bucketIDs, int(k))
 	}
 
 	sort.Ints(bucketIDs)
+
+	t.Logf("bucketIDs: %#v", out)
 
 	for _, bucketID := range bucketIDs {
 		id := fmt.Sprintf("%s:%d", nodeID, bucketID)
@@ -168,7 +183,18 @@ func TestLoadAssetViewFromDB(t *testing.T) {
 			t.Errorf("LoadBucket error:%s", err.Error())
 			continue
 		}
-		t.Logf("bucket %d, assets %#v", bucketID, assetHashes)
+
+		if len(assetHashes) > 0 {
+			hashes := make([]string, 0)
+			buffer := bytes.NewBuffer(assetHashes)
+			dec := gob.NewDecoder(buffer)
+			err = dec.Decode(&hashes)
+			if err != nil {
+				t.Errorf("decode error:%s", err.Error())
+				continue
+			}
+			t.Logf("bucket %d, assets %#v", bucketID, hashes)
+		}
 	}
 
 }

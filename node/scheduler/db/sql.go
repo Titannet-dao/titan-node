@@ -27,24 +27,27 @@ func NewSQLDB(db *sqlx.DB) (*SQLDB, error) {
 
 const (
 	// Database table names.
-	assetRecordTable      = "asset_record"
-	replicaInfoTable      = "replica_info"
-	edgeUpdateTable       = "edge_update_info"
-	nodeInfoTable         = "node_info"
-	validatorsTable       = "validators"
-	nodeRegisterTable     = "node_register_info"
-	validationResultTable = "validation_result"
-	assetsViewTable       = "asset_view"
-	bucketTable           = "bucket"
-	workloadReportTable   = "workload_report"
-	assetEventsTable      = "asset_events"
+	assetRecordTable       = "asset_record"
+	replicaInfoTable       = "replica_info"
+	edgeUpdateTable        = "edge_update_info"
+	nodeInfoTable          = "node_info"
+	validatorsTable        = "validators"
+	nodeRegisterTable      = "node_register_info"
+	validationResultTable  = "validation_result"
+	assetsViewTable        = "asset_view"
+	bucketTable            = "bucket"
+	workloadRecordTable    = "workload_record"
+	userAssetTable         = "user_asset"
+	userAPIKeyStorageTable = "user_api_key_storage"
+	replicaEventTable      = "replica_event"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 100
-	loadReplicaInfosDefaultLimit        = 100
 	loadValidationResultsDefaultLimit   = 100
 	loadAssetRecordsDefaultLimit        = 100
 	loadExpiredAssetRecordsDefaultLimit = 100
+	loadWorkloadDefaultLimit            = 100
+	loadReplicaEventDefaultLimit        = 100
 )
 
 // assetStateTable returns the asset state table name for the given serverID.
@@ -79,8 +82,10 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cValidatorsTable, validatorsTable))
 	tx.MustExec(fmt.Sprintf(cAssetViewTable, assetsViewTable))
 	tx.MustExec(fmt.Sprintf(cBucketTable, bucketTable))
-	tx.MustExec(fmt.Sprintf(cWorkloadTable, workloadReportTable))
-	tx.MustExec(fmt.Sprintf(cAssetEventTable, assetEventsTable))
+	tx.MustExec(fmt.Sprintf(cWorkloadTable, workloadRecordTable))
+	tx.MustExec(fmt.Sprintf(cUserAssetTable, userAssetTable))
+	tx.MustExec(fmt.Sprintf(cUserAPIKeyStorageTable, userAPIKeyStorageTable))
+	tx.MustExec(fmt.Sprintf(cReplicaEventTable, replicaEventTable))
 
 	return tx.Commit()
 }

@@ -86,7 +86,7 @@ func Repo(r repo.Repo) Option {
 			Override(new(helpers.MetricsCtx), func() context.Context {
 				return metricsi.CtxScope(context.Background(), "titan")
 			}),
-			Override(new(dtypes.PermissionWebToken), modules.GenerateTokenWithAdminPermission),
+			Override(new(dtypes.PermissionWebToken), modules.GenerateTokenWithWebPermission),
 			ApplyIf(IsType(repo.Scheduler), ConfigScheduler(c)),
 			ApplyIf(IsType(repo.Locator), ConfigLocator(c)),
 			ApplyIf(IsType(repo.Edge), ConfigEdge(c)),

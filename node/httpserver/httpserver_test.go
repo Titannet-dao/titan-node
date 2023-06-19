@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/Filecoin-Titan/titan/node/asset"
-	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/interface-go-ipfs-core/path"
@@ -37,8 +36,7 @@ func TestResolvePath(t *testing.T) {
 		return
 	}
 
-	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
-	opts := &asset.ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &asset.ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
 
 	mgr, err := asset.NewManager(opts)
 	if err != nil {
@@ -75,8 +73,7 @@ func TestGetBlock(t *testing.T) {
 		return
 	}
 
-	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
-	opts := &asset.ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &asset.ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
 
 	mgr, err := asset.NewManager(opts)
 	if err != nil {

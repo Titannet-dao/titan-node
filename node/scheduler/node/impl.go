@@ -82,8 +82,17 @@ func (m *Manager) GetOnlineNodeCount(nodeType types.NodeType) int {
 }
 
 // NodeOnline registers a node as online
-func (m *Manager) NodeOnline(node *Node) error {
-	err := m.saveInfo(node.NodeInfo)
+func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
+	node.OnlineDuration = info.OnlineDuration
+	node.DiskSpace = info.DiskSpace
+	node.ExternalIP = info.ExternalIP
+	node.DiskUsage = info.DiskUsage
+	node.NodeID = info.NodeID
+	node.Type = info.Type
+	node.BandwidthDown = info.BandwidthDown
+	node.BandwidthUp = info.BandwidthUp
+
+	err := m.saveInfo(info)
 	if err != nil {
 		return err
 	}
@@ -96,4 +105,16 @@ func (m *Manager) NodeOnline(node *Node) error {
 	}
 
 	return nil
+}
+
+// GetRandomCandidate returns a random candidate node
+func (m *Manager) GetRandomCandidate() (*Node, int) {
+	nodeID, weight := m.weightMgr.getCandidateWeightRandom()
+	return m.GetCandidateNode(nodeID), weight
+}
+
+// GetRandomEdge returns a random edge node
+func (m *Manager) GetRandomEdge() (*Node, int) {
+	nodeID, weight := m.weightMgr.getEdgeWeightRandom()
+	return m.GetEdgeNode(nodeID), weight
 }

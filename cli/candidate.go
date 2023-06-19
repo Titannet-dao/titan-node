@@ -8,4 +8,5 @@ var CandidateCmds = []*cli.Command{
 	progressCmd,
 	keyCmds,
 	configCmds,
+	registerCmd,
 }

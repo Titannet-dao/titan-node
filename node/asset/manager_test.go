@@ -1,15 +1,19 @@
 package asset
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/ipfs/go-cid"
+	legacy "github.com/ipfs/go-ipld-legacy"
+	"github.com/ipfs/go-libipfs/blocks"
 	logging "github.com/ipfs/go-log/v2"
+	"golang.org/x/xerrors"
 )
 
 const (
@@ -43,8 +47,7 @@ func TestManager(t *testing.T) {
 		return
 	}
 
-	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
-	opts := &ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
 
 	mgr, err := NewManager(opts)
 	if err != nil {
@@ -57,43 +60,67 @@ func TestManager(t *testing.T) {
 	time.Sleep(1 * time.Minute)
 }
 
-func TestScanBlocks(t *testing.T) {
+func TestGetAssetSize(t *testing.T) {
 	t.Log("TestManager")
 	_ = logging.SetLogLevel("asset", "DEBUG")
 
-	cidStr := "QmSUs7pPXL9jqcLSXNgZ92QXB36oXurgRCYzFrzAkYdT5d"
+	metaDataPath := "C:/Users/aaa/.titancandidate-1/storage/"
+	assetsPaths := []string{metaDataPath}
+	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
+	if err != nil {
+		t.Errorf("new storage manager error:%s", err)
+		return
+	}
+
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+
+	mgr, err := NewManager(opts)
+	if err != nil {
+		t.Errorf("new asset manager error:%s", err)
+		return
+	}
+
+	cidStr := "bafkreie5dcw6r7ggjj6t2plaa3g7ajvl72xzibrlbcqupomhgnxwzyjk44"
 	root, err := cid.Decode(cidStr)
 	if err != nil {
 		t.Errorf("Decode err:%s", err)
 		return
 	}
 
-	metaDataPath := "C:/Users/aaa/.titancandidate-1/storage/"
-	assetsPaths := []string{metaDataPath}
-	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
-	if err != nil {
-		t.Errorf("new storage manager error:%s", err)
-		return
-	}
-
-	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
-	opts := &ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
-
-	mgr, err := NewManager(opts)
-	if err != nil {
-		t.Errorf("new asset manager error:%s", err)
-		return
-	}
-
-	err = mgr.ScanBlocks(context.Background(), root)
+	err = testGetAssetSize(mgr, root)
 	if err != nil {
 		t.Errorf("scan blocks err:%s", err)
 		return
 	}
 }
 
+func testGetAssetSize(m *Manager, root cid.Cid) error {
+	block, err := m.GetBlock(context.Background(), root, root)
+	if err != nil {
+		return xerrors.Errorf("get block %s error %w", root.String(), err)
+	}
+
+	blk := blocks.NewBlock(block.RawData())
+	fmt.Printf("cid %s prefix code %d, block prefix code %d\n", blk.String(), root.Prefix().Codec, blk.Cid().Prefix().Codec)
+
+	node, err := legacy.DecodeNode(context.Background(), blk)
+	if err != nil {
+		return err
+	}
+
+	totalSize := int64(len(block.RawData()))
+	for _, link := range node.Links() {
+		totalSize += int64(link.Size)
+	}
+
+	fmt.Printf("totalSize;%d, linksize:%d", totalSize, len(node.Links()))
+	return nil
+}
+
 func TestGetChecker(t *testing.T) {
-	metaDataPath := "C:/Users/aaa/.titancandidate-1/storage/"
+	var count = 1500
+	var randomSeed = int64(1686298500725909400)
+	metaDataPath := "C:/Users/aaa/.titancandidate-2/storage/"
 	assetsPaths := []string{metaDataPath}
 	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
 	if err != nil {
@@ -101,8 +128,7 @@ func TestGetChecker(t *testing.T) {
 		return
 	}
 
-	bFetcher := fetcher.NewIPFSClient(testIPFSAddress)
-	opts := &ManagerOptions{Storage: storageMgr, BFetcher: bFetcher, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
 
 	mgr, err := NewManager(opts)
 	if err != nil {
@@ -110,27 +136,114 @@ func TestGetChecker(t *testing.T) {
 		return
 	}
 
-	nowTime := time.Now().Unix()
-	t.Logf("randomSeed:%d", nowTime)
-	asset, err := mgr.GetAssetForValidation(context.Background(), 1681803392)
+	t.Logf("randomSeed:%d", randomSeed)
+	asset, err := mgr.GetAssetForValidation(context.Background(), randomSeed)
 	if err != nil {
 		t.Errorf("get checker error:%s", err)
 		return
 	}
 
-	for i := 0; i < 100; i++ {
+	cids := make([]string, 0, count)
+	for i := 0; i < count; i++ {
 		block, err := asset.GetBlock(context.Background())
 		if err != nil {
 			t.Errorf("get checker error:%s", err)
 			return
 		}
-		t.Logf("random block %s", block.Cid().String())
+
+		if len(block.RawData()) == 0 {
+			continue
+		}
+		// t.Logf("random %d block %s", i, block.Cid().String())
+		cids = append(cids, block.Cid().String())
 	}
 
 	check, ok := asset.(*randomCheck)
 	if !ok {
 		t.Errorf("can not convert asset interface to randomCheck")
+	}
+	t.Logf("root %s", check.root.String())
+
+	if err := checkBlocksFromCandidate(cids, *check.root, randomSeed); err != nil {
+		t.Errorf("checkBlocksFromCandidate error %s", err.Error())
+	}
+}
+
+func checkBlocksFromCandidate(blockCIDs []string, root cid.Cid, randomSeed int64) error {
+	metaDataPath := "C:/Users/aaa/.titancandidate-1/storage/"
+	assetsPaths := []string{metaDataPath}
+	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
+	if err != nil {
+		return err
+	}
+
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	mgr, err := NewManager(opts)
+	if err != nil {
+		return err
+	}
+
+	cids, err := mgr.GetBlocksOfAsset(root, randomSeed, len(blockCIDs))
+	if err != nil {
+		return err
+	}
+
+	if len(cids) != len(blockCIDs) {
+		return fmt.Errorf("block cids len %d, but get %d from candidate", len(blockCIDs), len(cids))
+	}
+
+	for i := 0; i < len(cids); i++ {
+		c1, err := cid.Decode(cids[i])
+		if err != nil {
+			return err
+		}
+
+		c2, err := cid.Decode(blockCIDs[i])
+		if err != nil {
+			return err
+		}
+
+		if !bytes.Equal(c1.Hash(), c2.Hash()) {
+			return fmt.Errorf("index %d, validated cid %s, candidate cid %s", i, blockCIDs[i], cids[i])
+		}
+
+		// fmt.Printf("%d check block %s ok\n", i, c1.String())
+	}
+	return nil
+}
+
+func TestBlocksFromCandidate(t *testing.T) {
+	count := 900
+	var randomSeed = int64(1686298500725909400)
+	cidStr := "QmU61MNaAS7yNL8kfVPqzBwB5QkGwr1wasKh3awTTe4452"
+	root, err := cid.Decode(cidStr)
+	if err != nil {
+		t.Errorf("decode error %s", err.Error())
 		return
 	}
-	t.Logf("root:%s", check.root.String())
+
+	metaDataPath := "C:/Users/aaa/.titancandidate-2/storage/"
+	assetsPaths := []string{metaDataPath}
+	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
+	if err != nil {
+		t.Errorf("new storage manager error %s", err.Error())
+		return
+	}
+
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	mgr, err := NewManager(opts)
+	if err != nil {
+		t.Errorf("decode error %s", err.Error())
+		return
+	}
+
+	cids, err := mgr.GetBlocksOfAsset(root, randomSeed, count)
+	if err != nil {
+		t.Errorf("decode error %s", err.Error())
+		return
+	}
+
+	for index, c := range cids {
+		t.Logf("index %d, %s", index, c)
+	}
 }

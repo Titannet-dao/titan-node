@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/Filecoin-Titan/titan/api"
-	"github.com/filecoin-project/go-jsonrpc/auth"
+	"github.com/Filecoin-Titan/titan/api/types"
 	logging "github.com/ipfs/go-log/v2"
 )
 
@@ -15,13 +15,15 @@ var log = logging.Logger("handler")
 type (
 	// RemoteAddr client address
 	RemoteAddr struct{}
-	// RemoteAddr node ID
-	NodeID struct{}
+	// user id (node id)
+	ID struct{}
 )
 
 // Handler represents an HTTP handler that also adds remote client address and node ID to the request context
 type Handler struct {
-	handler *auth.Handler
+	// handler *auth.Handler
+	verify func(ctx context.Context, token string) (*types.JWTPayload, error)
+	next   http.HandlerFunc
 }
 
 // GetRemoteAddr returns the remote address of the client
@@ -35,7 +37,28 @@ func GetRemoteAddr(ctx context.Context) string {
 
 // GetNodeID returns the node ID of the client
 func GetNodeID(ctx context.Context) string {
-	v, ok := ctx.Value(NodeID{}).(string)
+	// check role
+	if !api.HasPerm(ctx, api.RoleDefault, api.RoleEdge) && !api.HasPerm(ctx, api.RoleDefault, api.RoleCandidate) {
+		log.Warnf("client is not edge and candidate")
+		return ""
+	}
+
+	v, ok := ctx.Value(ID{}).(string)
+	if !ok {
+		return ""
+	}
+
+	return v
+}
+
+// GetUserID returns the user ID of the client
+func GetUserID(ctx context.Context) string {
+	// check role
+	if !api.HasPerm(ctx, api.RoleDefault, api.RoleUser) {
+		return ""
+	}
+
+	v, ok := ctx.Value(ID{}).(string)
 	if !ok {
 		return ""
 	}
@@ -43,8 +66,8 @@ func GetNodeID(ctx context.Context) string {
 }
 
 // New returns a new HTTP handler with the given auth handler and additional request context fields
-func New(ah *auth.Handler) http.Handler {
-	return &Handler{ah}
+func New(verify func(ctx context.Context, token string) (*types.JWTPayload, error), next http.HandlerFunc) http.Handler {
+	return &Handler{verify, next}
 }
 
 // ServeHTTP serves an HTTP request with the added client remote address and node ID in the request context
@@ -54,11 +77,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		remoteAddr = r.RemoteAddr
 	}
 
-	nodeID := r.Header.Get("Node-ID")
-
 	ctx := r.Context()
 	ctx = context.WithValue(ctx, RemoteAddr{}, remoteAddr)
-	ctx = context.WithValue(ctx, NodeID{}, nodeID)
 
 	token := r.Header.Get("Authorization")
 	if token == "" {
@@ -76,15 +96,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		token = strings.TrimPrefix(token, "Bearer ")
 
-		allow, err := h.handler.Verify(ctx, token)
+		payload, err := h.verify(ctx, token)
 		if err != nil {
-			log.Warnf("JWT Verification failed (originating from %s): %s", r.RemoteAddr, err)
+			log.Warnf("JWT Verification failed (originating from %s): %s, token:%s", r.RemoteAddr, err, token)
 			w.WriteHeader(401)
 			return
 		}
 
-		ctx = api.WithPerm(ctx, allow)
+		ctx = context.WithValue(ctx, ID{}, payload.ID)
+		ctx = api.WithPerm(ctx, payload.Allow)
 	}
 
-	h.handler.Next(w, r.WithContext(ctx))
+	h.next(w, r.WithContext(ctx))
 }

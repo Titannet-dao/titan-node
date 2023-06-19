@@ -29,9 +29,6 @@ func (m *Manager) Plan(events []statemachine.Event, user interface{}) (interface
 // maps asset states to their corresponding planner functions
 var planners = map[AssetState]func(events []statemachine.Event, state *AssetPullingInfo) (uint64, error){
 	// external import
-	UndefinedState: planOne(
-		on(AssetStartPulls{}, SeedSelect),
-	),
 	SeedSelect: planOne(
 		on(PullRequestSent{}, SeedPulling),
 		on(SelectFailed{}, SeedFailed),
@@ -40,6 +37,16 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 	SeedPulling: planOne(
 		on(PullSucceed{}, CandidatesSelect),
 		on(PullFailed{}, SeedFailed),
+		apply(PulledResult{}),
+	),
+	UploadInit: planOne(
+		on(PullRequestSent{}, SeedUploading),
+		on(SelectFailed{}, UploadFailed),
+		on(SkipStep{}, CandidatesSelect),
+	),
+	SeedUploading: planOne(
+		on(PullSucceed{}, CandidatesSelect),
+		on(PullFailed{}, UploadFailed),
 		apply(PulledResult{}),
 	),
 	CandidatesSelect: planOne(
@@ -71,13 +78,14 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 	EdgesFailed: planOne(
 		on(AssetRePull{}, EdgesSelect),
 	),
-	Remove: planOne(
-		on(AssetStartPulls{}, SeedSelect),
-	),
+	UploadFailed: planOne(),
+	Remove:       planOne(),
+	Servicing:    planOne(),
 }
 
 // plan creates a plan for the next asset pulling action based on the given events and asset state
 func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (func(statemachine.Context, AssetPullingInfo) error, uint64, error) {
+	log.Debugf("state:%s , events:%v", state.State, events)
 	p := planners[state.State]
 	if p == nil {
 		if len(events) == 1 {
@@ -104,6 +112,10 @@ func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (fu
 		return m.handleSeedSelect, processed, nil
 	case SeedPulling:
 		return m.handleSeedPulling, processed, nil
+	case UploadInit:
+		return m.handleUploadInit, processed, nil
+	case SeedUploading:
+		return m.handleSeedUploading, processed, nil
 	case CandidatesSelect:
 		return m.handleCandidatesSelect, processed, nil
 	case EdgesSelect:
@@ -116,11 +128,11 @@ func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (fu
 		return m.handleServicing, processed, nil
 	case SeedFailed, CandidatesFailed, EdgesFailed:
 		return m.handlePullsFailed, processed, nil
+	case UploadFailed:
+		return m.handleUploadFailed, processed, nil
 	case Remove:
-		return nil, processed, nil
+		return m.handleRemove, processed, nil
 	// Fatal errors
-	case UndefinedState:
-		log.Error("asset update with undefined state!")
 	default:
 		log.Errorf("unexpected asset update state: %s", state.State)
 	}
@@ -200,12 +212,16 @@ func (m *Manager) initStateMachines(ctx context.Context) error {
 	}
 
 	for _, asset := range list {
+		if asset.State == Remove || asset.State == Servicing {
+			continue
+		}
+
 		if err := m.assetStateMachines.Send(asset.Hash, PullAssetRestart{}); err != nil {
 			log.Errorf("initStateMachines asset send %s , err %s", asset.CID, err.Error())
 			continue
 		}
 
-		m.addOrResetAssetTicker(asset.Hash.String())
+		m.startAssetTimeoutCounting(asset.Hash.String())
 	}
 
 	return nil

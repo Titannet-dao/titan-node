@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
@@ -24,7 +25,15 @@ type IPFSClient struct {
 
 // NewIPFSClient creates a new IPFSClient with the given API URL, timeout, and retry count
 func NewIPFSClient(ipfsAPIURL string) *IPFSClient {
-	httpAPI, err := httpapi.NewURLApiWithClient(ipfsAPIURL, &http.Client{})
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 10
+	t.IdleConnTimeout = 120 * time.Second
+
+	httpClient := &http.Client{
+		Transport: t,
+	}
+
+	httpAPI, err := httpapi.NewURLApiWithClient(ipfsAPIURL, httpClient)
 	if err != nil {
 		log.Panicf("new ipfs error:%s, url:%s", err.Error(), ipfsAPIURL)
 	}
@@ -33,7 +42,7 @@ func NewIPFSClient(ipfsAPIURL string) *IPFSClient {
 }
 
 // FetchBlocks retrieves blocks from IPFSClient using the provided context, CIDs, and download info
-func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]blocks.Block, error) {
+func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, downloadSources []*types.CandidateDownloadInfo) ([]*types.WorkloadReport, []blocks.Block, error) {
 	return ipfs.retrieveBlocks(ctx, cids)
 }
 
@@ -53,7 +62,7 @@ func (ipfs *IPFSClient) retrieveBlock(ctx context.Context, cidStr string) (block
 }
 
 // retrieveBlocks gets multiple blocks from IPFSClient using the provided context and CIDs
-func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]blocks.Block, error) {
+func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]*types.WorkloadReport, []blocks.Block, error) {
 	blks := make([]blocks.Block, 0, len(cids))
 	blksLock := &sync.Mutex{}
 
@@ -79,10 +88,10 @@ func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]bl
 	wg.Wait()
 
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return blks, ctx.Err()
+		return nil, blks, ctx.Err()
 	}
 
-	return blks, nil
+	return nil, blks, nil
 }
 
 // createBlock creates a new block with the specified CID and data

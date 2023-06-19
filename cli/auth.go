@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/go-jsonrpc/auth"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/repo"
 )
 
@@ -44,7 +46,7 @@ var AuthCreateAdminToken = &cli.Command{
 		}
 
 		perm := cctx.String("perm")
-		token, err := napi.AuthNew(ctx, []auth.Permission{auth.Permission(perm)})
+		token, err := napi.AuthNew(ctx, &types.JWTPayload{Allow: []auth.Permission{auth.Permission(perm)}, ID: uuid.NewString()})
 		if err != nil {
 			return err
 		}
@@ -61,8 +63,12 @@ var AuthAPIInfoToken = &cli.Command{
 	Usage: "Get token with API info required to connect to this node",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
+			Name:  "id",
+			Usage: "special a id for web or candidate, edge, locator,admin",
+		},
+		&cli.StringFlag{
 			Name:  "perm",
-			Usage: "permission to assign to the token, one of: web, candidate, edge, locator,admin",
+			Usage: "permission to assign to the token, one of: web, candidate, edge, locator, admin, web",
 		},
 	},
 
@@ -74,13 +80,9 @@ var AuthAPIInfoToken = &cli.Command{
 		defer closer()
 
 		ctx := ReqContext(cctx)
-
-		if !cctx.IsSet("perm") {
-			return xerrors.New("--perm flag not set, use with one of: web, candidate, edge, locator,admin")
-		}
-
+		id := cctx.String("id")
 		perm := cctx.String("perm")
-		token, err := napi.AuthNew(ctx, []auth.Permission{auth.Permission(perm)})
+		token, err := napi.AuthNew(ctx, &types.JWTPayload{Allow: []auth.Permission{auth.Permission(perm)}, ID: id})
 		if err != nil {
 			return err
 		}

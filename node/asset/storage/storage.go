@@ -17,7 +17,8 @@ type Storage interface {
 
 	StoreBlocks(ctx context.Context, root cid.Cid, blks []blocks.Block) error
 
-	StoreAsset(ctx context.Context, root cid.Cid) error
+	StoreBlocksToCar(ctx context.Context, root cid.Cid) error
+	UploadUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error
 	GetAsset(root cid.Cid) (io.ReadSeekCloser, error)
 	AssetExists(root cid.Cid) (bool, error)
 	DeleteAsset(root cid.Cid) error

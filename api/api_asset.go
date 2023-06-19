@@ -18,4 +18,6 @@ type Asset interface {
 	GetPullingAssetInfo(ctx context.Context) (*types.InProgressAsset, error) //perm:admin
 	// GetAssetProgresses retrieves the progress of assets with specified assetCIDs
 	GetAssetProgresses(ctx context.Context, assetCIDs []string) (*types.PullResult, error) //perm:admin
+	// CreateAsset notify candidate that user upload asset, return auth token of candidate
+	CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadAsset) (string, error) //perm:admin
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/lotuscli"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/google/uuid"
 )
@@ -79,7 +80,11 @@ func (m *Manager) startValidate() error {
 
 	roundID := uuid.NewString()
 	m.curRoundID = roundID
-	m.seed = time.Now().UnixNano() // TODO from filecoin
+	seed, err := lotuscli.StateGetRandomnessFromBeacon(m.getLotusURL())
+	if err != nil {
+		log.Errorf("startNewRound:%s StateGetRandomnessFromBeacon err:%s", m.curRoundID, err.Error())
+	}
+	m.seed = seed
 
 	vrs := m.PairValidatorsAndValidatableNodes()
 
@@ -88,7 +93,7 @@ func (m *Manager) startValidate() error {
 		return nil
 	}
 
-	err := m.nodeMgr.SaveValidationResultInfos(dbInfos)
+	err = m.nodeMgr.SaveValidationResultInfos(dbInfos)
 	if err != nil {
 		return err
 	}
@@ -179,13 +184,30 @@ func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.Valida
 		Bandwidth:   vr.Bandwidth,
 		Duration:    vr.CostTime,
 		Profit:      profit,
+		TokenID:     vr.Token,
 	}
 
 	return m.nodeMgr.UpdateValidationResultInfo(resultInfo)
 }
 
-// HandleResult handles the validation result for a given node.
-func (m *Manager) HandleResult(vr *api.ValidationResult) {
+// PushResult push validation result info to queue
+func (m *Manager) PushResult(vr *api.ValidationResult) {
+	m.resultQueue <- vr
+}
+
+func (m *Manager) pullResults() {
+	for i := 0; i < validationWorkers; i++ {
+		go func() {
+			for {
+				result := <-m.resultQueue
+				m.handleResult(result)
+			}
+		}()
+	}
+}
+
+// handleResult handles the validation result for a given node.
+func (m *Manager) handleResult(vr *api.ValidationResult) {
 	var status types.ValidationStatus
 	nodeID := vr.NodeID
 	profit := float64(0)
@@ -194,11 +216,13 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) {
 		err := m.updateResultInfo(status, vr, profit)
 		if err != nil {
 			log.Errorf("updateResultInfo [%s] fail : %s", nodeID, err.Error())
+			return
 		}
 	}()
 
 	if vr.IsCancel {
 		status = types.ValidationStatusCancel
+		profit = m.profit
 		return
 	}
 
@@ -253,7 +277,7 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) {
 
 		if !m.compareCid(resultCid, validatorCid) {
 			status = types.ValidationStatusValidateFail
-			log.Errorf("round [%s] and nodeID [%s], validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, nodeID, resultCid, validatorCid, i)
+			log.Errorf("round [%s] validator [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
 			return
 		}
 	}
@@ -263,23 +287,15 @@ func (m *Manager) HandleResult(vr *api.ValidationResult) {
 }
 
 func (m *Manager) getAssetBlocksFromCandidate(hash, cid string, filterNode string, cidCount int) ([]string, error) {
-	rows, err := m.nodeMgr.LoadReplicasByHash(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	replicas, err := m.nodeMgr.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
 	if err != nil {
 		log.Errorf("LoadReplicasByHash %s , err:%s", hash, err.Error())
 		return nil, err
 	}
-	defer rows.Close()
 
 	var cids []string
 
-	for rows.Next() {
-		rInfo := &types.ReplicaInfo{}
-		err = rows.StructScan(rInfo)
-		if err != nil {
-			log.Errorf("replica StructScan err: %s", err.Error())
-			continue
-		}
-
+	for _, rInfo := range replicas {
 		cNodeID := rInfo.NodeID
 		if cNodeID == filterNode {
 			continue

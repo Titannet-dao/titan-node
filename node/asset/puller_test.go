@@ -3,7 +3,6 @@ package asset
 import (
 	"testing"
 
-	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
@@ -34,8 +33,13 @@ func TestCache(t *testing.T) {
 		return
 	}
 
-	opts := &pullerOptions{root: c, dss: nil, storage: manger, bFetcher: fetcher.NewIPFSClient(testIPFS), parallel: 5, timeout: 3, retry: 2}
-	assetPuller := newAssetPuller(opts)
+	opts := &pullerOptions{root: c, dss: nil, storage: manger, ipfsAPIURL: testIPFS, parallel: 5, timeout: 3, retry: 2}
+	assetPuller, err := newAssetPuller(opts)
+	if err != nil {
+		t.Errorf("newAssetPuller err:%s", err)
+		return
+	}
+
 	err = assetPuller.pullAsset()
 	if err != nil {
 		t.Errorf("pull asset error:%s", err)

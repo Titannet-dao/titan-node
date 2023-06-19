@@ -1,9 +1,11 @@
 package asset
 
 import (
+	"bytes"
 	"context"
+	"crypto"
 	"fmt"
-	"math/rand"
+	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -11,9 +13,9 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
-	titanindex "github.com/Filecoin-Titan/titan/node/asset/index"
+	"github.com/Filecoin-Titan/titan/node/asset/index"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	validate "github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -41,19 +43,22 @@ type Manager struct {
 	waitList     []*assetWaiter
 	waitListLock *sync.Mutex
 	pullCh       chan bool
-	bFetcher     fetcher.BlockFetcher
+	ipfsAPIURL   string
 	lru          *lruCache
 	storage.Storage
 	api.Scheduler
 	pullParallel int
 	pullTimeout  int
 	pullRetry    int
+
+	// save asset upload status
+	uploadingAssets *sync.Map
 }
 
 // ManagerOptions is the struct that contains options for Manager
 type ManagerOptions struct {
 	Storage      storage.Storage
-	BFetcher     fetcher.BlockFetcher
+	IPFSAPIURL   string
 	SchedulerAPI api.Scheduler
 	PullParallel int
 	PullTimeout  int
@@ -72,12 +77,14 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		waitListLock: &sync.Mutex{},
 		pullCh:       make(chan bool),
 		Storage:      opts.Storage,
-		bFetcher:     opts.BFetcher,
+		ipfsAPIURL:   opts.IPFSAPIURL,
 		lru:          lru,
 		Scheduler:    opts.SchedulerAPI,
 		pullParallel: opts.PullParallel,
 		pullTimeout:  opts.PullTimeout,
 		pullRetry:    opts.PullRetry,
+
+		uploadingAssets: &sync.Map{},
 	}
 
 	m.restoreWaitListFromStore()
@@ -120,10 +127,6 @@ func (m *Manager) triggerPuller() {
 
 // start is a helper function that starts the Manager and begins downloading assets
 func (m *Manager) start() {
-	if m.bFetcher == nil {
-		log.Panic("m.bFetcher == nil")
-	}
-
 	go m.startTick()
 
 	// delay 15 second to pull asset if exist waitList
@@ -150,7 +153,7 @@ func (m *Manager) doPullAsset() {
 	}
 	defer m.removeAssetFromWaitList(cw.Root)
 
-	opts := &pullerOptions{cw.Root, cw.Dss, m.Storage, m.bFetcher, m.pullParallel, m.pullTimeout, m.pullRetry}
+	opts := &pullerOptions{cw.Root, cw.Dss, m.Storage, m.ipfsAPIURL, m.pullParallel, m.pullTimeout, m.pullRetry}
 	assetPuller, err := m.restoreAssetPullerOrNew(opts)
 	if err != nil {
 		log.Errorf("restore asset puller error:%s", err)
@@ -238,7 +241,7 @@ func (m *Manager) savePuller(puller *assetPuller) error {
 
 // onPullAssetFinish is called when an assetPuller finishes downloading an asset
 func (m *Manager) onPullAssetFinish(puller *assetPuller) {
-	log.Debugf("onPullAssetFinish, asset %s", puller.root.String())
+	log.Debugf("onPullAssetFinish, asset %s doneSize %d", puller.root.String(), puller.doneSize)
 
 	if puller.isPulledComplete() {
 		if err := m.DeletePuller(puller.root); err != nil && !os.IsNotExist(err) {
@@ -250,7 +253,7 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller) {
 			log.Errorf("set block count error:%s", err.Error())
 		}
 
-		if err := m.StoreAsset(context.Background(), puller.root); err != nil {
+		if err := m.StoreBlocksToCar(context.Background(), puller.root); err != nil {
 			log.Errorf("store asset error: %s", err.Error())
 		}
 
@@ -262,6 +265,10 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller) {
 		if err := m.savePuller(puller); err != nil {
 			log.Errorf("save puller error:%s", err.Error())
 		}
+	}
+
+	if err := m.submitPullerWorkloadReport(puller); err != nil {
+		log.Errorf("submitPullerWorkloadReport error %s", err.Error())
 	}
 }
 
@@ -323,7 +330,14 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 	}
 
 	if ok, err := m.PullerExists(root); err == nil && ok {
-		m.DeletePuller(root)
+		if err := m.DeletePuller(root); err != nil {
+			log.Errorf("DeletePuller error %s", err.Error())
+		}
+	}
+
+	if _, ok := m.uploadingAssets.Load(root.Hash().String()); ok {
+		m.uploadingAssets.Delete(root.Hash().String())
+		// TODO remove user asset
 	}
 
 	if err := m.Storage.DeleteAsset(root); err != nil {
@@ -332,7 +346,6 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 		} else if e.Err != syscall.ENOENT {
 			return err
 		}
-
 	}
 
 	return m.RemoveAssetFromView(context.Background(), root)
@@ -340,13 +353,17 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 
 // restoreAssetPullerOrNew retrieves the asset puller associated with the given root CID, or creates a new one.
 func (m *Manager) restoreAssetPullerOrNew(opts *pullerOptions) (*assetPuller, error) {
+	cc, err := newAssetPuller(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	data, err := m.GetPuller(opts.root)
 	if err != nil && !os.IsNotExist(err) {
 		log.Errorf("get asset puller error %s", err.Error())
 		return nil, err
 	}
 
-	cc := newAssetPuller(opts)
 	if len(data) > 0 {
 		err = cc.decode(data)
 		if err != nil {
@@ -381,6 +398,8 @@ func (m *Manager) deleteAssetFromWaitList(root cid.Cid) (bool, error) {
 func (m *Manager) assetStatus(root cid.Cid) (types.ReplicaStatus, error) {
 	if ok, err := m.AssetExists(root); err == nil && ok {
 		return types.ReplicaStatusSucceeded, nil
+	} else if err != nil {
+		log.Warnf("check asset exists error %s", err.Error())
 	}
 
 	for _, aw := range m.waitList {
@@ -392,7 +411,32 @@ func (m *Manager) assetStatus(root cid.Cid) (types.ReplicaStatus, error) {
 		}
 	}
 
+	if v, ok := m.uploadingAssets.Load(root.Hash().String()); ok {
+		asset := v.(*types.UploadingAsset)
+		if asset.Progress.DoneSize == 0 {
+			return types.ReplicaStatusWaiting, nil
+		}
+		return types.ReplicaStatusPulling, nil
+	}
+
 	return types.ReplicaStatusFailed, nil
+}
+
+func (m *Manager) progressForPulling(root cid.Cid) (*types.AssetPullProgress, error) {
+	if m.puller().root.Hash().String() == root.Hash().String() {
+		return m.puller().getAssetProgress(), nil
+	}
+	if v, ok := m.uploadingAssets.Load(root.Hash().String()); ok {
+		asset := v.(*types.UploadingAsset)
+		return &types.AssetPullProgress{
+			CID:      root.String(),
+			Status:   types.ReplicaStatusPulling,
+			Size:     asset.Progress.TotalSize,
+			DoneSize: asset.Progress.DoneSize,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("asset %s not at pulling status", root.String())
 }
 
 // progressForAssetPulledFailed returns the progress of a failed asset pull operation
@@ -430,6 +474,19 @@ func (m *Manager) GetBlock(ctx context.Context, root, block cid.Cid) (blocks.Blo
 	return m.lru.getBlock(ctx, root, block)
 }
 
+func (m *Manager) GetBlockCount(ctx context.Context, root cid.Cid) (int, error) {
+	idx, err := m.lru.assetIndex(root)
+	if err != nil {
+		return 0, err
+	}
+
+	multiIndex, ok := idx.(*index.MultiIndexSorted)
+	if !ok {
+		return 0, xerrors.Errorf("idx is not titan MultiIndexSorted")
+	}
+	return int(multiIndex.TotalRecordCount()), nil
+}
+
 // HasBlock checks if a block with the given CID exists in the LRU cache
 func (m *Manager) HasBlock(ctx context.Context, root, block cid.Cid) (bool, error) {
 	return m.lru.hasBlock(ctx, root, block)
@@ -438,35 +495,32 @@ func (m *Manager) HasBlock(ctx context.Context, root, block cid.Cid) (bool, erro
 // GetBlocksOfAsset returns a random selection of blocks for the given root CID
 // return map, key is random number, value is cid string
 func (m *Manager) GetBlocksOfAsset(root cid.Cid, randomSeed int64, randomCount int) ([]string, error) {
-	r := rand.New(rand.NewSource(randomSeed))
+	log.Debugf("GetBlocksOfAsset root %s, randomSeed %d, randomCount %d", root.String(), randomSeed, randomCount)
 
-	idx, err := m.lru.assetIndex(root)
+	random, err := randomBlockFromAsset(root, randomSeed, m.lru)
 	if err != nil {
 		return nil, err
 	}
 
-	multiIndex, ok := idx.(*titanindex.MultiIndexSorted)
-	if !ok {
-		return nil, xerrors.Errorf("idx is not MultiIndexSorted")
-	}
-
-	sizeOfBuckets := multiIndex.BucketCount()
 	rets := make([]string, 0, randomCount)
-
-	for i := 0; i < randomCount; i++ {
-		index := r.Intn(int(sizeOfBuckets))
-		records, err := multiIndex.GetBucketRecords(uint32(index))
+	count := 0
+	for {
+		// TODO get block for check empty block data
+		blk, err := random.GetBlock(context.Background())
 		if err != nil {
 			return nil, err
 		}
 
-		if len(records) == 0 {
-			return nil, xerrors.Errorf("record is empty")
+		if len(blk.RawData()) == 0 {
+			continue
 		}
 
-		index = r.Intn(len(records))
-		record := records[index]
-		rets = append(rets, record.Cid.String())
+		rets = append(rets, blk.Cid().String())
+
+		count++
+		if count >= randomCount {
+			break
+		}
 	}
 
 	return rets, nil
@@ -521,7 +575,7 @@ func (m *Manager) GetAssetsOfBucket(ctx context.Context, bucketID uint32, isRemo
 
 // GetAssetForValidation returns a new instance of asset based on a given random seed
 func (m *Manager) GetAssetForValidation(ctx context.Context, randomSeed int64) (validate.Asset, error) {
-	return NewRandomCheck(randomSeed, m.Storage, m.lru)
+	return newRandomCheck(randomSeed, m.Storage, m.lru)
 }
 
 func (m *Manager) ScanBlocks(ctx context.Context, root cid.Cid) error {
@@ -556,7 +610,6 @@ func (m *Manager) ScanBlocks(ctx context.Context, root cid.Cid) error {
 	}
 
 	return nil
-
 }
 
 func (m *Manager) getNodes(ctx context.Context, bs *blockstore.ReadOnly, links []*format.Link) error {
@@ -582,4 +635,72 @@ func (m *Manager) getNodes(ctx context.Context, bs *blockstore.ReadOnly, links [
 	}
 
 	return nil
+}
+
+func (m *Manager) submitPullerWorkloadReport(puller *assetPuller) error {
+	if len(puller.downloadSources) == 0 {
+		return nil
+	}
+
+	buf, err := puller.encodeWorkloadReports()
+	if err != nil {
+		return err
+	}
+
+	// TODO: update and get scheduler publicKey from same place
+	pem, err := m.GetSchedulerPublicKey(context.Background())
+	if err != nil {
+		return err
+	}
+
+	publicKey, err := titanrsa.Pem2PublicKey([]byte(pem))
+	if err != nil {
+		return err
+	}
+
+	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	cipherText, err := titanRsa.Encrypt(buf, publicKey)
+	if err != nil {
+		return err
+	}
+
+	return m.SubmitUserWorkloadReport(context.Background(), bytes.NewBuffer(cipherText))
+}
+
+func (m *Manager) SaveUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
+	if err := m.Storage.UploadUserAsset(ctx, userID, root, assetSize, r); err != nil {
+		m.uploadingAssets.Delete(root.Hash().String())
+		return err
+	}
+	return m.AddAssetToView(context.Background(), root)
+}
+
+func (m *Manager) SetAssetUploadProgress(ctx context.Context, root cid.Cid, progress *types.UploadProgress) error {
+	log.Debugf("SetAssetUploadProgress %s %d/%d", root.String(), progress.DoneSize, progress.TotalSize)
+
+	if progress.DoneSize == progress.TotalSize {
+		m.uploadingAssets.Delete(root.Hash().String())
+		return nil
+	}
+
+	v, ok := m.uploadingAssets.Load(root.Hash().String())
+	if !ok {
+		return fmt.Errorf("asset %s not in uploading status", root.String())
+	}
+
+	asset := v.(*types.UploadingAsset)
+	asset.Progress = progress
+
+	m.uploadingAssets.Store(root.Hash().String(), asset)
+
+	return nil
+}
+
+func (m *Manager) GetUploadingAsset(ctx context.Context, root cid.Cid) (*types.UploadingAsset, error) {
+	v, ok := m.uploadingAssets.Load(root.Hash().String())
+	if !ok {
+		return nil, fmt.Errorf("asset %s not in update status", root.String())
+	}
+
+	return v.(*types.UploadingAsset), nil
 }

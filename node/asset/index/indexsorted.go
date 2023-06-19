@@ -279,9 +279,9 @@ func (m *MultiIndexSorted) TotalRecordCount() uint32 {
 }
 
 // GetBucketRecords returns the records of a specific bucket by its index.
-func (m *MultiIndexSorted) GetBucketRecords(index uint32) ([]*index.Record, error) {
+func (m *MultiIndexSorted) GetBucketRecords(index uint32) (uint32, []*index.Record, error) {
 	if int(index) >= len(m.buckets) {
-		return nil, xerrors.Errorf("index %d out bucket size", index)
+		return 0, nil, xerrors.Errorf("index %d out bucket size", index)
 	}
 	codes := make([]uint32, 0, len(m.buckets))
 	for k := range m.buckets {
@@ -291,7 +291,7 @@ func (m *MultiIndexSorted) GetBucketRecords(index uint32) ([]*index.Record, erro
 	sort.Slice(codes, func(i, j int) bool { return codes[i] < codes[j] })
 
 	code := codes[index]
-	return m.buckets[code].records, nil
+	return code, m.buckets[code].records, nil
 }
 
 // NewMultiIndexSorted creates a new MultiIndexSorted with the specified bucket size.

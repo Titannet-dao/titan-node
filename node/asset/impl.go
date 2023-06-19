@@ -3,10 +3,12 @@ package asset
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/ipfs/go-cid"
 	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
@@ -23,16 +25,18 @@ type Asset struct {
 	scheduler       api.Scheduler
 	mgr             *Manager
 	TotalBlockCount int
+	apiSecret       *jwt.HMACSHA
 }
 
 // NewAsset creates a new Asset instance
-func NewAsset(storageMgr *storage.Manager, scheduler api.Scheduler, assetMgr *Manager) *Asset {
+func NewAsset(storageMgr *storage.Manager, scheduler api.Scheduler, assetMgr *Manager, apiSecret *jwt.HMACSHA) *Asset {
 	legacy.RegisterCodec(cid.DagProtobuf, dagpb.Type.PBNode, merkledag.ProtoNodeConverter)
 	legacy.RegisterCodec(cid.Raw, basicnode.Prototype.Bytes, merkledag.RawNodeConverter)
 
 	return &Asset{
 		scheduler: scheduler,
 		mgr:       assetMgr,
+		apiSecret: apiSecret,
 	}
 }
 
@@ -150,7 +154,33 @@ func (a *Asset) BlockCountOfAsset(assetCID string) (int, error) {
 		return 0, err
 	}
 
-	return int(count), nil
+	return count, nil
+}
+
+// CreateAsset notify candidate that user upload asset, return auth token of candidate
+func (a *Asset) CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadAsset) (string, error) {
+	c, err := cid.Decode(tokenPayload.AssetCID)
+	if err != nil {
+		return "", err
+	}
+
+	v, ok := a.mgr.uploadingAssets.Load(c.Hash().String())
+	if ok {
+		asset := v.(*types.UploadingAsset)
+		if asset.TokenExpiration.After(time.Now()) {
+			return "", fmt.Errorf("asset %s already uploading", tokenPayload.AssetCID)
+		}
+	}
+
+	asset := &types.UploadingAsset{UserID: tokenPayload.UserID, TokenExpiration: tokenPayload.Expiration, Progress: &types.UploadProgress{}}
+	a.mgr.uploadingAssets.Store(c.Hash().String(), asset)
+
+	tk, err := jwt.Sign(&tokenPayload, a.apiSecret)
+	if err != nil {
+		return "", err
+	}
+
+	return string(tk), nil
 }
 
 // GetAssetProgresses returns the progress of the given list of assets.
@@ -191,10 +221,13 @@ func (a *Asset) progressForAssetPulledSucceeded(root cid.Cid) (*types.AssetPullP
 		Status: types.ReplicaStatusSucceeded,
 	}
 
-	if count, err := a.mgr.GetBlockCount(context.Background(), root); err == nil {
-		progress.BlocksCount = int(count)
-		progress.DoneBlocksCount = int(count)
+	count, err := a.mgr.GetBlockCount(context.Background(), root)
+	if err != nil {
+		return nil, xerrors.Errorf("get block count %w", err)
 	}
+
+	progress.BlocksCount = count
+	progress.DoneBlocksCount = count
 
 	blk, err := a.mgr.GetBlock(context.Background(), root, root)
 	if err != nil {
@@ -202,14 +235,16 @@ func (a *Asset) progressForAssetPulledSucceeded(root cid.Cid) (*types.AssetPullP
 	}
 
 	blk = blocks.NewBlock(blk.RawData())
-	node, err := legacy.DecodeNode(context.Background(), blk)
-	if err != nil {
-		return nil, xerrors.Errorf("decode node %w", err)
-	}
-
 	linksSize := uint64(len(blk.RawData()))
-	for _, link := range node.Links() {
-		linksSize += link.Size
+
+	// TODO check blk data type
+	node, err := legacy.DecodeNode(context.Background(), blk)
+	if err == nil {
+		for _, link := range node.Links() {
+			linksSize += link.Size
+		}
+	} else {
+		log.Warnf("decode node %s", err.Error())
 	}
 
 	progress.Size = int64(linksSize)
@@ -228,7 +263,7 @@ func (a *Asset) progress(root cid.Cid) (*types.AssetPullProgress, error) {
 	case types.ReplicaStatusWaiting:
 		return &types.AssetPullProgress{CID: root.String(), Status: types.ReplicaStatusWaiting}, nil
 	case types.ReplicaStatusPulling:
-		return a.mgr.puller().getAssetProgress(), nil
+		return a.mgr.progressForPulling(root)
 	case types.ReplicaStatusFailed:
 		return a.mgr.progressForAssetPulledFailed(root)
 	case types.ReplicaStatusSucceeded:

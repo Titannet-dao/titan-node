@@ -16,10 +16,9 @@ import (
 var log = logging.Logger("validate")
 
 type Validation struct {
-	checker                 Checker
-	device                  *device.Device
-	cancelChannel           chan bool
-	downloadThreadCountFunc func() uint32
+	checker    Checker
+	device     *device.Device
+	firstToken func() string
 }
 
 type Checker interface {
@@ -43,32 +42,26 @@ func (v *Validation) ExecuteValidation(ctx context.Context, req *api.ValidateReq
 		return err
 	}
 
-	go v.sendBlocks(conn, req, v.device.GetBandwidthUp())
+	go func() {
+		if err = v.sendBlocks(conn, req, v.device.GetBandwidthUp()); err != nil {
+			log.Errorf("send blocks error %s", err.Error())
+		}
+	}()
 
 	return nil
 }
 
-// StopValidation sends a cancellation signal to stop the validation process
-func (v *Validation) StopValidation() {
-	if v.cancelChannel != nil {
-		v.cancelChannel <- true
-	}
-}
-
-func (v *Validation) SetFunc(fun func() uint32) {
-	v.downloadThreadCountFunc = fun
+func (v *Validation) SetFunc(fun func() string) {
+	v.firstToken = fun
 }
 
 // sendBlocks sends blocks over a TCP connection with rate limiting
 func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRate int64) error {
 	defer func() {
-		v.cancelChannel = nil
 		if err := conn.Close(); err != nil {
 			log.Errorf("close tcp error: %s", err.Error())
 		}
 	}()
-
-	v.cancelChannel = make(chan bool)
 
 	t := time.NewTimer(time.Duration(req.Duration) * time.Second)
 	limiter := rate.NewLimiter(rate.Limit(speedRate), int(speedRate))
@@ -90,23 +83,27 @@ func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRa
 		return err
 	}
 
-	if v.downloadThreadCountFunc != nil && v.downloadThreadCountFunc() > 0 {
-		log.Debugf("user is downloading, cancel validation")
-		return sendData(conn, nil, api.TCPMsgTypeCancel, limiter)
-	}
-
 	for {
 		select {
 		case <-t.C:
 			return nil
-		case <-v.cancelChannel:
-			log.Debugf("cancel validation by httpserver")
-			return sendData(conn, nil, api.TCPMsgTypeCancel, limiter)
 		default:
 		}
+
+		token := v.firstToken()
+		if len(token) > 0 {
+			log.Debugf("user is downloading, cancel validation, token %d", token)
+			return sendData(conn, []byte(token), api.TCPMsgTypeCancel, limiter)
+		}
+
 		blk, err := asset.GetBlock(ctx)
 		if err != nil {
 			return err
+		}
+
+		// don't send empty block
+		if len(blk.RawData()) == 0 {
+			continue
 		}
 
 		err = sendData(conn, blk.RawData(), api.TCPMsgTypeBlock, limiter)

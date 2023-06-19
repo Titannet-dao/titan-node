@@ -7,7 +7,7 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
-	files "github.com/ipfs/go-ipfs-files"
+	"github.com/ipfs/go-libipfs/files"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
@@ -28,22 +28,22 @@ func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, tkPayl
 		return
 	}
 
-	dr, err := hs.getUnixFsNode(ctx, resolvedPath, root)
+	node, err := hs.getUnixFsNode(ctx, resolvedPath, root)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error while getting UnixFS node: %s", err.Error()), http.StatusInternalServerError)
 		return
 	}
-	defer dr.Close() //nolint:errcheck // ignore error
+	defer node.Close() //nolint:errcheck // ignore error
 
 	// Handling Unixfs file
-	if f, ok := dr.(files.File); ok {
+	if f, ok := node.(files.File); ok {
 		log.Debugw("serving unixfs file", "path", contentPath)
 		hs.serveFile(w, r, tkPayload, f)
 		return
 	}
 
 	// Handling Unixfs directory
-	dir, ok := dr.(files.Directory)
+	dir, ok := node.(files.Directory)
 	if !ok {
 		http.Error(w, "unsupported UnixFS type", http.StatusInternalServerError)
 		return
@@ -51,8 +51,4 @@ func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, tkPayl
 
 	log.Debugw("serving unixfs directory", "path", contentPath)
 	hs.serveDirectory(w, r, tkPayload, dir)
-}
-
-func (hs *HttpServer) serveDirectory(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload, dir files.Directory) {
-	http.Error(w, "dir list not support now", http.StatusBadRequest)
 }

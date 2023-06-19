@@ -14,7 +14,6 @@ import (
 	"github.com/Filecoin-Titan/titan/metrics/proxy"
 	mhandler "github.com/Filecoin-Titan/titan/node/handler"
 	"github.com/filecoin-project/go-jsonrpc"
-	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/gorilla/mux"
 	logging "github.com/ipfs/go-log/v2"
 	"go.opencensus.io/tag"
@@ -68,7 +67,7 @@ func SchedulerHandler(a api.Scheduler, permission bool, opts ...jsonrpc.ServerOp
 
 		var handler http.Handler = rpcServer
 		if permission {
-			handler = mhandler.New(&auth.Handler{Verify: a.VerifyNodeAuthToken, Next: rpcServer.ServeHTTP})
+			handler = mhandler.New(a.AuthVerify, rpcServer.ServeHTTP)
 		}
 
 		m.Handle(path, handler)
@@ -116,10 +115,7 @@ func LocatorHandler(a api.Locator, permission bool) (http.Handler, error) {
 
 		var hnd http.Handler = m
 		if permission {
-			hnd = mhandler.New(&auth.Handler{
-				Verify: a.AuthVerify,
-				Next:   m.ServeHTTP,
-			})
+			hnd = mhandler.New(a.AuthVerify, m.ServeHTTP)
 		}
 
 		rootMux.PathPrefix("/").Handler(hnd)

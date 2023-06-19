@@ -16,14 +16,13 @@ var log = logging.Logger("asset/store")
 
 const (
 	// dir or file name
-	pullerDir      = "asset-puller"
-	waitListFile   = "wait-list"
-	assetsDir      = "assets"
-	countDir       = "count"
-	assetSuffix    = ".car"
-	assetsViewDir  = "assets-view"
-	maxSizeOfCache = 1024
-	sizeOfBucket   = 128
+	pullerDir     = "asset-puller"
+	waitListFile  = "wait-list"
+	assetsDir     = "assets"
+	countDir      = "count"
+	assetSuffix   = ".car"
+	assetsViewDir = "assets-view"
+	sizeOfBucket  = 128
 )
 
 // Manager handles storage operations
@@ -44,8 +43,12 @@ type ManagerOptions struct {
 
 // NewManager creates a new Manager instance
 func NewManager(opts *ManagerOptions) (*Manager, error) {
-	// TODO store assets in multi storage
-	asset, err := newAsset(filepath.Join(opts.AssetsPaths[0], assetsDir), assetSuffix)
+	assetsPaths, err := newAssetsPaths(opts.AssetsPaths, assetsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	asset, err := newAsset(assetsPaths, assetSuffix)
 	if err != nil {
 		return nil, err
 	}
@@ -102,9 +105,13 @@ func (m *Manager) StoreBlocks(ctx context.Context, root cid.Cid, blks []blocks.B
 	return m.asset.storeBlocks(ctx, root, blks)
 }
 
-// StoreAsset stores a single asset
-func (m *Manager) StoreAsset(ctx context.Context, root cid.Cid) error {
-	return m.asset.storeAsset(ctx, root)
+// StoreBlocksToCar stores a single asset
+func (m *Manager) StoreBlocksToCar(ctx context.Context, root cid.Cid) error {
+	return m.asset.storeBlocksToCar(ctx, root)
+}
+
+func (m *Manager) UploadUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
+	return m.asset.uploadUserAsset(ctx, userID, root, assetSize, r)
 }
 
 // GetAsset retrieves an asset

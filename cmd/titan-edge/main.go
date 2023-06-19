@@ -23,6 +23,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/httpserver"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/validation"
+	"github.com/gbrlsnchs/jwt/v3"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
@@ -255,8 +256,14 @@ var runCmd = &cli.Command{
 				return dtypes.InternalIP(strings.Split(localAddr.IP.String(), ":")[0]), nil
 			}),
 
-			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation) error {
-				httpServer = httpserver.NewHttpServer(assetMgr, schedulerAPI, privateKey, validation)
+			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA) error {
+				opts := &httpserver.HttpServerOptions{
+					Asset: assetMgr, Scheduler: schedulerAPI,
+					PrivateKey: privateKey,
+					Validation: validation,
+					APISecret:  apiSecret,
+				}
+				httpServer = httpserver.NewHttpServer(opts)
 
 				return err
 			}),
@@ -326,7 +333,7 @@ var runCmd = &cli.Command{
 					readyCh = waitQuietCh()
 				}
 
-				token, err := edgeAPI.AuthNew(cctx.Context, []auth.Permission{api.RoleAdmin})
+				token, err := edgeAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: edgeCfg.NodeID})
 				if err != nil {
 					log.Errorf("auth new error %s", err.Error())
 					return

@@ -2,6 +2,7 @@ package asset
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 
@@ -146,8 +147,12 @@ func (lru *lruCache) remove(root cid.Cid) {
 
 func (lru *lruCache) onEvict(key interface{}, value interface{}) {
 	if c, ok := value.(*cacheValue); ok {
-		c.bs.Close()
-		c.readerClose.Close()
+		if err := c.bs.Close(); err != nil {
+			log.Errorf("close block store error %s", err.Error())
+		}
+		if err := c.readerClose.Close(); err != nil {
+			log.Errorf("close reader error %s", err.Error())
+		}
 	}
 }
 
@@ -155,7 +160,7 @@ func (lru *lruCache) getAssetIndex(r io.ReaderAt) (index.Index, error) {
 	// Open the CARv2 file
 	cr, err := carv2.NewReader(r)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer cr.Close()
 
@@ -164,6 +169,11 @@ func (lru *lruCache) getAssetIndex(r io.ReaderAt) (index.Index, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if ir == nil {
+		return nil, fmt.Errorf("car index reader is nil, car version:%d", cr.Version)
+	}
+
 	idx, err := index.ReadFrom(ir)
 	if err != nil {
 		return nil, err
@@ -175,11 +185,15 @@ func (lru *lruCache) getAssetIndex(r io.ReaderAt) (index.Index, error) {
 	}
 
 	records := make([]index.Record, 0)
-	iterableIdx.ForEach(func(m multihash.Multihash, u uint64) error {
+	err = iterableIdx.ForEach(func(m multihash.Multihash, u uint64) error {
 		record := index.Record{Cid: cid.NewCidV0(m), Offset: u}
 		records = append(records, record)
 		return nil
 	})
+
+	if err != nil {
+		log.Errorf("iterableIdx ForEach error %s", err.Error())
+	}
 
 	idx = titanindex.NewMultiIndexSorted(sizeOfBuckets)
 	if err := idx.Load(records); err != nil {

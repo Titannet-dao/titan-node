@@ -25,16 +25,12 @@ import (
 var log = logging.Logger("asset")
 
 const (
-	// Timeout for pulling assets (Unit:Second)
-	nodePullAssetTimeout = 60 * time.Second
 	// The number of pull replica in the first stage
 	seedReplicaCount = 1
 	// Interval to get asset pull progress from node (Unit:Second)
 	pullProgressInterval = 20 * time.Second
-	// Maximum number of concurrent asset pulls
-	assetPullTaskLimit = 10
 	// Maximum number of replicas per asset
-	assetEdgeReplicasLimit = 100
+	assetEdgeReplicasLimit = 500
 	// The number of retries to select the pull asset node
 	selectNodeRetryLimit = 3
 	// If the node disk size is greater than this value, pulling will not continue
@@ -43,6 +39,12 @@ const (
 	numAssetBuckets = 128
 	// When the node is offline for more than this value, the scheduler will assign other nodes to pull the assets to increase the reliability of the assets
 	maxNodeOfflineTime = 24 * time.Hour
+	// Total bandwidth limit provided by the asset (The larger the bandwidth provided, the more backups are required)
+	assetBandwidthLimit = 10000 // unit:MiB/s
+	// If the node does not reply more than once, the asset pull timeout is determined.
+	assetTimeoutLimit = 3
+
+	checkAssetReplicaLimit = 100
 )
 
 // Manager manages asset replicas
@@ -51,39 +53,18 @@ type Manager struct {
 	stateMachineWait   sync.WaitGroup
 	assetStateMachines *statemachine.StateGroup
 	lock               sync.Mutex
-	apTickers          map[string]*assetTicker       // timeout timer for asset pulling
+	pullingAssets      map[string]int                // Assignments where assets are being pulled
 	config             dtypes.GetSchedulerConfigFunc // scheduler config
 	*db.SQLDB
-}
-
-type assetTicker struct {
-	ticker *time.Ticker
-	close  chan struct{}
-}
-
-func (t *assetTicker) run(job func() error) {
-	for {
-		select {
-		case <-t.ticker.C:
-			err := job()
-			if err != nil {
-				log.Error(err.Error())
-				break
-			}
-			return
-		case <-t.close:
-			return
-		}
-	}
 }
 
 // NewManager returns a new AssetManager instance
 func NewManager(nodeManager *node.Manager, ds datastore.Batching, configFunc dtypes.GetSchedulerConfigFunc, sdb *db.SQLDB) *Manager {
 	m := &Manager{
-		nodeMgr:   nodeManager,
-		apTickers: make(map[string]*assetTicker),
-		config:    configFunc,
-		SQLDB:     sdb,
+		nodeMgr:       nodeManager,
+		pullingAssets: make(map[string]int),
+		config:        configFunc,
+		SQLDB:         sdb,
 	}
 
 	// state machine initialization
@@ -121,13 +102,15 @@ func (m *Manager) startCheckAssetsTimer(ctx context.Context) {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 
+	offset := 0
+
 	for {
 		<-timer.C
 
 		log.Debugln("start assets check ")
 
 		m.processExpiredAssets()
-		m.processMissingAssetReplicas()
+		offset = m.processMissingAssetReplicas(offset)
 
 		timer.Reset(24 * time.Hour)
 	}
@@ -144,27 +127,49 @@ func (m *Manager) startCheckPullProgressesTimer(ctx context.Context) {
 	}
 }
 
+func (m *Manager) setAssetTimeout(hash string) {
+	// update replicas status
+	err := m.UpdateReplicasStatusToFailed(hash)
+	if err != nil {
+		log.Errorf("setAssetTimeout %s UpdateReplicasStatusToFailed err:%s", hash, err.Error())
+		return
+	}
+
+	err = m.assetStateMachines.Send(AssetHash(hash), PullFailed{error: xerrors.New("node pull asset response timeout")})
+	if err != nil {
+		log.Errorf("setAssetTimeout %s send time out err:%s", hash, err.Error())
+	}
+}
+
 func (m *Manager) retrieveNodePullProgresses() {
 	nodePulls := make(map[string][]string)
 
 	// Process pulling assets
-	for hash := range m.apTickers {
+	for hash := range m.pullingAssets {
+		if m.pullingAssets[hash] >= assetTimeoutLimit {
+			m.setAssetTimeout(hash)
+			continue
+		}
+		m.pullingAssets[hash]++
+
 		cid, err := cidutil.HashToCID(hash)
 		if err != nil {
 			log.Errorf("retrieveNodePullProgresses %s HashString2CIDString err:%s", hash, err.Error())
 			continue
 		}
 
-		nodes, err := m.LoadUnfinishedPullAssetNodes(hash)
+		replicas, err := m.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusPulling, types.ReplicaStatusWaiting})
 		if err != nil {
-			log.Errorf("retrieveNodePullProgresses %s LoadUnfinishedPullAssetNodes err:%s", hash, err.Error())
+			log.Errorf("retrieveNodePullProgresses %s LoadReplicas err:%s", hash, err.Error())
 			continue
 		}
 
-		for _, nodeID := range nodes {
+		for _, replica := range replicas {
+			nodeID := replica.NodeID
 			list := nodePulls[nodeID]
 			nodePulls[nodeID] = append(list, cid)
 		}
+
 	}
 
 	getCP := func(nodeID string, cids []string) {
@@ -186,26 +191,118 @@ func (m *Manager) retrieveNodePullProgresses() {
 
 func (m *Manager) requestNodePullProgresses(nodeID string, cids []string) (result *types.PullResult, err error) {
 	node := m.nodeMgr.GetNode(nodeID)
-	if node != nil {
-		result, err = node.GetAssetProgresses(context.Background(), cids)
-	} else {
+	if node == nil {
 		err = xerrors.Errorf("node %s not found", nodeID)
+		return
 	}
 
+	result, err = node.GetAssetProgresses(context.Background(), cids)
 	return
 }
 
-// CreateAssetPullTask creates a new asset pull task
+// CreateAssetUploadTask create a new asset upload task
+func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
+	// Waiting for state machine initialization
+	m.stateMachineWait.Wait()
+	log.Infof("asset event: %s, add asset ", req.AssetCID)
+
+	if len(m.pullingAssets) >= m.getAssetPullTaskLimit() {
+		return nil, xerrors.Errorf("The asset in the pulling exceeds the limit %d, please wait", m.getAssetPullTaskLimit())
+	}
+
+	replicaCount := int64(10)
+	bandwidth := int64(0)
+	expiration := time.Now().Add(30 * 24 * time.Hour)
+
+	cfg, err := m.config()
+	if err == nil {
+		replicaCount = int64(cfg.UploadAssetReplicaCount)
+		expiration = time.Now().Add(time.Duration(cfg.UploadAssetExpiration) * 24 * time.Hour)
+	}
+
+	assetRecord, err := m.LoadAssetRecord(hash)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, xerrors.Errorf("LoadAssetRecord err:%s", err.Error())
+	}
+
+	err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetSize)
+	if err != nil {
+		return nil, xerrors.Errorf("%s SaveAssetUser err:%s", req.AssetCID, err.Error())
+	}
+
+	if assetRecord != nil && assetRecord.State != "" && assetRecord.State != Remove.String() && assetRecord.State != UploadFailed.String() {
+		return nil, xerrors.Errorf("asset already exists , state is %s", assetRecord.State)
+	}
+
+	record := &types.AssetRecord{
+		Hash:                  hash,
+		CID:                   req.AssetCID,
+		ServerID:              m.nodeMgr.ServerID,
+		NeedEdgeReplica:       replicaCount,
+		NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
+		Expiration:            expiration,
+		NeedBandwidth:         bandwidth,
+		State:                 UploadInit.String(),
+		TotalSize:             req.AssetSize,
+	}
+
+	err = m.SaveAssetRecord(record)
+	if err != nil {
+		return nil, xerrors.Errorf("SaveAssetRecord err:%s", err.Error())
+	}
+
+	cNodes, str := m.chooseCandidateNodes(1, nil)
+	if len(cNodes) == 0 {
+		return nil, xerrors.Errorf("not found node :%s", str)
+	}
+
+	var cNode *node.Node
+	for _, n := range cNodes {
+		cNode = n
+	}
+
+	payload := &types.AuthUserUploadAsset{
+		UserID:     req.UserID,
+		AssetCID:   req.AssetCID,
+		AssetSize:  req.AssetSize,
+		Expiration: time.Now().Add(time.Hour),
+	}
+
+	token, err := cNode.API.CreateAsset(context.Background(), payload)
+	if err != nil {
+		return nil, err
+	}
+
+	rInfo := AssetForceState{
+		State:      UploadInit,
+		Requester:  req.UserID,
+		SeedNodeID: cNode.NodeID,
+	}
+
+	// create asset task
+	err = m.assetStateMachines.Send(AssetHash(hash), rInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.CreateAssetRsp{CandidateAddr: cNode.RemoteAddr, Token: token}, err
+}
+
+// CreateAssetPullTask create a new asset pull task
 func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq, userID string) error {
 	// Waiting for state machine initialization
 	m.stateMachineWait.Wait()
 
-	if len(m.apTickers) >= assetPullTaskLimit {
-		return xerrors.Errorf("The asset in the pulling exceeds the limit %d, please wait", assetPullTaskLimit)
+	if len(m.pullingAssets) >= m.getAssetPullTaskLimit() {
+		return xerrors.Errorf("The asset in the pulling exceeds the limit %d, please wait", m.getAssetPullTaskLimit())
 	}
 
 	if info.Replicas > assetEdgeReplicasLimit {
 		return xerrors.Errorf("The number of replicas %d exceeds the limit %d", info.Replicas, assetEdgeReplicasLimit)
+	}
+
+	if info.Bandwidth > assetBandwidthLimit {
+		return xerrors.Errorf("The number of bandwidthDown %d exceeds the limit %d", info.Bandwidth, assetBandwidthLimit)
 	}
 
 	log.Infof("asset event: %s, add asset replica: %d,expiration: %s", info.CID, info.Replicas, info.Expiration.String())
@@ -223,42 +320,52 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq, userID string) e
 			NeedEdgeReplica:       info.Replicas,
 			NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
 			Expiration:            info.Expiration,
+			NeedBandwidth:         info.Bandwidth,
+			State:                 SeedSelect.String(),
 		}
 
-		event := &types.AssetEventInfo{Hash: info.Hash, Event: types.AssetEventAdd, Requester: userID}
-
-		err = m.SaveAssetRecord(record, event)
+		err = m.SaveAssetRecord(record)
 		if err != nil {
-			return xerrors.Errorf("SaveRecordOfAsset err:%s", err.Error())
+			return xerrors.Errorf("SaveAssetRecord err:%s", err.Error())
+		}
+
+		rInfo := AssetForceState{
+			State:     SeedSelect,
+			Requester: userID,
 		}
 
 		// create asset task
-		return m.assetStateMachines.Send(AssetHash(info.Hash), AssetStartPulls{
-			ID:                info.CID,
-			Hash:              AssetHash(info.Hash),
-			Replicas:          info.Replicas,
-			CandidateReplicas: m.GetCandidateReplicaCount(),
-		})
+		return m.assetStateMachines.Send(AssetHash(info.Hash), rInfo)
 	}
 
 	if exist, _ := m.assetStateMachines.Has(AssetHash(assetRecord.Hash)); !exist {
-		return xerrors.Errorf("not found asset %s", assetRecord.Hash)
+		return xerrors.Errorf("No operation rights, the asset belongs to another scheduler %s", assetRecord.Hash)
 	}
 
 	// Check if the asset is in servicing state
-	if assetRecord.State != string(Servicing) {
-		return xerrors.Errorf("asset state is %s", assetRecord.State)
+	if assetRecord.State != Servicing.String() && assetRecord.State != Remove.String() {
+		return xerrors.Errorf("asset state is %s , no tasks can be created in this state", assetRecord.State)
+	}
+
+	if assetRecord.State == Remove.String() {
+		assetRecord.NeedEdgeReplica = 0
+		assetRecord.NeedBandwidth = 0
+	}
+
+	if info.Replicas <= assetRecord.NeedEdgeReplica && info.Bandwidth <= assetRecord.NeedBandwidth {
+		return xerrors.New("No increase in the number of replicas or bandwidth")
 	}
 
 	assetRecord.NeedEdgeReplica = info.Replicas
 	assetRecord.Expiration = info.Expiration
+	assetRecord.NeedBandwidth = info.Bandwidth
 
-	return m.replenishAssetReplicas(assetRecord, 0, userID)
+	return m.replenishAssetReplicas(assetRecord, 0, userID, "", SeedSelect)
 }
 
 // replenishAssetReplicas updates the existing asset replicas if needed
-func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, replenishReplicas int64, userID string) error {
-	log.Warnf("replenishAssetReplicas SaveRecordOfAsset : %d", replenishReplicas)
+func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, replenishReplicas int64, userID, details string, state AssetState) error {
+	log.Debugf("replenishAssetReplicas : %d", replenishReplicas)
 
 	record := &types.AssetRecord{
 		Hash:                  assetRecord.Hash,
@@ -268,17 +375,20 @@ func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, repleni
 		NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
 		Expiration:            assetRecord.Expiration,
 		ReplenishReplicas:     replenishReplicas,
+		NeedBandwidth:         assetRecord.NeedBandwidth,
+		State:                 state.String(),
+		TotalSize:             assetRecord.TotalSize,
 	}
 
-	event := &types.AssetEventInfo{Hash: assetRecord.Hash, Event: types.AssetEventAdd, Requester: userID}
-
-	err := m.SaveAssetRecord(record, event)
+	err := m.SaveAssetRecord(record)
 	if err != nil {
-		return xerrors.Errorf("SaveRecordOfAsset err:%s", err.Error())
+		return xerrors.Errorf("SaveAssetRecord err:%s", err.Error())
 	}
 
-	rInfo := ReplenishReplicas{
-		State: SeedSelect,
+	rInfo := AssetForceState{
+		State:     state,
+		Requester: userID,
+		Details:   details,
 	}
 
 	return m.assetStateMachines.Send(AssetHash(assetRecord.Hash), rInfo)
@@ -286,8 +396,8 @@ func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, repleni
 
 // RestartPullAssets restarts asset pulls
 func (m *Manager) RestartPullAssets(hashes []types.AssetHash) error {
-	if len(m.apTickers)+len(hashes) >= assetPullTaskLimit {
-		return xerrors.Errorf("The asset in the pulling exceeds the limit %d, please wait", assetPullTaskLimit)
+	if len(m.pullingAssets)+len(hashes) >= m.getAssetPullTaskLimit() {
+		return xerrors.Errorf("The asset in the pulling exceeds the limit %d, please wait", m.getAssetPullTaskLimit())
 	}
 
 	for _, hash := range hashes {
@@ -305,8 +415,8 @@ func (m *Manager) RestartPullAssets(hashes []types.AssetHash) error {
 }
 
 // RemoveReplica remove a replica for node
-func (m *Manager) RemoveReplica(cid, hash, nodeID, userID string) error {
-	err := m.DeleteAssetReplica(hash, nodeID, &types.AssetEventInfo{Hash: hash, Event: types.AssetEventRemove, Requester: userID, Details: nodeID})
+func (m *Manager) RemoveReplica(cid, hash, nodeID string) error {
+	err := m.DeleteAssetReplica(hash, nodeID)
 	if err != nil {
 		return xerrors.Errorf("RemoveReplica %s DeleteAssetReplica err: %s", hash, err.Error())
 	}
@@ -323,55 +433,24 @@ func (m *Manager) RemoveReplica(cid, hash, nodeID, userID string) error {
 }
 
 // RemoveAsset removes an asset
-func (m *Manager) RemoveAsset(cid, hash, userID string) error {
+func (m *Manager) RemoveAsset(hash string) error {
 	if exist, _ := m.assetStateMachines.Has(AssetHash(hash)); !exist {
 		return xerrors.Errorf("not found asset %s", hash)
 	}
 
-	// remove asset
-	err := m.assetStateMachines.Send(AssetHash(hash), AssetRemove{})
-	if err != nil {
-		return xerrors.Errorf("send to state machine err: %s ", err.Error())
-	}
-
-	cInfos, err := m.LoadAssetReplicas(hash)
-	if err != nil {
-		return xerrors.Errorf("RemoveAsset %s LoadAssetReplicas err:%s", cid, err.Error())
-	}
-
-	err = m.DeleteAssetRecord(hash, m.nodeMgr.ServerID, &types.AssetEventInfo{Hash: hash, Event: types.AssetEventRemove, Requester: userID})
-	if err != nil {
-		return xerrors.Errorf("RemoveAsset %s DeleteAssetRecord err: %s", hash, err.Error())
-	}
-
-	for _, cInfo := range cInfos {
-		// asset view
-		err = m.removeAssetFromView(cInfo.NodeID, cid)
-		if err != nil {
-			log.Errorf("RemoveAsset %s removeAssetFromView err:%s", cInfo.NodeID, err.Error())
-		}
-
-		go m.requestAssetDelete(cInfo.NodeID, cid)
-	}
-
-	return nil
+	return m.assetStateMachines.Send(AssetHash(hash), AssetForceState{State: Remove})
 }
 
 // updateAssetPullResults updates asset pull results
 func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult) {
-	isCandidate := false
-	pullingCount := 0
-
 	nodeInfo := m.nodeMgr.GetNode(nodeID)
 	if nodeInfo != nil {
-		isCandidate = nodeInfo.Type == types.NodeCandidate
 		// update node info
 		nodeInfo.DiskUsage = result.DiskUsage
-		defer nodeInfo.SetCurPullingCount(pullingCount)
 	}
 
 	for _, progress := range result.Progresses {
-		log.Debugf("updateAssetPullResults node_id: %s, status: %d, size: %d/%d, cid: %s ", nodeID, progress.Status, progress.DoneSize, progress.Size, progress.CID)
+		log.Debugf("updateAssetPullResults node_id: %s, status: %d, block:%d/%d, size: %d/%d, cid: %s ", nodeID, progress.Status, progress.DoneBlocksCount, progress.BlocksCount, progress.DoneSize, progress.Size, progress.CID)
 
 		hash, err := cidutil.CIDToHash(progress.CID)
 		if err != nil {
@@ -384,17 +463,9 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 			continue
 		}
 
-		{
-			m.lock.Lock()
-			tickerC, ok := m.apTickers[hash]
-			if ok {
-				tickerC.ticker.Reset(nodePullAssetTimeout)
-			}
-			m.lock.Unlock()
-		}
+		m.startAssetTimeoutCounting(hash)
 
 		if progress.Status == types.ReplicaStatusWaiting {
-			pullingCount++
 			continue
 		}
 
@@ -406,15 +477,13 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 			NodeID:   nodeID,
 		}
 
-		err = m.UpdateUnfinishedReplica(cInfo)
+		err = m.UpdateReplicaInfo(cInfo)
 		if err != nil {
 			log.Errorf("updateAssetPullResults %s UpdateUnfinishedReplica err:%s", nodeID, err.Error())
 			continue
 		}
 
 		if progress.Status == types.ReplicaStatusPulling {
-			pullingCount++
-
 			err = m.assetStateMachines.Send(AssetHash(hash), InfoUpdate{
 				Blocks: int64(progress.BlocksCount),
 				Size:   progress.Size,
@@ -426,21 +495,18 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 			continue
 		}
 
-		// asset view
-		err = m.addAssetToView(nodeID, progress.CID)
-		if err != nil {
-			log.Errorf("updateAssetPullResults %s addAssetToView err:%s", nodeID, err.Error())
-			continue
+		if progress.Status == types.ReplicaStatusSucceeded {
+			// asset view
+			err = m.addAssetToView(nodeID, progress.CID)
+			if err != nil {
+				log.Errorf("updateAssetPullResults %s addAssetToView err:%s", nodeID, err.Error())
+				continue
+			}
 		}
 
 		err = m.assetStateMachines.Send(AssetHash(hash), PulledResult{
-			ResultInfo: &NodePulledResult{
-				NodeID:      nodeID,
-				Status:      int64(progress.Status),
-				BlocksCount: int64(progress.BlocksCount),
-				Size:        progress.Size,
-				IsCandidate: isCandidate,
-			},
+			BlocksCount: int64(progress.BlocksCount),
+			Size:        progress.Size,
 		})
 		if err != nil {
 			log.Errorf("updateAssetPullResults %s statemachine send err:%s", nodeID, err.Error())
@@ -449,53 +515,19 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 	}
 }
 
-// addOrResetAssetTicker adds or resets the asset ticker with a given hash
-func (m *Manager) addOrResetAssetTicker(hash string) {
+// Reset the count of no response asset tasks
+func (m *Manager) startAssetTimeoutCounting(hash string) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	fn := func() error {
-		// update replicas status
-		err := m.UpdateReplicasStatusToFailed(hash)
-		if err != nil {
-			return xerrors.Errorf("addOrResetAssetTicker %s UpdateReplicasStatusToFailed err:%s", hash, err.Error())
-		}
-
-		err = m.assetStateMachines.Send(AssetHash(hash), PullFailed{error: xerrors.New("node pull asset response timeout")})
-		if err != nil {
-			return xerrors.Errorf("addOrResetAssetTicker %s send time out err:%s", hash, err.Error())
-		}
-
-		return nil
-	}
-
-	t, ok := m.apTickers[hash]
-	if ok {
-		t.ticker.Reset(nodePullAssetTimeout)
-		return
-	}
-
-	m.apTickers[hash] = &assetTicker{
-		ticker: time.NewTicker(nodePullAssetTimeout),
-		close:  make(chan struct{}),
-	}
-
-	go m.apTickers[hash].run(fn)
+	m.pullingAssets[hash] = 0
 }
 
-// removeTickerForAsset removes the asset ticker for a given key
-func (m *Manager) removeTickerForAsset(key string) {
+func (m *Manager) stopAssetTimeoutCounting(hash string) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	t, ok := m.apTickers[key]
-	if !ok {
-		return
-	}
-
-	t.ticker.Stop()
-	close(t.close)
-	delete(m.apTickers, key)
+	delete(m.pullingAssets, hash)
 }
 
 // UpdateAssetExpiration updates the asset expiration for a given CID
@@ -507,7 +539,7 @@ func (m *Manager) UpdateAssetExpiration(cid string, t time.Time) error {
 
 	log.Infof("asset event %s, reset asset expiration:%s", cid, t.String())
 
-	err = m.UpdateAssetRecordExpiry(hash, t, m.nodeMgr.ServerID)
+	err = m.UpdateAssetRecordExpiration(hash, t)
 	if err != nil {
 		return err
 	}
@@ -516,16 +548,19 @@ func (m *Manager) UpdateAssetExpiration(cid string, t time.Time) error {
 }
 
 // processMissingAssetReplicas checks for missing replicas of assets and adds missing replicas
-func (m *Manager) processMissingAssetReplicas() {
-	aRows, err := m.LoadAllAssetRecords(m.nodeMgr.ServerID)
+func (m *Manager) processMissingAssetReplicas(offset int) int {
+	aRows, err := m.LoadAllAssetRecords(m.nodeMgr.ServerID, checkAssetReplicaLimit, offset, []string{Servicing.String(), EdgesFailed.String()})
 	if err != nil {
 		log.Errorf("LoadAllAssetRecords err:%s", err.Error())
-		return
+		return offset
 	}
 	defer aRows.Close()
 
+	size := 0
 	// loading asset records
 	for aRows.Next() {
+		size++
+
 		cInfo := &types.AssetRecord{}
 		err = aRows.StructScan(cInfo)
 		if err != nil {
@@ -533,11 +568,7 @@ func (m *Manager) processMissingAssetReplicas() {
 			continue
 		}
 
-		if cInfo.State != Servicing.String() {
-			continue
-		}
-
-		effectiveEdges, err := m.checkAssetReliability(cInfo.Hash)
+		effectiveEdges, details, err := m.checkAssetReliability(cInfo.Hash)
 		if err != nil {
 			log.Errorf("checkAssetReliability err: %s", err.Error())
 			continue
@@ -545,38 +576,40 @@ func (m *Manager) processMissingAssetReplicas() {
 
 		missingEdges := cInfo.NeedEdgeReplica - int64(effectiveEdges)
 
-		if missingEdges <= 0 {
+		if missingEdges <= 0 && cInfo.State == Servicing.String() {
 			// Asset are healthy and do not need to be replenish replicas
 			continue
 		}
 
 		// do replenish replicas
-		err = m.replenishAssetReplicas(cInfo, missingEdges, string(m.nodeMgr.ServerID))
+		err = m.replenishAssetReplicas(cInfo, missingEdges, string(m.nodeMgr.ServerID), details, CandidatesSelect)
 		if err != nil {
 			log.Errorf("replenishAssetReplicas err: %s", err.Error())
 			continue
 		}
 	}
+
+	if size == checkAssetReplicaLimit {
+		offset++
+	} else {
+		offset = 0
+	}
+
+	return offset
 }
 
 // Check the reliability of assets
-func (m *Manager) checkAssetReliability(hash string) (effectiveEdges int, outErr error) {
+func (m *Manager) checkAssetReliability(hash string) (effectiveEdges int, details string, outErr error) {
 	// loading asset replicas
-	rRows, outErr := m.LoadReplicasByHash(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	replicas, outErr := m.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
 	if outErr != nil {
 		log.Errorf("checkAssetReliability LoadReplicasByHash err:%s", outErr.Error())
 		return
 	}
-	defer rRows.Close()
 
-	for rRows.Next() {
-		rInfo := &types.ReplicaInfo{}
-		err := rRows.StructScan(rInfo)
-		if err != nil {
-			log.Errorf("checkAssetReliability StructScan err: %s", err.Error())
-			continue
-		}
+	details = "offline node:"
 
+	for _, rInfo := range replicas {
 		// Are the nodes unreliable
 		nodeID := rInfo.NodeID
 		lastSeen, err := m.LoadNodeLastSeenTime(nodeID)
@@ -585,12 +618,14 @@ func (m *Manager) checkAssetReliability(hash string) (effectiveEdges int, outErr
 			continue
 		}
 
+		if rInfo.IsCandidate {
+			continue
+		}
+
 		if lastSeen.Add(maxNodeOfflineTime).After(time.Now()) {
-			if !rInfo.IsCandidate {
-				effectiveEdges++
-			}
+			effectiveEdges++
 		} else {
-			log.Warnf("offline node %s", nodeID)
+			details = fmt.Sprintf("%s%s,", details, nodeID)
 		}
 	}
 
@@ -599,7 +634,7 @@ func (m *Manager) checkAssetReliability(hash string) (effectiveEdges int, outErr
 
 // processExpiredAssets checks for expired assets and removes them
 func (m *Manager) processExpiredAssets() {
-	records, err := m.LoadExpiredAssetRecords(m.nodeMgr.ServerID)
+	records, err := m.LoadExpiredAssetRecords(m.nodeMgr.ServerID, ActiveStates)
 	if err != nil {
 		log.Errorf("LoadExpiredAssetRecords err:%s", err.Error())
 		return
@@ -607,7 +642,7 @@ func (m *Manager) processExpiredAssets() {
 
 	for _, record := range records {
 		// do remove
-		err = m.RemoveAsset(record.CID, record.Hash, string(m.nodeMgr.ServerID))
+		err = m.RemoveAsset(record.Hash)
 		log.Infof("the asset cid(%s) has expired, being removed, err: %v", record.CID, err)
 	}
 }
@@ -627,10 +662,20 @@ func (m *Manager) GetCandidateReplicaCount() int {
 	cfg, err := m.config()
 	if err != nil {
 		log.Errorf("get schedulerConfig err:%s", err.Error())
+		return seedReplicaCount
+	}
+
+	return seedReplicaCount + cfg.CandidateReplicas
+}
+
+func (m *Manager) getAssetPullTaskLimit() int {
+	cfg, err := m.config()
+	if err != nil {
+		log.Errorf("get schedulerConfig err:%s", err.Error())
 		return 0
 	}
 
-	return cfg.CandidateReplicas
+	return cfg.AssetPullTaskLimit
 }
 
 // GetAssetRecordInfo get the asset record info for cid
@@ -645,7 +690,7 @@ func (m *Manager) GetAssetRecordInfo(cid string) (*types.AssetRecord, error) {
 		return nil, err
 	}
 
-	dInfo.ReplicaInfos, err = m.LoadAssetReplicas(hash)
+	dInfo.ReplicaInfos, err = m.LoadReplicasByStatus(hash, types.ReplicaStatusAll)
 	if err != nil {
 		log.Errorf("GetAssetRecordInfo hash:%s, LoadAssetReplicas err:%s", hash, err.Error())
 	}
@@ -667,44 +712,29 @@ func (m *Manager) saveReplicaInformation(nodes map[string]*node.Node, hash strin
 		})
 	}
 
-	return m.BatchInitReplicas(replicaInfos)
+	return m.SaveReplicasStatus(replicaInfos)
 }
 
 // getDownloadSources gets download sources for a given CID
 func (m *Manager) getDownloadSources(cid string, nodes []string) []*types.CandidateDownloadInfo {
-	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	tkPayloads := make([]*types.TokenPayload, 0)
 	sources := make([]*types.CandidateDownloadInfo, 0)
 	for _, nodeID := range nodes {
 		cNode := m.nodeMgr.GetCandidateNode(nodeID)
 		if cNode == nil {
 			continue
 		}
-
-		token, tkPayload, err := cNode.Token(cid, titanRsa, m.nodeMgr.PrivateKey)
-		if err != nil {
-			continue
-		}
-		tkPayloads = append(tkPayloads, tkPayload)
-
 		source := &types.CandidateDownloadInfo{
-			URL: cNode.DownloadAddr(),
-			Tk:  token,
+			NodeID:  nodeID,
+			Address: cNode.DownloadAddr(),
 		}
 
 		sources = append(sources, source)
 	}
-
-	if len(tkPayloads) > 0 {
-		if err := m.SaveTokenPayload(tkPayloads); err != nil {
-			log.Errorf("SaveTokenPayload error: %s", err.Error())
-		}
-	}
 	return sources
 }
 
-// chooseCandidateNodesForAssetReplica selects candidate nodes to pull asset replicas
-func (m *Manager) chooseCandidateNodesForAssetReplica(count int, filterNodes []string) (map[string]*node.Node, string) {
+// chooseCandidateNodes selects candidate nodes to pull asset replicas
+func (m *Manager) chooseCandidateNodes(count int, filterNodes []string) (map[string]*node.Node, string) {
 	str := fmt.Sprintf("need node:%d , filter node:%d , cur node:%d , randNum : ", count, len(filterNodes), m.nodeMgr.Candidates)
 
 	selectMap := make(map[string]*node.Node)
@@ -749,14 +779,20 @@ func (m *Manager) chooseCandidateNodesForAssetReplica(count int, filterNodes []s
 	return selectMap, str
 }
 
-// chooseEdgeNodesForAssetReplica selects edge nodes to pull asset replicas
-func (m *Manager) chooseEdgeNodesForAssetReplica(count int, filterNodes []string) (map[string]*node.Node, string) {
+// chooseEdgeNodes selects edge nodes to store asset replicas
+// count: number of nodes to select
+// bandwidthDown: required cumulative bandwidth among selected nodes
+// filterNodes: exclude nodes that have already been considered
+// size: the minimum free storage space required for each selected node
+func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []string, size float64) (map[string]*node.Node, string) {
 	str := fmt.Sprintf("need node:%d , filter node:%d , cur node:%d , randNum : ", count, len(filterNodes), m.nodeMgr.Edges)
 	selectMap := make(map[string]*node.Node)
 	if count <= 0 {
-		return selectMap, str
+		count = 1
 	}
 
+	// If the number of filterNodes is equal or greater than the total edge nodes,
+	// there are no nodes to consider, so return an empty map and the result string
 	if len(filterNodes) >= m.nodeMgr.Edges {
 		return selectMap, str
 	}
@@ -766,27 +802,123 @@ func (m *Manager) chooseEdgeNodesForAssetReplica(count int, filterNodes []string
 		filterMap[nodeID] = struct{}{}
 	}
 
-	for i := 0; i < count*selectNodeRetryLimit; i++ {
-		node, rNum := m.nodeMgr.GetRandomEdge()
-		str = fmt.Sprintf("%s%d,", str, rNum)
+	// Define filter function loop control types
+	type fType int
+
+	const (
+		continueType fType = iota
+		breakType
+	)
+	// nodeFilter filters nodes to pick based on certain conditions and updates selectMap
+	f := func(node *node.Node) fType {
 		if node == nil {
-			continue
+			return continueType
 		}
 		nodeID := node.NodeID
 
 		if _, exist := filterMap[nodeID]; exist {
-			continue
+			return continueType
 		}
 
-		if node.DiskUsage > maxNodeDiskUsage {
-			continue
+		// Calculate node residual capacity
+		residual := (100 - node.DiskUsage) * node.DiskSpace
+		if residual <= size {
+			log.Debugf("node %s disk residual %.2f", nodeID, residual)
+			return continueType
 		}
 
+		if _, exist := selectMap[nodeID]; exist {
+			return continueType
+		}
+
+		bandwidthDown -= int64(node.BandwidthDown)
 		selectMap[nodeID] = node
-		if len(selectMap) >= count {
-			break
+		if len(selectMap) >= count && bandwidthDown <= 0 {
+			return breakType
+		}
+
+		if len(selectMap) >= assetEdgeReplicasLimit-len(filterNodes) {
+			return breakType
+		}
+
+		return continueType
+	}
+
+	// If count is greater or equal to the difference between total edge nodes and the filterNodes length,
+	// choose all unfiltered nodes
+	if count >= m.nodeMgr.Edges-len(filterNodes) {
+		log.Debugln("choose all -----------")
+		// choose all
+		nodes := m.nodeMgr.GetAllEdgeNode()
+
+		for _, node := range nodes {
+			if f(node) == breakType {
+				break
+			}
+		}
+	} else {
+		log.Debugln("choose random -----------")
+		// choose random
+		for i := 0; i < count*selectNodeRetryLimit; i++ {
+			node, rNum := m.nodeMgr.GetRandomEdge()
+			str = fmt.Sprintf("%s%d,", str, rNum)
+			if f(node) == breakType {
+				break
+			}
 		}
 	}
 
 	return selectMap, str
+}
+
+func (m *Manager) GetAssetCount() (int, error) {
+	return m.LoadAssetCount(m.nodeMgr.ServerID, Remove.String())
+}
+
+func (m *Manager) generateTokenForDownloadSources(sources []*types.CandidateDownloadInfo, titanRsa *titanrsa.Rsa, assetCID string, clientID string) ([]*types.CandidateDownloadInfo, []*types.TokenPayload, error) {
+	payloads := make([]*types.TokenPayload, 0)
+	downloadSources := make([]*types.CandidateDownloadInfo, 0, len(sources))
+
+	for _, source := range sources {
+		node := m.nodeMgr.GetNode(source.NodeID)
+		tk, payload, err := node.Token(assetCID, clientID, titanRsa, m.nodeMgr.PrivateKey)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		downloadSource := *source
+		downloadSource.Tk = tk
+		downloadSources = append(downloadSources, &downloadSource)
+
+		payloads = append(payloads, payload)
+	}
+
+	return downloadSources, payloads, nil
+}
+
+func (m *Manager) GenerateToken(assetCID string, sources []*types.CandidateDownloadInfo, nodes map[string]*node.Node) (map[string][]*types.CandidateDownloadInfo, []*types.TokenPayload, error) {
+	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	downloadSources := make(map[string][]*types.CandidateDownloadInfo)
+	tkPayloads := make([]*types.TokenPayload, 0)
+
+	for _, node := range nodes {
+		newSources, payloads, err := m.generateTokenForDownloadSources(sources, titanRsa, assetCID, node.NodeID)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		tkPayloads = append(tkPayloads, payloads...)
+		downloadSources[node.NodeID] = newSources
+	}
+	return downloadSources, tkPayloads, nil
+}
+
+func (m *Manager) SaveTokenPayload(payloads []*types.TokenPayload) error {
+	records := make([]*types.WorkloadRecord, 0, len(payloads))
+	for _, payload := range payloads {
+		record := &types.WorkloadRecord{TokenPayload: *payload, Status: types.WorkloadStatusCreate}
+		records = append(records, record)
+	}
+
+	return m.SaveWorkloadRecord(records)
 }

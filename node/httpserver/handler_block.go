@@ -61,6 +61,11 @@ func (hs *HttpServer) serveRawBlock(w http.ResponseWriter, r *http.Request, tkPa
 	// If-None-Match+Etag, Content-Length and range requests
 	http.ServeContent(w, r, name, modtime, content)
 
+	// if not come from sdk, don't send workload
+	if len(tkPayload.ID) == 0 {
+		return
+	}
+
 	duration := time.Since(startTime)
 	speed := float64(0)
 	if duration > 0 {

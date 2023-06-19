@@ -16,6 +16,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/sqldb"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/filecoin-project/pubsub"
+	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
@@ -32,9 +33,9 @@ func NewDB(cfg *config.SchedulerCfg) (*sqlx.DB, error) {
 	return sqldb.NewDB(cfg.DatabaseAddress)
 }
 
-// GenerateTokenWithAdminPermission create a new token based on the given permissions
-func GenerateTokenWithAdminPermission(ca *common.CommonAPI) (dtypes.PermissionWebToken, error) {
-	token, err := ca.AuthNew(context.Background(), []auth.Permission{api.RoleWeb})
+// GenerateTokenWithWebPermission create a new token based on the given permissions
+func GenerateTokenWithWebPermission(ca *common.CommonAPI) (dtypes.PermissionWebToken, error) {
+	token, err := ca.AuthNew(context.Background(), &types.JWTPayload{Allow: []auth.Permission{api.RoleWeb}, ID: uuid.NewString()})
 	if err != nil {
 		return "", err
 	}
@@ -79,11 +80,11 @@ func NewStorageManager(params StorageManagerParams) *assets.Manager {
 }
 
 // NewValidation creates a new validation manager instance
-func NewValidation(mctx helpers.MetricsCtx, lc fx.Lifecycle, nm *node.Manager, am *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *validation.Manager {
+func NewValidation(mctx helpers.MetricsCtx, l fx.Lifecycle, nm *node.Manager, am *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *validation.Manager {
 	v := validation.NewManager(nm, am, configFunc, p)
 
-	ctx := helpers.LifecycleCtx(mctx, lc)
-	lc.Append(fx.Hook{
+	ctx := helpers.LifecycleCtx(mctx, l)
+	l.Append(fx.Hook{
 		OnStart: func(context.Context) error {
 			go v.Start(ctx)
 			return nil

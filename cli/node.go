@@ -17,7 +17,7 @@ var nodeCmds = &cli.Command{
 	Usage: "Manage node",
 	Subcommands: []*cli.Command{
 		onlineNodeCountCmd,
-		registerNodeCmd,
+		requestActivationCodesCmd,
 		showNodeInfoCmd,
 		nodeQuitCmd,
 		setNodePortCmd,
@@ -75,7 +75,7 @@ var listNodeCmd = &cli.Command{
 		tw := tablewriter.New(
 			tablewriter.Col("NodeID"),
 			tablewriter.Col("NodeType"),
-			tablewriter.Col("Online"),
+			tablewriter.Col("Status"),
 		)
 
 		for w := 0; w < len(rsp.Data); w++ {
@@ -83,7 +83,7 @@ var listNodeCmd = &cli.Command{
 			m := map[string]interface{}{
 				"NodeID":   info.NodeID,
 				"NodeType": info.Type.String(),
-				"Online":   colorOnline(info.IsOnline),
+				"Status":   info.Status.String(),
 			}
 
 			tw.Write(m)
@@ -99,37 +99,22 @@ var listNodeCmd = &cli.Command{
 func colorOnline(IsOnline bool) string {
 	if IsOnline {
 		return color.GreenString("true")
-	} else {
-		return color.RedString("false")
 	}
+
+	return color.RedString("false")
 }
 
-var registerNodeCmd = &cli.Command{
-	Name:  "register",
-	Usage: "Register nodeID and public key ",
+var requestActivationCodesCmd = &cli.Command{
+	Name:  "activation-code",
+	Usage: "request node activation codes ",
 	Flags: []cli.Flag{
 		nodeTypeFlag,
-		&cli.StringFlag{
-			Name:  "public-key-path",
-			Usage: "node public key path",
-			Value: "",
-		},
 	},
 	Action: func(cctx *cli.Context) error {
 		t := cctx.Int("node-type")
-		publicKeyPath := cctx.String("public-key-path")
 
 		if t != int(types.NodeEdge) && t != int(types.NodeCandidate) {
 			return xerrors.Errorf("node-type err:%d", t)
-		}
-
-		if publicKeyPath == "" {
-			return xerrors.New("public-key-path is nil")
-		}
-
-		pem, err := os.ReadFile(publicKeyPath)
-		if err != nil {
-			return err
 		}
 
 		ctx := ReqContext(cctx)
@@ -139,8 +124,12 @@ var registerNodeCmd = &cli.Command{
 		}
 		defer closer()
 
-		nodeID, err := schedulerAPI.RegisterNode(ctx, string(pem), types.NodeType(t))
-		fmt.Printf("nodeID is : %s", nodeID)
+		codes, err := schedulerAPI.RequestActivationCodes(ctx, types.NodeType(t), 1)
+		for _, code := range codes {
+			fmt.Println("node:", code.NodeID)
+			fmt.Println("code:", code.ActivationCode)
+			fmt.Println("")
+		}
 
 		return err
 	},
@@ -172,7 +161,7 @@ var showNodeInfoCmd = &cli.Command{
 		}
 
 		fmt.Printf("node id: %s \n", info.NodeID)
-		fmt.Printf("online: %v \n", info.IsOnline)
+		fmt.Printf("status: %v \n", info.Status.String())
 		fmt.Printf("name: %s \n", info.NodeName)
 		fmt.Printf("external_ip: %s \n", info.ExternalIP)
 		fmt.Printf("internal_ip: %s \n", info.InternalIP)
@@ -181,11 +170,10 @@ var showNodeInfoCmd = &cli.Command{
 		fmt.Printf("disk space: %s \n", units.BytesSize(info.DiskSpace))
 		fmt.Printf("fsType: %s \n", info.IoSystem)
 		fmt.Printf("mac: %s \n", info.MacLocation)
-		fmt.Printf("download bandwidth: %s \n", units.BytesSize(info.BandwidthDown))
-		fmt.Printf("upload bandwidth: %s \n", units.BytesSize(info.BandwidthUp))
+		fmt.Printf("download bandwidth: %s \n", units.BytesSize(float64(info.BandwidthDown)))
+		fmt.Printf("upload bandwidth: %s \n", units.BytesSize(float64(info.BandwidthUp)))
 		fmt.Printf("cpu percent: %.2f %s \n", info.CPUUsage, "%")
 		//
-		fmt.Printf("DownloadCount: %d \n", info.DownloadBlocks)
 		fmt.Printf("NatType: %s \n", info.NATType)
 
 		return nil
@@ -231,14 +219,14 @@ var edgeExternalAddrCmd = &cli.Command{
 	Flags: []cli.Flag{
 		nodeIDFlag,
 		&cli.StringFlag{
-			Name:  "scheduler-url",
-			Usage: "scheduler url",
+			Name:  "candidate-url",
+			Usage: "candidate url",
 			Value: "http://localhost:3456/rpc/v0",
 		},
 	},
 	Action: func(cctx *cli.Context) error {
 		nodeID := cctx.String("node-id")
-		schedulerURL := cctx.String("scheduler-url")
+		candidateURL := cctx.String("candidate-url")
 
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
@@ -247,7 +235,7 @@ var edgeExternalAddrCmd = &cli.Command{
 		}
 		defer closer()
 
-		addr, err := schedulerAPI.GetEdgeExternalServiceAddress(ctx, nodeID, schedulerURL)
+		addr, err := schedulerAPI.GetEdgeExternalServiceAddress(ctx, nodeID, candidateURL)
 		if err != nil {
 			return err
 		}

@@ -59,7 +59,7 @@ func APISecret(lr repo.LockedRepo) (*jwt.HMACSHA, error) {
 
 		// TODO: make this configurable
 		p := JwtPayload{
-			Allow: []auth.Permission{api.RoleAdmin},
+			Allow: api.AllPermissions,
 		}
 
 		cliToken, err := jwt.Sign(&p, jwt.NewHS256(key.PrivateKey))
