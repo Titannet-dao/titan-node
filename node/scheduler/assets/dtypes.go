@@ -17,7 +17,6 @@ type NodePulledResult struct {
 	BlocksCount int64
 	Size        int64
 	NodeID      string
-	IsCandidate bool
 }
 
 // AssetPullingInfo represents asset pull information
@@ -29,14 +28,19 @@ type AssetPullingInfo struct {
 	Blocks            int64
 	EdgeReplicas      int64
 	CandidateReplicas int64
+	Bandwidth         int64
 
 	EdgeReplicaSucceeds      []string
-	EdgeReplicaFailures      []string
 	CandidateReplicaSucceeds []string
-	CandidateReplicaFailures []string
+	EdgeWaitings             int64
+	CandidateWaitings        int64
 
 	RetryCount        int64
 	ReplenishReplicas int64
+
+	Requester  string
+	Details    string
+	SeedNodeID string
 }
 
 // ToAssetRecord converts AssetPullingInfo to types.AssetRecord
@@ -66,23 +70,22 @@ func assetPullingInfoFrom(info *types.AssetRecord) *AssetPullingInfo {
 		CandidateReplicas: info.NeedCandidateReplicas,
 		RetryCount:        info.RetryCount,
 		ReplenishReplicas: info.ReplenishReplicas,
+		Bandwidth:         info.NeedBandwidth,
 	}
 
 	for _, r := range info.ReplicaInfos {
-		if r.Status == types.ReplicaStatusSucceeded {
+		switch r.Status {
+		case types.ReplicaStatusSucceeded:
 			if r.IsCandidate {
 				cInfo.CandidateReplicaSucceeds = append(cInfo.CandidateReplicaSucceeds, r.NodeID)
 			} else {
 				cInfo.EdgeReplicaSucceeds = append(cInfo.EdgeReplicaSucceeds, r.NodeID)
 			}
-			continue
-		}
-
-		if r.Status == types.ReplicaStatusFailed {
+		case types.ReplicaStatusPulling, types.ReplicaStatusWaiting:
 			if r.IsCandidate {
-				cInfo.CandidateReplicaFailures = append(cInfo.CandidateReplicaFailures, r.NodeID)
+				cInfo.CandidateWaitings++
 			} else {
-				cInfo.EdgeReplicaFailures = append(cInfo.EdgeReplicaFailures, r.NodeID)
+				cInfo.EdgeWaitings++
 			}
 		}
 	}

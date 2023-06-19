@@ -72,8 +72,10 @@ type LocatorCfg struct {
 	// self sign certificate, use for client
 	CaCertificatePath string
 	// etcd server addresses
-	EtcdAddresses []string
-	DefaultAreaID string
+	EtcdAddresses    []string
+	DefaultAreaID    string
+	DNSServerAddress string
+	UseDefaultAreaID bool
 }
 
 // SchedulerCfg scheduler config
@@ -108,4 +110,35 @@ type SchedulerCfg struct {
 	ValidatorBaseBwDn int
 	// Increased profit after node validation passes
 	ValidationProfit float64
+	// Increased profit after node workload passes
+	WorkloadProfit float64
+	// ElectionCycle cycle (Unit:day)
+	ElectionCycle int
+	// Node score level scale
+	// The key of map is the rank name, and the value of map is a int array containing two elements,
+	// the first element of which is the minimum value of score,
+	// and the second element is the maximum value of score. (scores out of 100)
+	NodeScoreLevel map[string][]int
+	// Node level weight
+	// The key of the map is the name of the level, and the value of the map is an int,
+	// indicating how many select weight this level can get (the more select weight, the greater the probability of the node being selected)
+	LevelSelectWeight map[string]int
+
+	UserFreeStorageSize int64
+
+	LotusRPCAddress string
+	LotusToken      string
+
+	// The ratio of edge nodes returned to the user for download
+	EdgeDownloadRatio float64
+	// Maximum number of concurrent asset pulls
+	AssetPullTaskLimit int
+
+	NatDetectConcurrency int
+	AssetDomain          string
+
+	// Default number of backups for user uploaded files
+	UploadAssetReplicaCount int
+	// Default expiration time for user uploaded files
+	UploadAssetExpiration int // (Unit:day)
 }

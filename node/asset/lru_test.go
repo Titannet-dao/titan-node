@@ -113,12 +113,16 @@ func TestIndex(t *testing.T) {
 	}
 
 	records := make([]index.Record, 0)
-	mhIdx.ForEach(func(mh multihash.Multihash, offset uint64) error {
+	err = mhIdx.ForEach(func(mh multihash.Multihash, offset uint64) error {
 		c := cid.NewCidV1(cid.Raw, mh)
 		records = append(records, index.Record{Cid: c, Offset: offset})
 
 		return nil
 	})
+
+	if err != nil {
+		t.Errorf("mhIdx ForEach error %s", err.Error())
+	}
 
 	t.Logf("record count:%d", len(records))
 
@@ -146,7 +150,7 @@ func TestIndex(t *testing.T) {
 	t.Logf("bucket size:%d, record count:%d", newIndex.BucketCount(), newIndex.TotalRecordCount())
 
 	size := newIndex.BucketCount()
-	rcs, err := newIndex.GetBucketRecords(12345 % size)
+	_, rcs, err := newIndex.GetBucketRecords(12345 % size)
 	if err != nil {
 		t.Errorf("GetBucket error:%s", err.Error())
 		return
@@ -155,4 +159,68 @@ func TestIndex(t *testing.T) {
 	for _, record := range rcs {
 		t.Logf("record: %s", record.String())
 	}
+}
+
+func TestIterateRecord(t *testing.T) {
+	t.Logf("TestIndex")
+
+	metaDataPath := "C:/Users/aaa/.titancandidate-2/storage/"
+	assetsPaths := []string{metaDataPath}
+	storageMgr, err := storage.NewManager(&storage.ManagerOptions{MetaDataPath: metaDataPath, AssetsPaths: assetsPaths})
+	if err != nil {
+		t.Errorf("new manager err:%s", err.Error())
+		return
+	}
+	cache, err := newLRUCache(storageMgr, 1)
+	if err != nil {
+		t.Errorf("new block error:%s", err.Error())
+		return
+	}
+
+	cidStr := "QmPB3M9CyLrqVeToYpeBCeMUL7DrCg2eB3pTtYjm9JGVXY"
+	root, err := cid.Decode(cidStr)
+	if err != nil {
+		t.Errorf("decode error:%s", err.Error())
+		return
+	}
+
+	reader, err := storageMgr.GetAsset(root)
+	if err != nil {
+		t.Errorf("decode error:%s", err.Error())
+		return
+	}
+
+	f, ok := reader.(*os.File)
+	if !ok {
+		t.Errorf("can not convert asset %s reader to file", root.String())
+		return
+	}
+
+	idx, err := cache.getAssetIndex(f)
+	if err != nil {
+		t.Errorf("decode error:%s", err.Error())
+		return
+	}
+
+	mhIdx, ok := idx.(*titanindex.MultiIndexSorted)
+	if !ok {
+		t.Errorf("can not convert index to MultihashIndexSorted")
+		return
+	}
+
+	sizeOfBucket := mhIdx.BucketCount()
+	for i := 0; i < int(sizeOfBucket); i++ {
+		code, records, err := mhIdx.GetBucketRecords(uint32(i))
+		if err != nil {
+			t.Errorf("GetBucketRecords error %s", err.Error())
+			continue
+		}
+
+		for _, record := range records {
+			t.Logf("bucket %d, cid %s", code, record.Cid.String())
+		}
+	}
+
+	// t.Logf("record count:%d", len(records))
+
 }

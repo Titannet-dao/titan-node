@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"sync"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	logging "github.com/ipfs/go-log/v2"
@@ -12,6 +13,10 @@ import (
 )
 
 var log = logging.Logger("data-sync")
+
+const (
+	syncInterval = 24 * time.Hour
+)
 
 // DataSync asset synchronization manager
 type DataSync struct {
@@ -98,14 +103,23 @@ func (ds *DataSync) performDataSync(nodeID string) error {
 	if node == nil {
 		return xerrors.Errorf("could not get node %s data sync api", nodeID)
 	}
+
+	syncTime, err := ds.nodeManager.LoadSyncTime(nodeID)
+	if err != nil {
+		return xerrors.Errorf("load sync time %w", err)
+	}
+
+	if time.Since(syncTime) < syncInterval {
+		log.Debugf("%s already sync data within 24 hour", nodeID)
+		return nil
+	}
+	if err = ds.nodeManager.UpdateSyncTime(nodeID); err != nil {
+		log.Errorf("UpdateSyncTime error %s", err.Error())
+	}
+
 	topChecksum, err := ds.fetchTopHash(nodeID)
 	if err != nil {
 		return xerrors.Errorf("get top hash %w", err)
-	}
-
-	if len(topChecksum) == 0 {
-		log.Debugf("node %s no assets exist", nodeID)
-		return nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

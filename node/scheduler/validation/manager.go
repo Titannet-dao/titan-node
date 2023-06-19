@@ -5,11 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
-	"github.com/docker/go-units"
 	"github.com/filecoin-project/pubsub"
 	logging "github.com/ipfs/go-log/v2"
 )
@@ -17,33 +17,32 @@ import (
 var log = logging.Logger("validation")
 
 const (
-	bandwidthRatio = 0.7                    // The ratio of the total upstream bandwidth on edge nodes to the downstream bandwidth on validation nodes.
-	toleranceBwUp  = float64(5 * units.MiB) // The tolerance for uplink bandwidth deviation per group, set to 5M.
+	validationWorkers = 50
 )
 
 // VWindow represents a validation window that contains a validator id and validatable node list.
 type VWindow struct {
 	NodeID           string // Node ID of the validation window.
-	ValidatableNodes map[string]float64
+	ValidatableNodes map[string]int64
 }
 
 func newVWindow(nID string) *VWindow {
 	return &VWindow{
 		NodeID:           nID,
-		ValidatableNodes: make(map[string]float64),
+		ValidatableNodes: make(map[string]int64),
 	}
 }
 
 // ValidatableGroup Each ValidatableGroup will be paired with a VWindow
 type ValidatableGroup struct {
-	sumBwUp float64
-	nodes   map[string]float64
+	sumBwUp int64
+	nodes   map[string]int64
 	lock    sync.RWMutex
 }
 
 func newValidatableGroup() *ValidatableGroup {
 	return &ValidatableGroup{
-		nodes: make(map[string]float64),
+		nodes: make(map[string]int64),
 	}
 }
 
@@ -71,11 +70,14 @@ type Manager struct {
 	nextElectionTime time.Time
 
 	profit float64
+
+	// validation result worker
+	resultQueue chan *api.ValidationResult
 }
 
 // NewManager return new node manager instance
 func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *Manager {
-	nodeManager := &Manager{
+	manager := &Manager{
 		nodeMgr:       nodeMgr,
 		assetMgr:      assetMgr,
 		config:        configFunc,
@@ -83,9 +85,10 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 		unpairedGroup: newValidatableGroup(),
 		updateCh:      make(chan struct{}, 1),
 		notify:        p,
+		resultQueue:   make(chan *api.ValidationResult),
 	}
 
-	return nodeManager
+	return manager
 }
 
 // Start start validate and elect task
@@ -94,6 +97,7 @@ func (m *Manager) Start(ctx context.Context) {
 	go m.startElectionTicker()
 
 	m.subscribeNodeEvents()
+	m.pullResults()
 }
 
 // Stop stop

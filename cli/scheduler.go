@@ -15,6 +15,7 @@ var SchedulerCMDs = []*cli.Command{
 	WithCategory("node", nodeCmds),
 	WithCategory("asset", assetCmds),
 	WithCategory("config", sConfigCmds),
+	WithCategory("user", userCmds),
 	startElectionCmd,
 	// other
 	edgeUpdaterCmd,
@@ -77,6 +78,12 @@ var (
 		Name:  "port",
 		Usage: "port",
 		Value: "",
+	}
+
+	bandwidthFlag = &cli.Float64Flag{
+		Name:  "bandwidth",
+		Usage: "bandwidth (unit:MiB/s)",
+		Value: 0,
 	}
 )
 
@@ -387,6 +394,16 @@ var sConfigSetCmd = &cli.Command{
 			Usage: "increased profit after node validation passes",
 			Value: 1,
 		},
+		&cli.Float64Flag{
+			Name:  "workload-profit",
+			Usage: "increased profit after node workload passes",
+			Value: 5,
+		},
+		&cli.Float64Flag{
+			Name:  "election-cycle",
+			Usage: "lectionCycle cycle (Unit:day)",
+			Value: 5,
+		},
 	},
 
 	Action: func(cctx *cli.Context) error {
@@ -444,6 +461,12 @@ var sConfigSetCmd = &cli.Command{
 			}
 			if cctx.IsSet("validation-profit") {
 				cfg.ValidationProfit = cctx.Float64("validation-profit")
+			}
+			if cctx.IsSet("workload-profit") {
+				cfg.WorkloadProfit = cctx.Float64("workload-profit")
+			}
+			if cctx.IsSet("election-cycle") {
+				cfg.ElectionCycle = cctx.Int("election-cycle")
 			}
 		})
 

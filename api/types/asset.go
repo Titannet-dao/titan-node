@@ -39,11 +39,14 @@ type AssetRecord struct {
 	TotalSize             int64           `db:"total_size"`
 	TotalBlocks           int64           `db:"total_blocks"`
 	Expiration            time.Time       `db:"expiration"`
-	CreateTime            time.Time       `db:"created_time"`
+	CreatedTime           time.Time       `db:"created_time"`
 	EndTime               time.Time       `db:"end_time"`
 	NeedCandidateReplicas int64           `db:"candidate_replicas"`
 	ServerID              dtypes.ServerID `db:"scheduler_sid"`
 	State                 string          `db:"state"`
+	NeedBandwidth         int64           `db:"bandwidth"` // unit:MiB/s
+
+	AssetName string `db:"asset_name"`
 
 	RetryCount        int64 `db:"retry_count"`
 	ReplenishReplicas int64 `db:"replenish_replicas"`
@@ -75,7 +78,27 @@ type PullAssetReq struct {
 	Hash       string
 	Replicas   int64
 	Expiration time.Time
+	Bandwidth  int64 // unit:MiB/s
 }
+
+// AssetType represents the type of a asset
+type AssetType int
+
+const (
+	// AssetTypeCarfile type
+	AssetTypeCarfile AssetType = iota
+	// AssetTypeFile type
+	AssetTypeFile
+)
+
+type ReplicaEvent int
+
+const (
+	// ReplicaEventRemove event
+	ReplicaEventRemove ReplicaEvent = iota
+	// ReplicaEventAdd event
+	ReplicaEventAdd
+)
 
 // ReplicaStatus represents the status of a replica pull
 type ReplicaStatus int
@@ -115,22 +138,6 @@ var ReplicaStatusAll = []ReplicaStatus{
 	ReplicaStatusSucceeded,
 }
 
-// ListReplicaInfosReq represents a request to list asset replicas
-type ListReplicaInfosReq struct {
-	// Unix timestamp
-	StartTime int64 `json:"start_time"`
-	// Unix timestamp
-	EndTime int64 `json:"end_time"`
-	Cursor  int   `json:"cursor"`
-	Count   int   `json:"count"`
-}
-
-// ListReplicaInfosRsp represents a response containing a list of asset replicas
-type ListReplicaInfosRsp struct {
-	Replicas []*ReplicaInfo `json:"data"`
-	Total    int64          `json:"total"`
-}
-
 // AssetStats contains statistics about assets
 type AssetStats struct {
 	TotalAssetCount     int
@@ -160,22 +167,35 @@ type AssetStatistics struct {
 	UserDownloadCount int
 }
 
-// AssetEvent Events for asset manipulation
-type AssetEvent string
+// NodeAssetInfo node asset info of web
+type NodeAssetInfo struct {
+	Hash       string    `db:"hash"`
+	Cid        string    `db:"cid"`
+	TotalSize  int64     `db:"total_size"`
+	Expiration time.Time `db:"expiration"`
+	EndTime    time.Time `db:"end_time"`
+}
 
-const (
-	// AssetEventAdd status
-	AssetEventAdd AssetEvent = "Add"
-	// AssetEventRemove status
-	AssetEventRemove AssetEvent = "Remove"
-)
+// ListNodeAssetRsp list node assets
+type ListNodeAssetRsp struct {
+	Total          int              `json:"total"`
+	NodeAssetInfos []*NodeAssetInfo `json:"asset_infos"`
+}
 
-// AssetEventInfo Event info for asset manipulation
-type AssetEventInfo struct {
-	ID          int
-	Hash        string     `db:"hash"`
-	Event       AssetEvent `db:"event"`
-	CreatedTime time.Time  `db:"created_time"`
-	Requester   string     `db:"requester"`
-	Details     string     `db:"details"`
+// ReplicaEventInfo replica event info
+type ReplicaEventInfo struct {
+	NodeID  string       `db:"node_id"`
+	Event   ReplicaEvent `db:"event"`
+	Hash    string       `db:"hash"`
+	EndTime time.Time    `db:"end_time"`
+
+	Cid        string    `db:"cid"`
+	TotalSize  int64     `db:"total_size"`
+	Expiration time.Time `db:"expiration"`
+}
+
+// ListReplicaEventRsp list replica events
+type ListReplicaEventRsp struct {
+	Total         int                 `json:"total"`
+	ReplicaEvents []*ReplicaEventInfo `json:"replica_events"`
 }

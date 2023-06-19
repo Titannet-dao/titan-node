@@ -143,27 +143,35 @@ var showAssetInfoCmd = &cli.Command{
 		fmt.Printf("Expiration:\t%v\n", info.Expiration.Format(defaultDateTimeLayout))
 
 		fmt.Printf("--------\nProcesses:\n")
-		for _, cache := range info.ReplicaInfos {
-			fmt.Printf("%s(%s): %s\t%s/%s\n", cache.NodeID, edgeOrCandidate(cache.IsCandidate), colorState(cache.Status.String()),
-				units.BytesSize(float64(cache.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+		succeed := 0
+		for _, replica := range info.ReplicaInfos {
+			fmt.Printf("%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), colorState(replica.Status.String()),
+				units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+
+			if replica.Status == types.ReplicaStatusSucceeded {
+				succeed++
+			}
 		}
+		fmt.Printf("Succeed: %d", succeed)
 
 		return nil
 	},
 }
 
 var pullAssetCmd = &cli.Command{
-	Name:  "cache",
-	Usage: "publish cache tasks to nodes",
+	Name:  "pull",
+	Usage: "publish pull asset tasks to nodes",
 	Flags: []cli.Flag{
 		cidFlag,
 		replicaCountFlag,
 		expirationDateFlag,
+		bandwidthFlag,
 	},
 	Action: func(cctx *cli.Context) error {
 		cid := cctx.String("cid")
 		replicaCount := cctx.Int64("replica-count")
 		date := cctx.String("expiration-date")
+		bandwidth := cctx.Int64("bandwidth")
 
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
@@ -189,6 +197,7 @@ var pullAssetCmd = &cli.Command{
 
 		info.Expiration = eTime
 		info.Replicas = replicaCount
+		info.Bandwidth = bandwidth
 
 		err = schedulerAPI.PullAsset(ctx, info)
 		if err != nil {
@@ -237,7 +246,7 @@ var listAssetRecordCmd = &cli.Command{
 		limit := cctx.Int("limit")
 		offset := cctx.Int("offset")
 
-		states := assets.AllStates
+		states := assets.ActiveStates
 
 		if cctx.Bool("pulling") {
 			states = assets.PullingStates
@@ -257,7 +266,7 @@ var listAssetRecordCmd = &cli.Command{
 			tablewriter.Col("State"),
 			tablewriter.Col("Blocks"),
 			tablewriter.Col("Size"),
-			tablewriter.Col("CreateTime"),
+			tablewriter.Col("CreatedTime"),
 			tablewriter.Col("Expiration"),
 			tablewriter.NewLineCol("Processes"),
 		)
@@ -270,12 +279,12 @@ var listAssetRecordCmd = &cli.Command{
 		for w := 0; w < len(list); w++ {
 			info := list[w]
 			m := map[string]interface{}{
-				"CID":        info.CID,
-				"State":      colorState(info.State),
-				"Blocks":     info.TotalBlocks,
-				"Size":       units.BytesSize(float64(info.TotalSize)),
-				"CreateTime": info.CreateTime.Format(defaultDateTimeLayout),
-				"Expiration": info.Expiration.Format(defaultDateTimeLayout),
+				"CID":         info.CID,
+				"State":       colorState(info.State),
+				"Blocks":      info.TotalBlocks,
+				"Size":        units.BytesSize(float64(info.TotalSize)),
+				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
+				"Expiration":  info.Expiration.Format(defaultDateTimeLayout),
 			}
 
 			sort.Slice(info.ReplicaInfos, func(i, j int) bool {
@@ -285,9 +294,9 @@ var listAssetRecordCmd = &cli.Command{
 			if cctx.Bool("processes") {
 				processes := "\n"
 				for j := 0; j < len(info.ReplicaInfos); j++ {
-					cache := info.ReplicaInfos[j]
-					status := colorState(cache.Status.String())
-					processes += fmt.Sprintf("\t%s(%s): %s\t%s/%s\n", cache.NodeID, edgeOrCandidate(cache.IsCandidate), status, units.BytesSize(float64(cache.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+					replica := info.ReplicaInfos[j]
+					status := colorState(replica.Status.String())
+					processes += fmt.Sprintf("\t%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), status, units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
 				}
 				m["Processes"] = processes
 			}

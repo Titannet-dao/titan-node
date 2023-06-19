@@ -39,7 +39,7 @@ func detectRestrictedNAT(ctx context.Context, edgeURL string) (bool, error) {
 
 	resp, err := httpClient.Get(edgeURL)
 	if err != nil {
-		log.Errorf("detectRestrictedNAT failed: %s", err.Error())
+		log.Debugf("detectRestrictedNAT failed: %s", err.Error())
 		return false, nil
 	}
 	defer resp.Body.Close()
@@ -59,11 +59,11 @@ func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateN
 		return types.NatTypeUnknown, err
 	}
 
-	if externalAddr != edgeNode.RemoteAddr() {
+	if externalAddr != edgeNode.RemoteAddr {
 		return types.NatTypeSymmetric, nil
 	}
 
-	edgeURL := fmt.Sprintf("https://%s/rpc/v0", edgeNode.RemoteAddr())
+	edgeURL := fmt.Sprintf("https://%s/rpc/v0", edgeNode.RemoteAddr)
 
 	candidate2 := candidateNodes[1]
 	if err = candidate2.API.CheckNetworkConnectivity(ctx, "tcp", edgeURL); err == nil {

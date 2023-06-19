@@ -8,8 +8,6 @@ import (
 	"github.com/Filecoin-Titan/titan/journal/alerting"
 
 	"github.com/google/uuid"
-
-	"github.com/filecoin-project/go-jsonrpc/auth"
 )
 
 //                       MODIFYING THE API INTERFACE
@@ -28,9 +26,9 @@ type Common interface {
 	// MethodGroup: Auth
 
 	// AuthVerify checks whether the specified token is valid and returns the list of permissions associated with it.
-	AuthVerify(ctx context.Context, token string) ([]auth.Permission, error) //perm:default
+	AuthVerify(ctx context.Context, token string) (*types.JWTPayload, error) //perm:default
 	// AuthNew creates a new token with the specified list of permissions.
-	AuthNew(ctx context.Context, perms []auth.Permission) (string, error) //perm:admin
+	AuthNew(ctx context.Context, payload *types.JWTPayload) (string, error) //perm:admin
 
 	// MethodGroup: Log
 

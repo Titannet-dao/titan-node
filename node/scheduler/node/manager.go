@@ -2,20 +2,15 @@ package node
 
 import (
 	"crypto/rsa"
-	"fmt"
-	"math/rand"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/Filecoin-Titan/titan/lib/etcdcli"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/filecoin-project/pubsub"
-	"github.com/google/uuid"
-	"golang.org/x/xerrors"
 
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	logging "github.com/ipfs/go-log/v2"
 )
 
@@ -26,12 +21,14 @@ const (
 	keepaliveTime = 30 * time.Second // seconds
 
 	// saveInfoInterval is the interval at which node information is saved during keepalive requests
-	saveInfoInterval = 10 // keepalive saves information every 10 times
+	saveInfoInterval = 2 // keepalive saves information every 2 times
 
 	// Processing validation result data from 5 days ago
-	vResultDay = 5 * 24 * time.Hour
+	vResultDay = 5 * oneDay
 	// Process 1000 pieces of validation result data at a time
 	vResultLimit = 1000
+
+	oneDay = 24 * time.Hour
 )
 
 // Manager is the node manager responsible for managing the online nodes
@@ -40,46 +37,29 @@ type Manager struct {
 	candidateNodes sync.Map
 	Edges          int // online edge node count
 	Candidates     int // online candidate node count
-
-	etcdcli *etcdcli.Client
-	notify  *pubsub.PubSub
+	weightMgr      *weightManager
+	config         dtypes.GetSchedulerConfigFunc
+	notify         *pubsub.PubSub
 	*db.SQLDB
 	*rsa.PrivateKey // scheduler privateKey
 	dtypes.ServerID // scheduler server id
-
-	// Each node assigned a node number, when pulling resources, randomly select n node number, and select the node holding these node number.
-	nodeNumLock           sync.RWMutex
-	cNodeNumRand          *rand.Rand
-	eNodeNumRand          *rand.Rand
-	cNodeNumMax           int            // Candidate node number , Distribute from 1
-	eNodeNumMax           int            // Edge node number , Distribute from 1
-	cDistributedNodeNum   map[int]string // Already allocated candidate node numbers
-	cUndistributedNodeNum map[int]string // Undistributed candidate node numbers
-	eDistributedNodeNum   map[int]string // Already allocated edge node numbers
-	eUndistributedNodeNum map[int]string // Undistributed edge node numbers
+	leadershipMgr   *leadership.Manager
 }
 
 // NewManager creates a new instance of the node manager
-func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, ec *etcdcli.Client) *Manager {
-	pullSelectSeed := time.Now().UnixNano()
-
+func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, config dtypes.GetSchedulerConfigFunc, lmgr *leadership.Manager) *Manager {
 	nodeManager := &Manager{
-		SQLDB:      sdb,
-		ServerID:   serverID,
-		PrivateKey: pk,
-		notify:     pb,
-		etcdcli:    ec,
-
-		cNodeNumRand:          rand.New(rand.NewSource(pullSelectSeed)),
-		eNodeNumRand:          rand.New(rand.NewSource(pullSelectSeed)),
-		cDistributedNodeNum:   make(map[int]string),
-		cUndistributedNodeNum: make(map[int]string),
-		eDistributedNodeNum:   make(map[int]string),
-		eUndistributedNodeNum: make(map[int]string),
+		SQLDB:         sdb,
+		ServerID:      serverID,
+		PrivateKey:    pk,
+		notify:        pb,
+		config:        config,
+		weightMgr:     newWeightManager(config),
+		leadershipMgr: lmgr,
 	}
 
 	go nodeManager.startNodeKeepaliveTimer()
-	// go nodeManager.startHandleValidationResultTimer()
+	go nodeManager.startNodeTimer()
 
 	return nodeManager
 }
@@ -94,17 +74,18 @@ func (m *Manager) startNodeKeepaliveTimer() {
 	for {
 		<-ticker.C
 		count++
+
 		saveInfo := count%saveInfoInterval == 0
 		m.nodesKeepalive(saveInfo)
 	}
 }
 
-func (m *Manager) startHandleValidationResultTimer() {
+func (m *Manager) startNodeTimer() {
 	now := time.Now()
 
 	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	if now.After(nextTime) {
-		nextTime = nextTime.Add(24 * time.Hour)
+		nextTime = nextTime.Add(oneDay)
 	}
 
 	duration := nextTime.Sub(now)
@@ -115,11 +96,12 @@ func (m *Manager) startHandleValidationResultTimer() {
 	for {
 		<-timer.C
 
-		log.Debugln("start validation result check ")
+		log.Debugln("start node timer...")
 
+		m.redistributeNodeSelectWeights()
 		m.handleValidationResults()
 
-		timer.Reset(24 * time.Hour)
+		timer.Reset(oneDay)
 	}
 }
 
@@ -135,8 +117,9 @@ func (m *Manager) storeEdgeNode(node *Node) {
 	}
 	m.Edges++
 
-	num := m.distributeEdgeNodeNum(nodeID)
-	node.nodeNum = num
+	score := m.getNodeScoreLevel(node.NodeID)
+	wNum := m.weightMgr.getWeightNum(score)
+	node.selectWeights = m.weightMgr.distributeEdgeWeight(nodeID, wNum)
 
 	m.notify.Pub(node, types.EventNodeOnline.String())
 }
@@ -154,15 +137,16 @@ func (m *Manager) storeCandidateNode(node *Node) {
 	}
 	m.Candidates++
 
-	num := m.distributeCandidateNodeNum(nodeID)
-	node.nodeNum = num
+	score := m.getNodeScoreLevel(node.NodeID)
+	wNum := m.weightMgr.getWeightNum(score)
+	node.selectWeights = m.weightMgr.distributeCandidateWeight(nodeID, wNum)
 
 	m.notify.Pub(node, types.EventNodeOnline.String())
 }
 
 // deleteEdgeNode removes an edge node from the manager's list of edge nodes
 func (m *Manager) deleteEdgeNode(node *Node) {
-	m.repayEdgeNodeNum(node.nodeNum)
+	m.weightMgr.repayEdgeWeight(node.selectWeights)
 	m.notify.Pub(node, types.EventNodeOffline.String())
 
 	nodeID := node.NodeID
@@ -175,7 +159,7 @@ func (m *Manager) deleteEdgeNode(node *Node) {
 
 // deleteCandidateNode removes a candidate node from the manager's list of candidate nodes
 func (m *Manager) deleteCandidateNode(node *Node) {
-	m.repayCandidateNodeNum(node.nodeNum)
+	m.weightMgr.repayCandidateWeight(node.selectWeights)
 	m.notify.Pub(node, types.EventNodeOffline.String())
 
 	nodeID := node.NodeID
@@ -187,10 +171,8 @@ func (m *Manager) deleteCandidateNode(node *Node) {
 }
 
 // nodeKeepalive checks if a node has sent a keepalive recently and updates node status accordingly
-func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) {
+func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) bool {
 	lastTime := node.LastRequestTime()
-
-	nodeID := node.NodeID
 
 	if !lastTime.After(t) {
 		node.ClientCloser()
@@ -200,23 +182,22 @@ func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) {
 			m.deleteEdgeNode(node)
 		}
 		node = nil
-		return
+		return false
 	}
 
 	if isSave {
 		// Minute
 		node.OnlineDuration += int((saveInfoInterval * keepaliveTime) / time.Minute)
-
-		err := m.UpdateNodeOnlineTime(nodeID, node.OnlineDuration)
-		if err != nil {
-			log.Errorf("UpdateNodeOnlineTime err:%s,nodeID:%s", err.Error(), nodeID)
-		}
 	}
+
+	return true
 }
 
 // nodesKeepalive checks all nodes in the manager's lists for keepalive
 func (m *Manager) nodesKeepalive(isSave bool) {
 	t := time.Now().Add(-keepaliveTime)
+
+	nodes := make([]*types.NodeDynamicInfo, 0)
 
 	m.edgeNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
@@ -224,7 +205,14 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 			return true
 		}
 
-		go m.nodeKeepalive(node, t, isSave)
+		if m.nodeKeepalive(node, t, isSave) {
+			nodes = append(nodes, &types.NodeDynamicInfo{
+				NodeID:         node.NodeID,
+				OnlineDuration: node.OnlineDuration,
+				DiskUsage:      node.DiskUsage,
+				LastSeen:       time.Now(),
+			})
+		}
 
 		return true
 	})
@@ -235,25 +223,24 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 			return true
 		}
 
-		go m.nodeKeepalive(node, t, isSave)
+		if m.nodeKeepalive(node, t, isSave) {
+			nodes = append(nodes, &types.NodeDynamicInfo{
+				NodeID:         node.NodeID,
+				OnlineDuration: node.OnlineDuration,
+				DiskUsage:      node.DiskUsage,
+				LastSeen:       time.Now(),
+			})
+		}
 
 		return true
 	})
-}
 
-func (m *Manager) nodeSession(nodeID, remoteAddr string) error {
-	lastTime := time.Now()
-
-	node := m.GetNode(nodeID)
-	if node != nil {
-		node.SetLastRequestTime(lastTime)
-
-		if remoteAddr != node.remoteAddr {
-			return xerrors.New("remoteAddr inconsistent")
+	if isSave {
+		err := m.UpdateOnlineDuration(nodes)
+		if err != nil {
+			log.Errorf("UpdateNodeInfos err:%s", err.Error())
 		}
 	}
-
-	return nil
 }
 
 // saveInfo Save node information when it comes online
@@ -268,81 +255,124 @@ func (m *Manager) saveInfo(n *types.NodeInfo) error {
 	return nil
 }
 
-// NewNodeID create a node id
-func (m *Manager) NewNodeID(nType types.NodeType) (string, error) {
-	nodeID := ""
-	switch nType {
-	case types.NodeEdge:
-		nodeID = "e_"
-	case types.NodeCandidate:
-		nodeID = "c_"
-	default:
-		return nodeID, xerrors.Errorf("node type %s is error", nType.String())
-	}
-
-	uid := uuid.NewString()
-	uid = strings.Replace(uid, "-", "", -1)
-
-	return fmt.Sprintf("%s%s", nodeID, uid), nil
-}
-
 func (m *Manager) handleValidationResults() {
-	// TODO Need to save the leaseID to find the session next time
-	leaseID, err := m.etcdcli.AcquireMasterLock(types.RunningNodeType.String())
-	if err != nil {
-		log.Errorf("handleValidationResults SetMasterScheduler err:%s", err.Error())
+	if !m.leadershipMgr.RequestAndBecomeMaster() {
 		return
 	}
 
-	defer func() {
-		log.Infoln("handleValidationResults done")
+	defer log.Infoln("handleValidationResults end")
+	log.Infoln("handleValidationResults start")
 
-		err = m.etcdcli.ReleaseMasterLock(leaseID, types.RunningNodeType.String())
-		if err != nil {
-			log.Errorf("RemoveMasterScheduler err:%s", err.Error())
-		}
-	}()
-
-	log.Infof("handleValidationResults %s", m.ServerID)
-
-	mTime := time.Now().Add(-vResultDay)
+	maxTime := time.Now().Add(-vResultDay)
 
 	// do handle validation result
 	for {
-		rows, err := m.LoadValidationResults(mTime, vResultLimit)
+		infos, nodeProfits, err := m.loadResults(maxTime)
 		if err != nil {
-			log.Errorf("LoadValidationResults err:%s", err.Error())
+			log.Errorf("loadResults err:%s", err.Error())
 			return
 		}
 
-		ids := make([]int, 0)
-		nodeProfits := make(map[string]float64)
-
-		for rows.Next() {
-			info := &types.ValidationResultInfo{}
-			err = rows.StructScan(info)
-			if err != nil {
-				log.Errorf("ValidationResultInfo StructScan err: %s", err.Error())
-				continue
-			}
-
-			ids = append(ids, info.ID)
-
-			if info.Profit == 0 {
-				continue
-			}
-
-			nodeProfits[info.NodeID] += info.Profit
-		}
-		rows.Close()
-
-		if len(ids) == 0 {
+		if len(infos) == 0 {
 			return
 		}
 
-		err = m.UpdateNodeProfitsByValidationResult(ids, nodeProfits)
+		err = m.UpdateNodeInfosByValidationResult(infos, nodeProfits)
 		if err != nil {
 			log.Errorf("UpdateNodeProfitsByValidationResult err:%s", err.Error())
+			return
 		}
+
 	}
+}
+
+func (m *Manager) loadResults(maxTime time.Time) ([]*types.ValidationResultInfo, map[string]float64, error) {
+	rows, err := m.LoadUnCalculatedValidationResults(maxTime, vResultLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	infos := make([]*types.ValidationResultInfo, 0)
+	nodeProfits := make(map[string]float64)
+
+	for rows.Next() {
+		vInfo := &types.ValidationResultInfo{}
+		err = rows.StructScan(vInfo)
+		if err != nil {
+			log.Errorf("loadResults StructScan err: %s", err.Error())
+			continue
+		}
+
+		if vInfo.Status == types.ValidationStatusCancel {
+			tokenID := vInfo.TokenID
+			record, err := m.LoadWorkloadRecord(tokenID)
+			if err != nil {
+				vInfo.Profit = 0
+			}
+
+			if record.Status != types.WorkloadStatusSucceeded {
+				vInfo.Profit = 0
+			}
+
+			// check time
+			if record.CreatedTime.After(vInfo.EndTime) {
+				vInfo.Profit = 0
+			}
+
+			if record.Expiration.Before(vInfo.StartTime) {
+				vInfo.Profit = 0
+			}
+		}
+
+		infos = append(infos, vInfo)
+
+		if vInfo.Profit == 0 {
+			continue
+		}
+
+		nodeProfits[vInfo.NodeID] += vInfo.Profit
+	}
+
+	return infos, nodeProfits, nil
+}
+
+func (m *Manager) redistributeNodeSelectWeights() {
+	// repay all weights
+	m.weightMgr.cleanWeights()
+
+	// redistribute weights
+	m.candidateNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+
+		score := m.getNodeScoreLevel(node.NodeID)
+		wNum := m.weightMgr.getWeightNum(score)
+		node.selectWeights = m.weightMgr.distributeCandidateWeight(node.NodeID, wNum)
+
+		return true
+	})
+
+	m.edgeNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+
+		score := m.getNodeScoreLevel(node.NodeID)
+		wNum := m.weightMgr.getWeightNum(score)
+		node.selectWeights = m.weightMgr.distributeEdgeWeight(node.NodeID, wNum)
+
+		return true
+	})
+}
+
+// GetAllEdgeNode load all edge node
+func (m *Manager) GetAllEdgeNode() []*Node {
+	nodes := make([]*Node, 0)
+
+	m.edgeNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		nodes = append(nodes, node)
+
+		return true
+	})
+
+	return nodes
 }

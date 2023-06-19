@@ -8,9 +8,14 @@ import (
 	"github.com/docker/go-units"
 )
 
+const (
+	bandwidthRatio = 0.7                  // The ratio of the total upstream bandwidth on edge nodes to the downstream bandwidth on validation nodes.
+	toleranceBwUp  = int64(5 * units.MiB) // The tolerance for uplink bandwidth deviation per group, set to 5M.
+)
+
 // reduces the ValidatableGroup's bandwidth to an value between the min and max averages
-func (b *ValidatableGroup) divideNodesToAverage(maxAverage, minAverage float64) (out map[string]float64) {
-	out = make(map[string]float64)
+func (b *ValidatableGroup) divideNodesToAverage(maxAverage, minAverage int64) (out map[string]int64) {
+	out = make(map[string]int64)
 
 	b.lock.Lock()
 	defer func() {
@@ -29,13 +34,14 @@ func (b *ValidatableGroup) divideNodesToAverage(maxAverage, minAverage float64) 
 	maxReduce := b.sumBwUp - minAverage
 	minReduce := b.sumBwUp - maxAverage
 
-	tempBwUp := float64(0)
+	tempBwUp := int64(0)
 	for nodeID, bwUp := range b.nodes {
 		if bwUp > maxReduce {
 			continue
 		}
 
 		if bwUp >= minReduce {
+			out = make(map[string]int64)
 			out[nodeID] = bwUp
 			return
 		}
@@ -47,17 +53,16 @@ func (b *ValidatableGroup) divideNodesToAverage(maxAverage, minAverage float64) 
 		}
 
 		if tempBwUp > maxReduce {
-			// TODO too much will be reduce here
 			return
 		}
 	}
 
-	out = make(map[string]float64)
+	out = make(map[string]int64)
 	return
 }
 
 // adds a validatable node to the validatableGroup
-func (b *ValidatableGroup) addNode(nodeID string, bwUp float64) {
+func (b *ValidatableGroup) addNode(nodeID string, bwUp int64) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -71,7 +76,7 @@ func (b *ValidatableGroup) addNode(nodeID string, bwUp float64) {
 }
 
 // adds multiple validatable nodes to the validatableGroup
-func (b *ValidatableGroup) addNodes(groups map[string]float64) {
+func (b *ValidatableGroup) addNodes(groups map[string]int64) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -116,7 +121,7 @@ func (m *Manager) ResetValidatorGroup(nodeIDs []string) {
 
 	for _, nodeID := range nodeIDs {
 		node := m.nodeMgr.GetCandidateNode(nodeID)
-		bwDn := node.BandwidthDown
+		bwDn := float64(node.BandwidthDown)
 
 		count := int(math.Floor((bwDn * bandwidthRatio) / m.getValidatorBaseBwDn()))
 		if count < 1 {
@@ -134,11 +139,11 @@ func (m *Manager) ResetValidatorGroup(nodeIDs []string) {
 }
 
 // adds a validator window to the manager with the specified node ID and bandwidth down
-func (m *Manager) addValidator(nodeID string, bwDn float64) {
+func (m *Manager) addValidator(nodeID string, bwDn int64) {
 	m.validationPairLock.Lock()
 	defer m.validationPairLock.Unlock()
 
-	count := int(math.Floor((bwDn * bandwidthRatio) / m.getValidatorBaseBwDn()))
+	count := int(math.Floor((float64(bwDn) * bandwidthRatio) / m.getValidatorBaseBwDn()))
 	if count < 1 {
 		return
 	}
@@ -197,7 +202,7 @@ func (m *Manager) removeValidator(nodeID string) {
 }
 
 // adds a validatable node to unpairedGroup with the specified node ID and bandwidth up
-func (m *Manager) addValidatableNode(nodeID string, bandwidthUp float64) {
+func (m *Manager) addValidatableNode(nodeID string, bandwidthUp int64) {
 	m.unpairedGroup.addNode(nodeID, bandwidthUp)
 }
 
@@ -231,7 +236,7 @@ func (m *Manager) divideIntoGroups() {
 		sumBwUp += group.sumBwUp
 	}
 
-	averageUp := sumBwUp / float64(groupCount)
+	averageUp := int64(math.Ceil(float64(sumBwUp) / float64(groupCount)))
 	maxAverage := averageUp + toleranceBwUp
 	minAverage := averageUp - toleranceBwUp
 
@@ -299,4 +304,14 @@ func (m *Manager) getValidatorBaseBwDn() float64 {
 	}
 
 	return float64(cfg.ValidatorBaseBwDn * units.MiB)
+}
+
+func (m *Manager) getLotusURL() string {
+	cfg, err := m.config()
+	if err != nil {
+		log.Errorf("get schedulerConfig err:%s", err.Error())
+		return ""
+	}
+
+	return cfg.LotusRPCAddress
 }

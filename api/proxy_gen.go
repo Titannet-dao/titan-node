@@ -10,15 +10,16 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/journal/alerting"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
-	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/google/uuid"
-	xerrors "golang.org/x/xerrors"
+	"golang.org/x/xerrors"
 )
 
 var ErrNotSupported = xerrors.New("method not supported")
 
 type AssetStruct struct {
 	Internal struct {
+		CreateAsset func(p0 context.Context, p1 *types.AuthUserUploadAsset) (string, error) `perm:"admin"`
+
 		DeleteAsset func(p0 context.Context, p1 string) error `perm:"admin"`
 
 		GetAssetProgresses func(p0 context.Context, p1 []string) (*types.PullResult, error) `perm:"admin"`
@@ -32,6 +33,53 @@ type AssetStruct struct {
 }
 
 type AssetStub struct {
+}
+
+type AssetAPIStruct struct {
+	Internal struct {
+		CreateAsset func(p0 context.Context, p1 *types.CreateAssetReq) (*types.CreateAssetRsp, error) `perm:"web"`
+
+		CreateUserAsset func(p0 context.Context, p1 string, p2 string, p3 int64) (*types.CreateAssetRsp, error) `perm:"user"`
+
+		DeleteAsset func(p0 context.Context, p1 string, p2 string) error `perm:"web"`
+
+		DeleteUserAsset func(p0 context.Context, p1 string) error `perm:"user"`
+
+		GetAssetCount func(p0 context.Context) (int, error) `perm:"web,admin"`
+
+		GetAssetListForBucket func(p0 context.Context, p1 uint32) ([]string, error) `perm:"edge,candidate"`
+
+		GetAssetRecord func(p0 context.Context, p1 string) (*types.AssetRecord, error) `perm:"web,admin"`
+
+		GetAssetRecords func(p0 context.Context, p1 int, p2 int, p3 []string, p4 dtypes.ServerID) ([]*types.AssetRecord, error) `perm:"web,admin"`
+
+		GetAssetsForNode func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListNodeAssetRsp, error) `perm:"web,admin"`
+
+		GetReplicaEventsForNode func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListReplicaEventRsp, error) `perm:"web,admin"`
+
+		ListAssets func(p0 context.Context, p1 string, p2 int, p3 int) ([]*types.AssetRecord, error) `perm:"web"`
+
+		ListUserAssets func(p0 context.Context, p1 int, p2 int) ([]*types.AssetRecord, error) `perm:"user"`
+
+		NodeRemoveAssetResult func(p0 context.Context, p1 types.RemoveAssetResult) error `perm:"edge,candidate"`
+
+		PullAsset func(p0 context.Context, p1 *types.PullAssetReq) error `perm:"admin"`
+
+		RePullFailedAssets func(p0 context.Context, p1 []types.AssetHash) error `perm:"admin"`
+
+		RemoveAssetRecord func(p0 context.Context, p1 string) error `perm:"admin"`
+
+		RemoveAssetReplica func(p0 context.Context, p1 string, p2 string) error `perm:"admin"`
+
+		ShareAssets func(p0 context.Context, p1 string, p2 []string) (map[string]string, error) `perm:"web"`
+
+		ShareUserAssets func(p0 context.Context, p1 []string) (map[string]string, error) `perm:"user"`
+
+		UpdateAssetExpiration func(p0 context.Context, p1 string, p2 time.Time) error `perm:"admin"`
+	}
+}
+
+type AssetAPIStub struct {
 }
 
 type CandidateStruct struct {
@@ -70,9 +118,9 @@ type CandidateStub struct {
 
 type CommonStruct struct {
 	Internal struct {
-		AuthNew func(p0 context.Context, p1 []auth.Permission) (string, error) `perm:"admin"`
+		AuthNew func(p0 context.Context, p1 *types.JWTPayload) (string, error) `perm:"admin"`
 
-		AuthVerify func(p0 context.Context, p1 string) ([]auth.Permission, error) `perm:"default"`
+		AuthVerify func(p0 context.Context, p1 string) (*types.JWTPayload, error) `perm:"default"`
 
 		Closing func(p0 context.Context) (<-chan struct{}, error) `perm:"admin"`
 
@@ -153,6 +201,8 @@ type LocatorStruct struct {
 	CommonStruct
 
 	Internal struct {
+		CandidateDownloadInfos func(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) `perm:"default"`
+
 		EdgeDownloadInfos func(p0 context.Context, p1 string) ([]*types.EdgeDownloadInfoList, error) `perm:"default"`
 
 		GetAccessPoints func(p0 context.Context, p1 string, p2 string) ([]string, error) `perm:"default"`
@@ -165,35 +215,19 @@ type LocatorStub struct {
 	CommonStub
 }
 
-type SchedulerStruct struct {
-	CommonStruct
-
+type NodeAPIStruct struct {
 	Internal struct {
 		CandidateConnect func(p0 context.Context, p1 *types.ConnectOptions) error `perm:"candidate"`
 
-		DeleteEdgeUpdateConfig func(p0 context.Context, p1 int) error `perm:"admin"`
-
 		EdgeConnect func(p0 context.Context, p1 *types.ConnectOptions) error `perm:"edge"`
 
-		GetAssetListForBucket func(p0 context.Context, p1 uint32) ([]string, error) `perm:"edge,candidate"`
-
-		GetAssetRecord func(p0 context.Context, p1 string) (*types.AssetRecord, error) `perm:"web,admin"`
-
-		GetAssetRecords func(p0 context.Context, p1 int, p2 int, p3 []string, p4 dtypes.ServerID) ([]*types.AssetRecord, error) `perm:"web,admin"`
-
-		GetAssetReplicaInfos func(p0 context.Context, p1 types.ListReplicaInfosReq) (*types.ListReplicaInfosRsp, error) `perm:"web,admin"`
-
-		GetAssetStatistics func(p0 context.Context) (*types.AssetStatistics, error) `perm:"web,admin"`
-
-		GetCandidateDownloadInfos func(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) `perm:"edge,candidate"`
+		GetCandidateDownloadInfos func(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) `perm:"edge,candidate,web,locator"`
 
 		GetCandidateURLsForDetectNat func(p0 context.Context) ([]string, error) `perm:"default"`
 
 		GetEdgeDownloadInfos func(p0 context.Context, p1 string) (*types.EdgeDownloadInfoList, error) `perm:"default"`
 
-		GetEdgeExternalServiceAddress func(p0 context.Context, p1 string, p2 string) (string, error) `perm:"edge"`
-
-		GetEdgeUpdateConfigs func(p0 context.Context) (map[int]*EdgeUpdateConfig, error) `perm:"edge"`
+		GetEdgeExternalServiceAddress func(p0 context.Context, p1 string, p2 string) (string, error) `perm:"admin"`
 
 		GetExternalAddress func(p0 context.Context) (string, error) `perm:"default"`
 
@@ -203,12 +237,6 @@ type SchedulerStruct struct {
 
 		GetOnlineNodeCount func(p0 context.Context, p1 types.NodeType) (int, error) `perm:"web,admin"`
 
-		GetSchedulerPublicKey func(p0 context.Context) (string, error) `perm:"edge,candidate"`
-
-		GetValidationInfo func(p0 context.Context) (*types.ValidationInfo, error) `perm:"web,admin"`
-
-		GetValidationResults func(p0 context.Context, p1 time.Time, p2 time.Time, p3 int, p4 int) (*types.ListValidationResultRsp, error) `perm:"web,admin"`
-
 		NatPunch func(p0 context.Context, p1 *types.NatPunchReq) error `perm:"default"`
 
 		NodeExists func(p0 context.Context, p1 string) error `perm:"web"`
@@ -217,19 +245,44 @@ type SchedulerStruct struct {
 
 		NodeLogin func(p0 context.Context, p1 string, p2 string) (string, error) `perm:"default"`
 
-		NodeRemoveAssetResult func(p0 context.Context, p1 types.RemoveAssetResult) error `perm:"edge,candidate"`
+		RegisterNode func(p0 context.Context, p1 string, p2 string, p3 string) error `perm:"default"`
 
-		NodeValidationResult func(p0 context.Context, p1 ValidationResult, p2 string) error `perm:"candidate"`
+		RequestActivationCodes func(p0 context.Context, p1 types.NodeType, p2 int) ([]*types.NodeActivation, error) `perm:"web,admin"`
 
-		PullAsset func(p0 context.Context, p1 *types.PullAssetReq) error `perm:"admin"`
+		UnregisterNode func(p0 context.Context, p1 string) error `perm:"web,admin"`
 
-		RePullFailedAssets func(p0 context.Context, p1 []types.AssetHash) error `perm:"admin"`
+		UpdateNodePort func(p0 context.Context, p1 string, p2 string) error `perm:"web,admin"`
+	}
+}
 
-		RegisterNode func(p0 context.Context, p1 string, p2 types.NodeType) (string, error) `perm:"web,admin"`
+type NodeAPIStub struct {
+}
 
-		RemoveAssetRecord func(p0 context.Context, p1 string) error `perm:"admin"`
+type SchedulerStruct struct {
+	CommonStruct
 
-		RemoveAssetReplica func(p0 context.Context, p1 string, p2 string) error `perm:"admin"`
+	AssetAPIStruct
+
+	NodeAPIStruct
+
+	UserAPIStruct
+
+	Internal struct {
+		DeleteEdgeUpdateConfig func(p0 context.Context, p1 int) error `perm:"admin"`
+
+		GetEdgeUpdateConfigs func(p0 context.Context) (map[int]*EdgeUpdateConfig, error) `perm:"edge"`
+
+		GetSchedulerPublicKey func(p0 context.Context) (string, error) `perm:"edge,candidate"`
+
+		GetValidationInfo func(p0 context.Context) (*types.ValidationInfo, error) `perm:"web,admin"`
+
+		GetValidationResults func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListValidationResultRsp, error) `perm:"web,admin"`
+
+		GetWorkloadRecord func(p0 context.Context, p1 string) (*types.WorkloadRecord, error) `perm:"web,admin"`
+
+		GetWorkloadRecords func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListWorkloadRecordRsp, error) `perm:"web,admin"`
+
+		NodeValidationResult func(p0 context.Context, p1 io.Reader, p2 string) error `perm:"candidate"`
 
 		SetEdgeUpdateConfig func(p0 context.Context, p1 *EdgeUpdateConfig) error `perm:"admin"`
 
@@ -238,19 +291,36 @@ type SchedulerStruct struct {
 		SubmitUserWorkloadReport func(p0 context.Context, p1 io.Reader) error `perm:"default"`
 
 		TriggerElection func(p0 context.Context) error `perm:"admin"`
-
-		UnregisterNode func(p0 context.Context, p1 string) error `perm:"web,admin"`
-
-		UpdateAssetExpiration func(p0 context.Context, p1 string, p2 time.Time) error `perm:"admin"`
-
-		UpdateNodePort func(p0 context.Context, p1 string, p2 string) error `perm:"web,admin"`
-
-		VerifyNodeAuthToken func(p0 context.Context, p1 string) ([]auth.Permission, error) `perm:"default"`
 	}
 }
 
 type SchedulerStub struct {
 	CommonStub
+
+	AssetAPIStub
+
+	NodeAPIStub
+
+	UserAPIStub
+}
+
+type UserAPIStruct struct {
+	Internal struct {
+		AllocateStorage func(p0 context.Context, p1 string) (*types.StorageSize, error) `perm:"web"`
+
+		CreateAPIKey func(p0 context.Context, p1 string, p2 string) (string, error) `perm:"web"`
+
+		DeleteAPIKey func(p0 context.Context, p1 string, p2 string) error `perm:"web"`
+
+		GetAPIKeys func(p0 context.Context, p1 string) (map[string]string, error) `perm:"web"`
+
+		GetStorageSize func(p0 context.Context, p1 string) (*types.StorageSize, error) `perm:"web"`
+
+		UserAPIKeysExists func(p0 context.Context, p1 string) error `perm:"web"`
+	}
+}
+
+type UserAPIStub struct {
 }
 
 type ValidationStruct struct {
@@ -260,6 +330,17 @@ type ValidationStruct struct {
 }
 
 type ValidationStub struct {
+}
+
+func (s *AssetStruct) CreateAsset(p0 context.Context, p1 *types.AuthUserUploadAsset) (string, error) {
+	if s.Internal.CreateAsset == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.CreateAsset(p0, p1)
+}
+
+func (s *AssetStub) CreateAsset(p0 context.Context, p1 *types.AuthUserUploadAsset) (string, error) {
+	return "", ErrNotSupported
 }
 
 func (s *AssetStruct) DeleteAsset(p0 context.Context, p1 string) error {
@@ -317,6 +398,226 @@ func (s *AssetStub) PullAsset(p0 context.Context, p1 string, p2 []*types.Candida
 	return ErrNotSupported
 }
 
+func (s *AssetAPIStruct) CreateAsset(p0 context.Context, p1 *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
+	if s.Internal.CreateAsset == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.CreateAsset(p0, p1)
+}
+
+func (s *AssetAPIStub) CreateAsset(p0 context.Context, p1 *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) CreateUserAsset(p0 context.Context, p1 string, p2 string, p3 int64) (*types.CreateAssetRsp, error) {
+	if s.Internal.CreateUserAsset == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.CreateUserAsset(p0, p1, p2, p3)
+}
+
+func (s *AssetAPIStub) CreateUserAsset(p0 context.Context, p1 string, p2 string, p3 int64) (*types.CreateAssetRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) DeleteAsset(p0 context.Context, p1 string, p2 string) error {
+	if s.Internal.DeleteAsset == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.DeleteAsset(p0, p1, p2)
+}
+
+func (s *AssetAPIStub) DeleteAsset(p0 context.Context, p1 string, p2 string) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) DeleteUserAsset(p0 context.Context, p1 string) error {
+	if s.Internal.DeleteUserAsset == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.DeleteUserAsset(p0, p1)
+}
+
+func (s *AssetAPIStub) DeleteUserAsset(p0 context.Context, p1 string) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetAssetCount(p0 context.Context) (int, error) {
+	if s.Internal.GetAssetCount == nil {
+		return 0, ErrNotSupported
+	}
+	return s.Internal.GetAssetCount(p0)
+}
+
+func (s *AssetAPIStub) GetAssetCount(p0 context.Context) (int, error) {
+	return 0, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetAssetListForBucket(p0 context.Context, p1 uint32) ([]string, error) {
+	if s.Internal.GetAssetListForBucket == nil {
+		return *new([]string), ErrNotSupported
+	}
+	return s.Internal.GetAssetListForBucket(p0, p1)
+}
+
+func (s *AssetAPIStub) GetAssetListForBucket(p0 context.Context, p1 uint32) ([]string, error) {
+	return *new([]string), ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetAssetRecord(p0 context.Context, p1 string) (*types.AssetRecord, error) {
+	if s.Internal.GetAssetRecord == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetAssetRecord(p0, p1)
+}
+
+func (s *AssetAPIStub) GetAssetRecord(p0 context.Context, p1 string) (*types.AssetRecord, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetAssetRecords(p0 context.Context, p1 int, p2 int, p3 []string, p4 dtypes.ServerID) ([]*types.AssetRecord, error) {
+	if s.Internal.GetAssetRecords == nil {
+		return *new([]*types.AssetRecord), ErrNotSupported
+	}
+	return s.Internal.GetAssetRecords(p0, p1, p2, p3, p4)
+}
+
+func (s *AssetAPIStub) GetAssetRecords(p0 context.Context, p1 int, p2 int, p3 []string, p4 dtypes.ServerID) ([]*types.AssetRecord, error) {
+	return *new([]*types.AssetRecord), ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetAssetsForNode(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListNodeAssetRsp, error) {
+	if s.Internal.GetAssetsForNode == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetAssetsForNode(p0, p1, p2, p3)
+}
+
+func (s *AssetAPIStub) GetAssetsForNode(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListNodeAssetRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetReplicaEventsForNode(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListReplicaEventRsp, error) {
+	if s.Internal.GetReplicaEventsForNode == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetReplicaEventsForNode(p0, p1, p2, p3)
+}
+
+func (s *AssetAPIStub) GetReplicaEventsForNode(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListReplicaEventRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) ListAssets(p0 context.Context, p1 string, p2 int, p3 int) ([]*types.AssetRecord, error) {
+	if s.Internal.ListAssets == nil {
+		return *new([]*types.AssetRecord), ErrNotSupported
+	}
+	return s.Internal.ListAssets(p0, p1, p2, p3)
+}
+
+func (s *AssetAPIStub) ListAssets(p0 context.Context, p1 string, p2 int, p3 int) ([]*types.AssetRecord, error) {
+	return *new([]*types.AssetRecord), ErrNotSupported
+}
+
+func (s *AssetAPIStruct) ListUserAssets(p0 context.Context, p1 int, p2 int) ([]*types.AssetRecord, error) {
+	if s.Internal.ListUserAssets == nil {
+		return *new([]*types.AssetRecord), ErrNotSupported
+	}
+	return s.Internal.ListUserAssets(p0, p1, p2)
+}
+
+func (s *AssetAPIStub) ListUserAssets(p0 context.Context, p1 int, p2 int) ([]*types.AssetRecord, error) {
+	return *new([]*types.AssetRecord), ErrNotSupported
+}
+
+func (s *AssetAPIStruct) NodeRemoveAssetResult(p0 context.Context, p1 types.RemoveAssetResult) error {
+	if s.Internal.NodeRemoveAssetResult == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.NodeRemoveAssetResult(p0, p1)
+}
+
+func (s *AssetAPIStub) NodeRemoveAssetResult(p0 context.Context, p1 types.RemoveAssetResult) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) PullAsset(p0 context.Context, p1 *types.PullAssetReq) error {
+	if s.Internal.PullAsset == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.PullAsset(p0, p1)
+}
+
+func (s *AssetAPIStub) PullAsset(p0 context.Context, p1 *types.PullAssetReq) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) RePullFailedAssets(p0 context.Context, p1 []types.AssetHash) error {
+	if s.Internal.RePullFailedAssets == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.RePullFailedAssets(p0, p1)
+}
+
+func (s *AssetAPIStub) RePullFailedAssets(p0 context.Context, p1 []types.AssetHash) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) RemoveAssetRecord(p0 context.Context, p1 string) error {
+	if s.Internal.RemoveAssetRecord == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.RemoveAssetRecord(p0, p1)
+}
+
+func (s *AssetAPIStub) RemoveAssetRecord(p0 context.Context, p1 string) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) RemoveAssetReplica(p0 context.Context, p1 string, p2 string) error {
+	if s.Internal.RemoveAssetReplica == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.RemoveAssetReplica(p0, p1, p2)
+}
+
+func (s *AssetAPIStub) RemoveAssetReplica(p0 context.Context, p1 string, p2 string) error {
+	return ErrNotSupported
+}
+
+func (s *AssetAPIStruct) ShareAssets(p0 context.Context, p1 string, p2 []string) (map[string]string, error) {
+	if s.Internal.ShareAssets == nil {
+		return *new(map[string]string), ErrNotSupported
+	}
+	return s.Internal.ShareAssets(p0, p1, p2)
+}
+
+func (s *AssetAPIStub) ShareAssets(p0 context.Context, p1 string, p2 []string) (map[string]string, error) {
+	return *new(map[string]string), ErrNotSupported
+}
+
+func (s *AssetAPIStruct) ShareUserAssets(p0 context.Context, p1 []string) (map[string]string, error) {
+	if s.Internal.ShareUserAssets == nil {
+		return *new(map[string]string), ErrNotSupported
+	}
+	return s.Internal.ShareUserAssets(p0, p1)
+}
+
+func (s *AssetAPIStub) ShareUserAssets(p0 context.Context, p1 []string) (map[string]string, error) {
+	return *new(map[string]string), ErrNotSupported
+}
+
+func (s *AssetAPIStruct) UpdateAssetExpiration(p0 context.Context, p1 string, p2 time.Time) error {
+	if s.Internal.UpdateAssetExpiration == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.UpdateAssetExpiration(p0, p1, p2)
+}
+
+func (s *AssetAPIStub) UpdateAssetExpiration(p0 context.Context, p1 string, p2 time.Time) error {
+	return ErrNotSupported
+}
+
 func (s *CandidateStruct) CheckNetworkConnectivity(p0 context.Context, p1 string, p2 string) error {
 	if s.Internal.CheckNetworkConnectivity == nil {
 		return ErrNotSupported
@@ -361,26 +662,26 @@ func (s *CandidateStub) WaitQuiet(p0 context.Context) error {
 	return ErrNotSupported
 }
 
-func (s *CommonStruct) AuthNew(p0 context.Context, p1 []auth.Permission) (string, error) {
+func (s *CommonStruct) AuthNew(p0 context.Context, p1 *types.JWTPayload) (string, error) {
 	if s.Internal.AuthNew == nil {
 		return "", ErrNotSupported
 	}
 	return s.Internal.AuthNew(p0, p1)
 }
 
-func (s *CommonStub) AuthNew(p0 context.Context, p1 []auth.Permission) (string, error) {
+func (s *CommonStub) AuthNew(p0 context.Context, p1 *types.JWTPayload) (string, error) {
 	return "", ErrNotSupported
 }
 
-func (s *CommonStruct) AuthVerify(p0 context.Context, p1 string) ([]auth.Permission, error) {
+func (s *CommonStruct) AuthVerify(p0 context.Context, p1 string) (*types.JWTPayload, error) {
 	if s.Internal.AuthVerify == nil {
-		return *new([]auth.Permission), ErrNotSupported
+		return nil, ErrNotSupported
 	}
 	return s.Internal.AuthVerify(p0, p1)
 }
 
-func (s *CommonStub) AuthVerify(p0 context.Context, p1 string) ([]auth.Permission, error) {
-	return *new([]auth.Permission), ErrNotSupported
+func (s *CommonStub) AuthVerify(p0 context.Context, p1 string) (*types.JWTPayload, error) {
+	return nil, ErrNotSupported
 }
 
 func (s *CommonStruct) Closing(p0 context.Context) (<-chan struct{}, error) {
@@ -548,6 +849,17 @@ func (s *EdgeStub) WaitQuiet(p0 context.Context) error {
 	return ErrNotSupported
 }
 
+func (s *LocatorStruct) CandidateDownloadInfos(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) {
+	if s.Internal.CandidateDownloadInfos == nil {
+		return *new([]*types.CandidateDownloadInfo), ErrNotSupported
+	}
+	return s.Internal.CandidateDownloadInfos(p0, p1)
+}
+
+func (s *LocatorStub) CandidateDownloadInfos(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) {
+	return *new([]*types.CandidateDownloadInfo), ErrNotSupported
+}
+
 func (s *LocatorStruct) EdgeDownloadInfos(p0 context.Context, p1 string) ([]*types.EdgeDownloadInfoList, error) {
 	if s.Internal.EdgeDownloadInfos == nil {
 		return *new([]*types.EdgeDownloadInfoList), ErrNotSupported
@@ -581,14 +893,201 @@ func (s *LocatorStub) GetUserAccessPoint(p0 context.Context, p1 string) (*Access
 	return nil, ErrNotSupported
 }
 
-func (s *SchedulerStruct) CandidateConnect(p0 context.Context, p1 *types.ConnectOptions) error {
+func (s *NodeAPIStruct) CandidateConnect(p0 context.Context, p1 *types.ConnectOptions) error {
 	if s.Internal.CandidateConnect == nil {
 		return ErrNotSupported
 	}
 	return s.Internal.CandidateConnect(p0, p1)
 }
 
-func (s *SchedulerStub) CandidateConnect(p0 context.Context, p1 *types.ConnectOptions) error {
+func (s *NodeAPIStub) CandidateConnect(p0 context.Context, p1 *types.ConnectOptions) error {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) EdgeConnect(p0 context.Context, p1 *types.ConnectOptions) error {
+	if s.Internal.EdgeConnect == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.EdgeConnect(p0, p1)
+}
+
+func (s *NodeAPIStub) EdgeConnect(p0 context.Context, p1 *types.ConnectOptions) error {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetCandidateDownloadInfos(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) {
+	if s.Internal.GetCandidateDownloadInfos == nil {
+		return *new([]*types.CandidateDownloadInfo), ErrNotSupported
+	}
+	return s.Internal.GetCandidateDownloadInfos(p0, p1)
+}
+
+func (s *NodeAPIStub) GetCandidateDownloadInfos(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) {
+	return *new([]*types.CandidateDownloadInfo), ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetCandidateURLsForDetectNat(p0 context.Context) ([]string, error) {
+	if s.Internal.GetCandidateURLsForDetectNat == nil {
+		return *new([]string), ErrNotSupported
+	}
+	return s.Internal.GetCandidateURLsForDetectNat(p0)
+}
+
+func (s *NodeAPIStub) GetCandidateURLsForDetectNat(p0 context.Context) ([]string, error) {
+	return *new([]string), ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetEdgeDownloadInfos(p0 context.Context, p1 string) (*types.EdgeDownloadInfoList, error) {
+	if s.Internal.GetEdgeDownloadInfos == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetEdgeDownloadInfos(p0, p1)
+}
+
+func (s *NodeAPIStub) GetEdgeDownloadInfos(p0 context.Context, p1 string) (*types.EdgeDownloadInfoList, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetEdgeExternalServiceAddress(p0 context.Context, p1 string, p2 string) (string, error) {
+	if s.Internal.GetEdgeExternalServiceAddress == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.GetEdgeExternalServiceAddress(p0, p1, p2)
+}
+
+func (s *NodeAPIStub) GetEdgeExternalServiceAddress(p0 context.Context, p1 string, p2 string) (string, error) {
+	return "", ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetExternalAddress(p0 context.Context) (string, error) {
+	if s.Internal.GetExternalAddress == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.GetExternalAddress(p0)
+}
+
+func (s *NodeAPIStub) GetExternalAddress(p0 context.Context) (string, error) {
+	return "", ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetNodeInfo(p0 context.Context, p1 string) (types.NodeInfo, error) {
+	if s.Internal.GetNodeInfo == nil {
+		return *new(types.NodeInfo), ErrNotSupported
+	}
+	return s.Internal.GetNodeInfo(p0, p1)
+}
+
+func (s *NodeAPIStub) GetNodeInfo(p0 context.Context, p1 string) (types.NodeInfo, error) {
+	return *new(types.NodeInfo), ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetNodeList(p0 context.Context, p1 int, p2 int) (*types.ListNodesRsp, error) {
+	if s.Internal.GetNodeList == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetNodeList(p0, p1, p2)
+}
+
+func (s *NodeAPIStub) GetNodeList(p0 context.Context, p1 int, p2 int) (*types.ListNodesRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *NodeAPIStruct) GetOnlineNodeCount(p0 context.Context, p1 types.NodeType) (int, error) {
+	if s.Internal.GetOnlineNodeCount == nil {
+		return 0, ErrNotSupported
+	}
+	return s.Internal.GetOnlineNodeCount(p0, p1)
+}
+
+func (s *NodeAPIStub) GetOnlineNodeCount(p0 context.Context, p1 types.NodeType) (int, error) {
+	return 0, ErrNotSupported
+}
+
+func (s *NodeAPIStruct) NatPunch(p0 context.Context, p1 *types.NatPunchReq) error {
+	if s.Internal.NatPunch == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.NatPunch(p0, p1)
+}
+
+func (s *NodeAPIStub) NatPunch(p0 context.Context, p1 *types.NatPunchReq) error {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) NodeExists(p0 context.Context, p1 string) error {
+	if s.Internal.NodeExists == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.NodeExists(p0, p1)
+}
+
+func (s *NodeAPIStub) NodeExists(p0 context.Context, p1 string) error {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) NodeKeepalive(p0 context.Context) (uuid.UUID, error) {
+	if s.Internal.NodeKeepalive == nil {
+		return *new(uuid.UUID), ErrNotSupported
+	}
+	return s.Internal.NodeKeepalive(p0)
+}
+
+func (s *NodeAPIStub) NodeKeepalive(p0 context.Context) (uuid.UUID, error) {
+	return *new(uuid.UUID), ErrNotSupported
+}
+
+func (s *NodeAPIStruct) NodeLogin(p0 context.Context, p1 string, p2 string) (string, error) {
+	if s.Internal.NodeLogin == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.NodeLogin(p0, p1, p2)
+}
+
+func (s *NodeAPIStub) NodeLogin(p0 context.Context, p1 string, p2 string) (string, error) {
+	return "", ErrNotSupported
+}
+
+func (s *NodeAPIStruct) RegisterNode(p0 context.Context, p1 string, p2 string, p3 string) error {
+	if s.Internal.RegisterNode == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.RegisterNode(p0, p1, p2, p3)
+}
+
+func (s *NodeAPIStub) RegisterNode(p0 context.Context, p1 string, p2 string, p3 string) error {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) RequestActivationCodes(p0 context.Context, p1 types.NodeType, p2 int) ([]*types.NodeActivation, error) {
+	if s.Internal.RequestActivationCodes == nil {
+		return *new([]*types.NodeActivation), ErrNotSupported
+	}
+	return s.Internal.RequestActivationCodes(p0, p1, p2)
+}
+
+func (s *NodeAPIStub) RequestActivationCodes(p0 context.Context, p1 types.NodeType, p2 int) ([]*types.NodeActivation, error) {
+	return *new([]*types.NodeActivation), ErrNotSupported
+}
+
+func (s *NodeAPIStruct) UnregisterNode(p0 context.Context, p1 string) error {
+	if s.Internal.UnregisterNode == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.UnregisterNode(p0, p1)
+}
+
+func (s *NodeAPIStub) UnregisterNode(p0 context.Context, p1 string) error {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) UpdateNodePort(p0 context.Context, p1 string, p2 string) error {
+	if s.Internal.UpdateNodePort == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.UpdateNodePort(p0, p1, p2)
+}
+
+func (s *NodeAPIStub) UpdateNodePort(p0 context.Context, p1 string, p2 string) error {
 	return ErrNotSupported
 }
 
@@ -603,116 +1102,6 @@ func (s *SchedulerStub) DeleteEdgeUpdateConfig(p0 context.Context, p1 int) error
 	return ErrNotSupported
 }
 
-func (s *SchedulerStruct) EdgeConnect(p0 context.Context, p1 *types.ConnectOptions) error {
-	if s.Internal.EdgeConnect == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.EdgeConnect(p0, p1)
-}
-
-func (s *SchedulerStub) EdgeConnect(p0 context.Context, p1 *types.ConnectOptions) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetAssetListForBucket(p0 context.Context, p1 uint32) ([]string, error) {
-	if s.Internal.GetAssetListForBucket == nil {
-		return *new([]string), ErrNotSupported
-	}
-	return s.Internal.GetAssetListForBucket(p0, p1)
-}
-
-func (s *SchedulerStub) GetAssetListForBucket(p0 context.Context, p1 uint32) ([]string, error) {
-	return *new([]string), ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetAssetRecord(p0 context.Context, p1 string) (*types.AssetRecord, error) {
-	if s.Internal.GetAssetRecord == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.GetAssetRecord(p0, p1)
-}
-
-func (s *SchedulerStub) GetAssetRecord(p0 context.Context, p1 string) (*types.AssetRecord, error) {
-	return nil, ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetAssetRecords(p0 context.Context, p1 int, p2 int, p3 []string, p4 dtypes.ServerID) ([]*types.AssetRecord, error) {
-	if s.Internal.GetAssetRecords == nil {
-		return *new([]*types.AssetRecord), ErrNotSupported
-	}
-	return s.Internal.GetAssetRecords(p0, p1, p2, p3, p4)
-}
-
-func (s *SchedulerStub) GetAssetRecords(p0 context.Context, p1 int, p2 int, p3 []string, p4 dtypes.ServerID) ([]*types.AssetRecord, error) {
-	return *new([]*types.AssetRecord), ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetAssetReplicaInfos(p0 context.Context, p1 types.ListReplicaInfosReq) (*types.ListReplicaInfosRsp, error) {
-	if s.Internal.GetAssetReplicaInfos == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.GetAssetReplicaInfos(p0, p1)
-}
-
-func (s *SchedulerStub) GetAssetReplicaInfos(p0 context.Context, p1 types.ListReplicaInfosReq) (*types.ListReplicaInfosRsp, error) {
-	return nil, ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetAssetStatistics(p0 context.Context) (*types.AssetStatistics, error) {
-	if s.Internal.GetAssetStatistics == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.GetAssetStatistics(p0)
-}
-
-func (s *SchedulerStub) GetAssetStatistics(p0 context.Context) (*types.AssetStatistics, error) {
-	return nil, ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetCandidateDownloadInfos(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) {
-	if s.Internal.GetCandidateDownloadInfos == nil {
-		return *new([]*types.CandidateDownloadInfo), ErrNotSupported
-	}
-	return s.Internal.GetCandidateDownloadInfos(p0, p1)
-}
-
-func (s *SchedulerStub) GetCandidateDownloadInfos(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) {
-	return *new([]*types.CandidateDownloadInfo), ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetCandidateURLsForDetectNat(p0 context.Context) ([]string, error) {
-	if s.Internal.GetCandidateURLsForDetectNat == nil {
-		return *new([]string), ErrNotSupported
-	}
-	return s.Internal.GetCandidateURLsForDetectNat(p0)
-}
-
-func (s *SchedulerStub) GetCandidateURLsForDetectNat(p0 context.Context) ([]string, error) {
-	return *new([]string), ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetEdgeDownloadInfos(p0 context.Context, p1 string) (*types.EdgeDownloadInfoList, error) {
-	if s.Internal.GetEdgeDownloadInfos == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.GetEdgeDownloadInfos(p0, p1)
-}
-
-func (s *SchedulerStub) GetEdgeDownloadInfos(p0 context.Context, p1 string) (*types.EdgeDownloadInfoList, error) {
-	return nil, ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetEdgeExternalServiceAddress(p0 context.Context, p1 string, p2 string) (string, error) {
-	if s.Internal.GetEdgeExternalServiceAddress == nil {
-		return "", ErrNotSupported
-	}
-	return s.Internal.GetEdgeExternalServiceAddress(p0, p1, p2)
-}
-
-func (s *SchedulerStub) GetEdgeExternalServiceAddress(p0 context.Context, p1 string, p2 string) (string, error) {
-	return "", ErrNotSupported
-}
-
 func (s *SchedulerStruct) GetEdgeUpdateConfigs(p0 context.Context) (map[int]*EdgeUpdateConfig, error) {
 	if s.Internal.GetEdgeUpdateConfigs == nil {
 		return *new(map[int]*EdgeUpdateConfig), ErrNotSupported
@@ -722,50 +1111,6 @@ func (s *SchedulerStruct) GetEdgeUpdateConfigs(p0 context.Context) (map[int]*Edg
 
 func (s *SchedulerStub) GetEdgeUpdateConfigs(p0 context.Context) (map[int]*EdgeUpdateConfig, error) {
 	return *new(map[int]*EdgeUpdateConfig), ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetExternalAddress(p0 context.Context) (string, error) {
-	if s.Internal.GetExternalAddress == nil {
-		return "", ErrNotSupported
-	}
-	return s.Internal.GetExternalAddress(p0)
-}
-
-func (s *SchedulerStub) GetExternalAddress(p0 context.Context) (string, error) {
-	return "", ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetNodeInfo(p0 context.Context, p1 string) (types.NodeInfo, error) {
-	if s.Internal.GetNodeInfo == nil {
-		return *new(types.NodeInfo), ErrNotSupported
-	}
-	return s.Internal.GetNodeInfo(p0, p1)
-}
-
-func (s *SchedulerStub) GetNodeInfo(p0 context.Context, p1 string) (types.NodeInfo, error) {
-	return *new(types.NodeInfo), ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetNodeList(p0 context.Context, p1 int, p2 int) (*types.ListNodesRsp, error) {
-	if s.Internal.GetNodeList == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.GetNodeList(p0, p1, p2)
-}
-
-func (s *SchedulerStub) GetNodeList(p0 context.Context, p1 int, p2 int) (*types.ListNodesRsp, error) {
-	return nil, ErrNotSupported
-}
-
-func (s *SchedulerStruct) GetOnlineNodeCount(p0 context.Context, p1 types.NodeType) (int, error) {
-	if s.Internal.GetOnlineNodeCount == nil {
-		return 0, ErrNotSupported
-	}
-	return s.Internal.GetOnlineNodeCount(p0, p1)
-}
-
-func (s *SchedulerStub) GetOnlineNodeCount(p0 context.Context, p1 types.NodeType) (int, error) {
-	return 0, ErrNotSupported
 }
 
 func (s *SchedulerStruct) GetSchedulerPublicKey(p0 context.Context) (string, error) {
@@ -790,135 +1135,47 @@ func (s *SchedulerStub) GetValidationInfo(p0 context.Context) (*types.Validation
 	return nil, ErrNotSupported
 }
 
-func (s *SchedulerStruct) GetValidationResults(p0 context.Context, p1 time.Time, p2 time.Time, p3 int, p4 int) (*types.ListValidationResultRsp, error) {
+func (s *SchedulerStruct) GetValidationResults(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListValidationResultRsp, error) {
 	if s.Internal.GetValidationResults == nil {
 		return nil, ErrNotSupported
 	}
-	return s.Internal.GetValidationResults(p0, p1, p2, p3, p4)
+	return s.Internal.GetValidationResults(p0, p1, p2, p3)
 }
 
-func (s *SchedulerStub) GetValidationResults(p0 context.Context, p1 time.Time, p2 time.Time, p3 int, p4 int) (*types.ListValidationResultRsp, error) {
+func (s *SchedulerStub) GetValidationResults(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListValidationResultRsp, error) {
 	return nil, ErrNotSupported
 }
 
-func (s *SchedulerStruct) NatPunch(p0 context.Context, p1 *types.NatPunchReq) error {
-	if s.Internal.NatPunch == nil {
-		return ErrNotSupported
+func (s *SchedulerStruct) GetWorkloadRecord(p0 context.Context, p1 string) (*types.WorkloadRecord, error) {
+	if s.Internal.GetWorkloadRecord == nil {
+		return nil, ErrNotSupported
 	}
-	return s.Internal.NatPunch(p0, p1)
+	return s.Internal.GetWorkloadRecord(p0, p1)
 }
 
-func (s *SchedulerStub) NatPunch(p0 context.Context, p1 *types.NatPunchReq) error {
-	return ErrNotSupported
+func (s *SchedulerStub) GetWorkloadRecord(p0 context.Context, p1 string) (*types.WorkloadRecord, error) {
+	return nil, ErrNotSupported
 }
 
-func (s *SchedulerStruct) NodeExists(p0 context.Context, p1 string) error {
-	if s.Internal.NodeExists == nil {
-		return ErrNotSupported
+func (s *SchedulerStruct) GetWorkloadRecords(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListWorkloadRecordRsp, error) {
+	if s.Internal.GetWorkloadRecords == nil {
+		return nil, ErrNotSupported
 	}
-	return s.Internal.NodeExists(p0, p1)
+	return s.Internal.GetWorkloadRecords(p0, p1, p2, p3)
 }
 
-func (s *SchedulerStub) NodeExists(p0 context.Context, p1 string) error {
-	return ErrNotSupported
+func (s *SchedulerStub) GetWorkloadRecords(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListWorkloadRecordRsp, error) {
+	return nil, ErrNotSupported
 }
 
-func (s *SchedulerStruct) NodeKeepalive(p0 context.Context) (uuid.UUID, error) {
-	if s.Internal.NodeKeepalive == nil {
-		return *new(uuid.UUID), ErrNotSupported
-	}
-	return s.Internal.NodeKeepalive(p0)
-}
-
-func (s *SchedulerStub) NodeKeepalive(p0 context.Context) (uuid.UUID, error) {
-	return *new(uuid.UUID), ErrNotSupported
-}
-
-func (s *SchedulerStruct) NodeLogin(p0 context.Context, p1 string, p2 string) (string, error) {
-	if s.Internal.NodeLogin == nil {
-		return "", ErrNotSupported
-	}
-	return s.Internal.NodeLogin(p0, p1, p2)
-}
-
-func (s *SchedulerStub) NodeLogin(p0 context.Context, p1 string, p2 string) (string, error) {
-	return "", ErrNotSupported
-}
-
-func (s *SchedulerStruct) NodeRemoveAssetResult(p0 context.Context, p1 types.RemoveAssetResult) error {
-	if s.Internal.NodeRemoveAssetResult == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.NodeRemoveAssetResult(p0, p1)
-}
-
-func (s *SchedulerStub) NodeRemoveAssetResult(p0 context.Context, p1 types.RemoveAssetResult) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) NodeValidationResult(p0 context.Context, p1 ValidationResult, p2 string) error {
+func (s *SchedulerStruct) NodeValidationResult(p0 context.Context, p1 io.Reader, p2 string) error {
 	if s.Internal.NodeValidationResult == nil {
 		return ErrNotSupported
 	}
 	return s.Internal.NodeValidationResult(p0, p1, p2)
 }
 
-func (s *SchedulerStub) NodeValidationResult(p0 context.Context, p1 ValidationResult, p2 string) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) PullAsset(p0 context.Context, p1 *types.PullAssetReq) error {
-	if s.Internal.PullAsset == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.PullAsset(p0, p1)
-}
-
-func (s *SchedulerStub) PullAsset(p0 context.Context, p1 *types.PullAssetReq) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) RePullFailedAssets(p0 context.Context, p1 []types.AssetHash) error {
-	if s.Internal.RePullFailedAssets == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.RePullFailedAssets(p0, p1)
-}
-
-func (s *SchedulerStub) RePullFailedAssets(p0 context.Context, p1 []types.AssetHash) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) RegisterNode(p0 context.Context, p1 string, p2 types.NodeType) (string, error) {
-	if s.Internal.RegisterNode == nil {
-		return "", ErrNotSupported
-	}
-	return s.Internal.RegisterNode(p0, p1, p2)
-}
-
-func (s *SchedulerStub) RegisterNode(p0 context.Context, p1 string, p2 types.NodeType) (string, error) {
-	return "", ErrNotSupported
-}
-
-func (s *SchedulerStruct) RemoveAssetRecord(p0 context.Context, p1 string) error {
-	if s.Internal.RemoveAssetRecord == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.RemoveAssetRecord(p0, p1)
-}
-
-func (s *SchedulerStub) RemoveAssetRecord(p0 context.Context, p1 string) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) RemoveAssetReplica(p0 context.Context, p1 string, p2 string) error {
-	if s.Internal.RemoveAssetReplica == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.RemoveAssetReplica(p0, p1, p2)
-}
-
-func (s *SchedulerStub) RemoveAssetReplica(p0 context.Context, p1 string, p2 string) error {
+func (s *SchedulerStub) NodeValidationResult(p0 context.Context, p1 io.Reader, p2 string) error {
 	return ErrNotSupported
 }
 
@@ -966,48 +1223,70 @@ func (s *SchedulerStub) TriggerElection(p0 context.Context) error {
 	return ErrNotSupported
 }
 
-func (s *SchedulerStruct) UnregisterNode(p0 context.Context, p1 string) error {
-	if s.Internal.UnregisterNode == nil {
-		return ErrNotSupported
+func (s *UserAPIStruct) AllocateStorage(p0 context.Context, p1 string) (*types.StorageSize, error) {
+	if s.Internal.AllocateStorage == nil {
+		return nil, ErrNotSupported
 	}
-	return s.Internal.UnregisterNode(p0, p1)
+	return s.Internal.AllocateStorage(p0, p1)
 }
 
-func (s *SchedulerStub) UnregisterNode(p0 context.Context, p1 string) error {
+func (s *UserAPIStub) AllocateStorage(p0 context.Context, p1 string) (*types.StorageSize, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) CreateAPIKey(p0 context.Context, p1 string, p2 string) (string, error) {
+	if s.Internal.CreateAPIKey == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.CreateAPIKey(p0, p1, p2)
+}
+
+func (s *UserAPIStub) CreateAPIKey(p0 context.Context, p1 string, p2 string) (string, error) {
+	return "", ErrNotSupported
+}
+
+func (s *UserAPIStruct) DeleteAPIKey(p0 context.Context, p1 string, p2 string) error {
+	if s.Internal.DeleteAPIKey == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.DeleteAPIKey(p0, p1, p2)
+}
+
+func (s *UserAPIStub) DeleteAPIKey(p0 context.Context, p1 string, p2 string) error {
 	return ErrNotSupported
 }
 
-func (s *SchedulerStruct) UpdateAssetExpiration(p0 context.Context, p1 string, p2 time.Time) error {
-	if s.Internal.UpdateAssetExpiration == nil {
+func (s *UserAPIStruct) GetAPIKeys(p0 context.Context, p1 string) (map[string]string, error) {
+	if s.Internal.GetAPIKeys == nil {
+		return *new(map[string]string), ErrNotSupported
+	}
+	return s.Internal.GetAPIKeys(p0, p1)
+}
+
+func (s *UserAPIStub) GetAPIKeys(p0 context.Context, p1 string) (map[string]string, error) {
+	return *new(map[string]string), ErrNotSupported
+}
+
+func (s *UserAPIStruct) GetStorageSize(p0 context.Context, p1 string) (*types.StorageSize, error) {
+	if s.Internal.GetStorageSize == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetStorageSize(p0, p1)
+}
+
+func (s *UserAPIStub) GetStorageSize(p0 context.Context, p1 string) (*types.StorageSize, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) UserAPIKeysExists(p0 context.Context, p1 string) error {
+	if s.Internal.UserAPIKeysExists == nil {
 		return ErrNotSupported
 	}
-	return s.Internal.UpdateAssetExpiration(p0, p1, p2)
+	return s.Internal.UserAPIKeysExists(p0, p1)
 }
 
-func (s *SchedulerStub) UpdateAssetExpiration(p0 context.Context, p1 string, p2 time.Time) error {
+func (s *UserAPIStub) UserAPIKeysExists(p0 context.Context, p1 string) error {
 	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) UpdateNodePort(p0 context.Context, p1 string, p2 string) error {
-	if s.Internal.UpdateNodePort == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.UpdateNodePort(p0, p1, p2)
-}
-
-func (s *SchedulerStub) UpdateNodePort(p0 context.Context, p1 string, p2 string) error {
-	return ErrNotSupported
-}
-
-func (s *SchedulerStruct) VerifyNodeAuthToken(p0 context.Context, p1 string) ([]auth.Permission, error) {
-	if s.Internal.VerifyNodeAuthToken == nil {
-		return *new([]auth.Permission), ErrNotSupported
-	}
-	return s.Internal.VerifyNodeAuthToken(p0, p1)
-}
-
-func (s *SchedulerStub) VerifyNodeAuthToken(p0 context.Context, p1 string) ([]auth.Permission, error) {
-	return *new([]auth.Permission), ErrNotSupported
 }
 
 func (s *ValidationStruct) ExecuteValidation(p0 context.Context, p1 *ValidateReq) error {
@@ -1022,11 +1301,14 @@ func (s *ValidationStub) ExecuteValidation(p0 context.Context, p1 *ValidateReq) 
 }
 
 var _ Asset = new(AssetStruct)
+var _ AssetAPI = new(AssetAPIStruct)
 var _ Candidate = new(CandidateStruct)
 var _ Common = new(CommonStruct)
 var _ DataSync = new(DataSyncStruct)
 var _ Device = new(DeviceStruct)
 var _ Edge = new(EdgeStruct)
 var _ Locator = new(LocatorStruct)
+var _ NodeAPI = new(NodeAPIStruct)
 var _ Scheduler = new(SchedulerStruct)
+var _ UserAPI = new(UserAPIStruct)
 var _ Validation = new(ValidationStruct)

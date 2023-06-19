@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	logging "github.com/ipfs/go-log/v2"
 )
@@ -20,10 +21,11 @@ const (
 )
 
 type Manager struct {
-	nodeManager *node.Manager
-	retryList   []*retryNode
-	lock        *sync.Mutex
-	edgeMap     *sync.Map
+	nodeManager  *node.Manager
+	schedulerCfg *config.SchedulerCfg
+	retryList    []*retryNode
+	lock         *sync.Mutex
+	edgeMap      *sync.Map
 }
 
 type retryNode struct {
@@ -31,8 +33,14 @@ type retryNode struct {
 	retry int
 }
 
-func NewManager(nodeMgr *node.Manager) *Manager {
-	m := &Manager{nodeManager: nodeMgr, lock: &sync.Mutex{}, retryList: make([]*retryNode, 0), edgeMap: &sync.Map{}}
+func NewManager(nodeMgr *node.Manager, config *config.SchedulerCfg) *Manager {
+	m := &Manager{
+		nodeManager:  nodeMgr,
+		lock:         &sync.Mutex{},
+		retryList:    make([]*retryNode, 0),
+		edgeMap:      &sync.Map{},
+		schedulerCfg: config,
+	}
 	go m.startTicker()
 
 	return m
@@ -43,14 +51,13 @@ func (m *Manager) startTicker() {
 		time.Sleep(detectInterval * time.Second)
 
 		for len(m.retryList) > 0 {
-			node := m.removeNode()
-			m.retryDetectNatType(node)
+			nodes := m.nodesFromHead(m.schedulerCfg.NatDetectConcurrency)
+			m.retryDetectNodesNatType(nodes)
 		}
 	}
-
 }
 
-func (m *Manager) removeNode() *retryNode {
+func (m *Manager) nodesFromHead(n int) []*retryNode {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -58,8 +65,12 @@ func (m *Manager) removeNode() *retryNode {
 		return nil
 	}
 
-	node := m.retryList[0]
-	m.retryList = m.retryList[1:]
+	if len(m.retryList) < n {
+		n = len(m.retryList)
+	}
+
+	node := m.retryList[0:n]
+	m.retryList = m.retryList[n:]
 	return node
 }
 
@@ -91,6 +102,20 @@ func (m *Manager) delayDetectNatType(n *retryNode) {
 	m.addNode(n)
 }
 
+func (m *Manager) retryDetectNodesNatType(nodes []*retryNode) {
+	wg := &sync.WaitGroup{}
+
+	for _, node := range nodes {
+		wg.Add(1)
+		go func(n *retryNode) {
+			defer wg.Done()
+			m.retryDetectNatType(n)
+		}(node)
+	}
+
+	wg.Wait()
+}
+
 func (m *Manager) retryDetectNatType(node *retryNode) {
 	node.retry++
 	nodeID := node.id
@@ -114,12 +139,12 @@ func (m *Manager) retryDetectNatType(node *retryNode) {
 		log.Errorf("DetermineNATType error:%s", err.Error())
 	}
 
-	eNode.NATType = natType.String()
+	eNode.NATType = natType
 
 	if natType == types.NatTypeUnknown && node.retry < maxRetry {
 		m.delayDetectNatType(node)
 	}
-	log.Debugf("retry detect nat type %s", eNode.NATType)
+	log.Debugf("retry detect node %s nat type %s", node.id, eNode.NATType)
 }
 
 func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
@@ -148,7 +173,7 @@ func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
 		log.Errorf("DetermineNATType error:%s", err.Error())
 	}
 
-	eNode.NATType = natType.String()
+	eNode.NATType = natType
 
 	if natType == types.NatTypeUnknown {
 		m.delayDetectNatType(&retryNode{id: nodeID, retry: 0})

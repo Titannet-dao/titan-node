@@ -87,26 +87,48 @@ func DefaultLocatorCfg() *LocatorCfg {
 		CaCertificatePath:  "",
 		EtcdAddresses:      []string{"127.0.0.1:2379"},
 		DefaultAreaID:      "Asia-China-Guangdong-Shenzhen",
+		DNSServerAddress:   "0.0.0.0:5555",
 	}
 }
 
 // DefaultSchedulerCfg returns the default scheduler config
 func DefaultSchedulerCfg() *SchedulerCfg {
 	return &SchedulerCfg{
-		ExternalURL:        "https://localhost:3456/rpc/v0",
-		ListenAddress:      "0.0.0.0:3456",
-		InsecureSkipVerify: true,
-		CertificatePath:    "",
-		PrivateKeyPath:     "",
-		CaCertificatePath:  "",
-		AreaID:             "Asia-China-Guangdong-Shenzhen",
-		DatabaseAddress:    "mysql_user:mysql_password@tcp(127.0.0.1:3306)/titan",
-		EnableValidation:   true,
-		EtcdAddresses:      []string{},
-		CandidateReplicas:  0,
-		ValidatorRatio:     1,
-		ValidatorBaseBwDn:  100,
-		ValidationProfit:   1,
+		ExternalURL:             "https://localhost:3456/rpc/v0",
+		ListenAddress:           "0.0.0.0:3456",
+		InsecureSkipVerify:      true,
+		CertificatePath:         "",
+		PrivateKeyPath:          "",
+		CaCertificatePath:       "",
+		AreaID:                  "Asia-China-Guangdong-Shenzhen",
+		DatabaseAddress:         "mysql_user:mysql_password@tcp(127.0.0.1:3306)/titan",
+		EnableValidation:        true,
+		EtcdAddresses:           []string{},
+		CandidateReplicas:       0,
+		ValidatorRatio:          1,
+		ValidatorBaseBwDn:       100,
+		ValidationProfit:        1,
+		WorkloadProfit:          5,
+		ElectionCycle:           5,
+		LotusRPCAddress:         "http://api.node.glif.io/rpc/v0",
+		LotusToken:              "",
+		EdgeDownloadRatio:       0.7,
+		AssetPullTaskLimit:      10,
+		UploadAssetReplicaCount: 50,
+		UploadAssetExpiration:   150,
+		NodeScoreLevel: map[string][]int{
+			"A": {90, 100},
+			"B": {50, 89},
+			"C": {0, 49},
+		},
+		LevelSelectWeight: map[string]int{
+			"A": 3,
+			"B": 2,
+			"C": 1,
+		},
+		NatDetectConcurrency: 5,
+		// allocate 200M for user
+		UserFreeStorageSize: 209715200,
 	}
 }
 

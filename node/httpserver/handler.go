@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -16,8 +17,10 @@ import (
 var log = logging.Logger("httpserver")
 
 const (
-	ipfsPathPrefix        = "/ipfs"
+	ipfsPathPrefix        = "/ipfs/"
+	uploadPathPrefix      = "/upload"
 	immutableCacheControl = "public, max-age=29030400, immutable"
+	domainFields          = 4
 )
 
 var onlyASCII = regexp.MustCompile("[[:^ascii:]]")
@@ -27,11 +30,37 @@ type Handler struct {
 	hs      *HttpServer
 }
 
+func resetPath(r *http.Request) {
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		log.Errorf("SplitHostPort error :%s", err.Error())
+		return
+	}
+
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return
+	}
+
+	fields := strings.Split(host, ".")
+	if len(fields) >= domainFields {
+		r.URL.Path = "/ipfs/" + fields[0] + r.URL.Path
+	}
+
+}
+
 // ServeHTTP checks if the request path starts with the IPFS path prefix and delegates to the appropriate handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !strings.Contains(r.URL.Path, ipfsPathPrefix) &&
+		!strings.Contains(r.URL.Path, uploadPathPrefix) {
+		resetPath(r)
+	}
+
 	switch {
 	case strings.HasPrefix(r.URL.Path, ipfsPathPrefix):
 		h.hs.handler(w, r)
+	case strings.HasPrefix(r.URL.Path, uploadPathPrefix):
+		h.hs.uploadHandler(w, r)
 	default:
 		h.handler.ServeHTTP(w, r)
 	}

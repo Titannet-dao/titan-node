@@ -26,8 +26,7 @@ import (
 var log = logging.Logger("candidate")
 
 const (
-	schedulerAPITimeout      = 3
-	validateTimeout          = 5
+	validateTimeout          = 3
 	tcpPackMaxLength         = 52428800
 	connectivityCheckTimeout = 3
 )

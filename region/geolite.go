@@ -15,25 +15,6 @@ func TypeGeoLite() string {
 	return "GeoLite"
 }
 
-// NewGeoLiteRegion creates a new GeoLiteRegion using the given database path
-func NewGeoLiteRegion(dbPath string) (Region, error) {
-	gl := &geoLite{dbPath}
-
-	db, err := geoip2.Open(gl.dbPath)
-	if err != nil {
-		return gl, err
-	}
-	defer func() {
-		err = db.Close()
-		if err != nil {
-			log.Errorf("geo close db err:%s", err.Error())
-		}
-	}()
-	// reader = db
-
-	return gl, nil
-}
-
 // InitGeoLite initializes a new GeoLiteRegion using the given database path
 func InitGeoLite(dbPath string) (Region, error) {
 	gl := &geoLite{dbPath}

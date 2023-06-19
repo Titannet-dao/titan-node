@@ -1,6 +1,7 @@
 package locator
 
 import (
+	"os"
 	"testing"
 
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -8,11 +9,17 @@ import (
 )
 
 const (
-	testEtcdAddress = "192.168.0.51:2379"
+	testEtcdAddress = "39.108.143.56:2379"
 )
 
 func TestEtcd(t *testing.T) {
 	t.Logf("TestEtcd")
+	if err := os.Setenv("ETCD_USERNAME", "web"); err != nil {
+		t.Errorf("Setenv ETCD_USERNAME error %s", err.Error())
+	}
+	if err := os.Setenv("ETCD_PASSWORD", "web_123"); err != nil {
+		t.Errorf("Setenv ETCD_PASSWORD error %s", err.Error())
+	}
 	etcd, err := etcdcli.New([]string{testEtcdAddress})
 	if err != nil {
 		t.Errorf("new etcd client error:%s", err.Error())

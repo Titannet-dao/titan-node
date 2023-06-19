@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/fx"
@@ -24,7 +26,7 @@ import (
 var log = logging.Logger("locator")
 
 const (
-	unknownAreaID = "unknown-unknown-unknown"
+	unknownAreaID = "unknown-unknown"
 )
 
 type Storage interface {
@@ -38,6 +40,7 @@ type Locator struct {
 	region.Region
 	Storage
 	*config.LocatorCfg
+	*DNSServer
 }
 
 type schedulerAPI struct {
@@ -47,7 +50,7 @@ type schedulerAPI struct {
 }
 
 func isValid(geo string) bool {
-	return len(geo) > 0 && geo != unknownAreaID
+	return len(geo) > 0 && !strings.Contains(geo, unknownAreaID)
 }
 
 // GetAccessPoints get schedulers urls with special areaID, and those schedulers have the node
@@ -160,6 +163,13 @@ func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.E
 		return nil, err
 	}
 
+	if len(configs) == 0 && l.UseDefaultAreaID {
+		configs, err = l.GetSchedulerConfigs(l.DefaultAreaID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	schedulerAPIs, err := l.newSchedulerAPIs(configs)
 	if err != nil {
 		return nil, err
@@ -244,6 +254,78 @@ func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid
 	}
 }
 
+func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*types.CandidateDownloadInfo, error) {
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	areaID, err := l.getAreaID(remoteAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	configs, err := l.GetSchedulerConfigs(areaID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(configs) == 0 && l.UseDefaultAreaID {
+		configs, err = l.GetSchedulerConfigs(l.DefaultAreaID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(schedulerAPIs) == 0 {
+		return nil, fmt.Errorf("area %s no scheduler exist", areaID)
+	}
+
+	log.Debugf("CandidateDownloadInfos, schedulerAPIs %#v", schedulerAPIs)
+
+	return l.getCandidateDownloadInfoFromBestScheduler(schedulerAPIs, cid)
+}
+
+func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid string) ([]*types.CandidateDownloadInfo, error) {
+	if len(apis) == 0 {
+		return nil, fmt.Errorf("scheduler api is empty")
+	}
+
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	defer cancel()
+
+	infoList := make([]*types.CandidateDownloadInfo, 0)
+	lock := &sync.Mutex{}
+	wg := &sync.WaitGroup{}
+	for _, api := range apis {
+		wg.Add(1)
+
+		go func(ctx context.Context, s *schedulerAPI) {
+			defer s.close()
+			defer wg.Done()
+
+			if info, err := s.GetCandidateDownloadInfos(ctx, cid); err == nil {
+				lock.Lock()
+				infoList = append(infoList, info...)
+				lock.Unlock()
+			} else {
+				log.Errorf("GetCandidateDownloadInfos cid %s, error: %s", cid, err.Error())
+			}
+
+		}(ctx, api)
+	}
+
+	wg.Wait()
+	return infoList, nil
+
+}
+
 // GetUserAccessPoint get user access point for special user ip
 func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.AccessPoint, error) {
 	areaID := l.DefaultAreaID
@@ -269,6 +351,13 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 	configs, err := l.GetSchedulerConfigs(areaID)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(configs) == 0 && l.UseDefaultAreaID {
+		configs, err = l.GetSchedulerConfigs(l.DefaultAreaID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	schedulerURLs := make([]string, 0, len(configs))

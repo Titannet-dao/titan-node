@@ -4,19 +4,19 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/lib/rpcenc"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/metrics/proxy"
 
 	"github.com/filecoin-project/go-jsonrpc"
-	"github.com/filecoin-project/go-jsonrpc/auth"
 
 	"github.com/Filecoin-Titan/titan/node/handler"
 	"github.com/gorilla/mux"
 )
 
-func EdgeHandler(authv func(ctx context.Context, token string) ([]auth.Permission, error), a api.Edge, permissioned bool) http.Handler {
+func EdgeHandler(verify func(ctx context.Context, token string) (*types.JWTPayload, error), a api.Edge, permissioned bool) http.Handler {
 	mux := mux.NewRouter()
 	readerHandler, readerServerOpt := rpcenc.ReaderParamDecoder()
 	rpcServer := jsonrpc.NewServer(readerServerOpt)
@@ -36,10 +36,5 @@ func EdgeHandler(authv func(ctx context.Context, token string) ([]auth.Permissio
 		return mux
 	}
 
-	ah := &auth.Handler{
-		Verify: authv,
-		Next:   mux.ServeHTTP,
-	}
-
-	return handler.New(ah)
+	return handler.New(verify, mux.ServeHTTP)
 }

@@ -5,9 +5,11 @@ import (
 	"crypto/rsa"
 	"fmt"
 	gopath "path"
+	"sync"
 
 	"github.com/Filecoin-Titan/titan/api"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
+	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	bsfetcher "github.com/ipfs/go-fetcher/impl/blockservice"
@@ -16,6 +18,7 @@ import (
 	ipfspath "github.com/ipfs/go-path"
 	"github.com/ipfs/go-path/resolver"
 	unixfile "github.com/ipfs/go-unixfs/file"
+	uio "github.com/ipfs/go-unixfs/io"
 	"github.com/ipfs/go-unixfsnode"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 	dagpb "github.com/ipld/go-codec-dagpb"
@@ -25,27 +28,42 @@ import (
 )
 
 type Validation interface {
-	SetFunc(func() uint32)
-	StopValidation()
+	SetFunc(func() string)
 }
 
 type HttpServer struct {
-	asset               Asset
-	scheduler           api.Scheduler
-	privateKey          *rsa.PrivateKey
-	schedulerPublicKey  *rsa.PublicKey
-	reporter            *reporter
-	validation          Validation
-	downloadThreadCount uint32
+	asset              Asset
+	scheduler          api.Scheduler
+	privateKey         *rsa.PrivateKey
+	schedulerPublicKey *rsa.PublicKey
+	reporter           *reporter
+	validation         Validation
+	tokens             *sync.Map
+	apiSecret          *jwt.HMACSHA
+}
+
+type HttpServerOptions struct {
+	Asset      Asset
+	Scheduler  api.Scheduler
+	PrivateKey *rsa.PrivateKey
+	Validation Validation
+	APISecret  *jwt.HMACSHA
 }
 
 // NewHttpServer creates a new HttpServer with the given Asset, Scheduler, and RSA private key.
-func NewHttpServer(asset Asset, scheduler api.Scheduler, privateKey *rsa.PrivateKey, validation Validation) *HttpServer {
-	hs := &HttpServer{asset: asset, scheduler: scheduler, privateKey: privateKey, validation: validation}
+func NewHttpServer(opts *HttpServerOptions) *HttpServer {
+	hs := &HttpServer{
+		asset:      opts.Asset,
+		scheduler:  opts.Scheduler,
+		privateKey: opts.PrivateKey,
+		validation: opts.Validation,
+		apiSecret:  opts.APISecret,
+		tokens:     &sync.Map{},
+	}
 	hs.reporter = newReporter(hs)
 
-	if validation != nil {
-		validation.SetFunc(hs.DownloadThreadCount)
+	if hs.validation != nil {
+		hs.validation.SetFunc(hs.FirstToken)
 	}
 
 	return hs
@@ -68,8 +86,13 @@ func (hs *HttpServer) UpdateSchedulerPublicKey() error {
 }
 
 // GetDownloadThreadCount get download thread count of httpserver
-func (hs *HttpServer) DownloadThreadCount() uint32 {
-	return hs.downloadThreadCount
+func (hs *HttpServer) FirstToken() string {
+	token := ""
+	hs.tokens.Range(func(key, value interface{}) bool {
+		token = key.(string)
+		return false
+	})
+	return token
 }
 
 // resolvePath resolves an IPFS path to a ResolvedPath, given the asset CID.
@@ -119,4 +142,17 @@ func (hs *HttpServer) getUnixFsNode(ctx context.Context, p path.Resolved, root c
 
 	dagService := dag.NewReadOnlyDagService(&nodeGetter{hs, root})
 	return unixfile.NewUnixfsFile(ctx, dagService, node)
+}
+
+func (hs *HttpServer) lsUnixFsDir(ctx context.Context, p path.Resolved, root cid.Cid) (uio.Directory, error) {
+	ng := &nodeGetter{hs, root}
+	node, err := ng.Get(ctx, p.Cid())
+	if err != nil {
+		return nil, err
+	}
+
+	dagService := dag.NewReadOnlyDagService(&nodeGetter{hs, root})
+
+	return uio.NewDirectoryFromNode(dagService, node)
+
 }

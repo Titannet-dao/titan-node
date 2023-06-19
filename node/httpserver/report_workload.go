@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	batch = 1000
+	batch          = 1000
+	tickerInterval = 60 * time.Second
 )
 
 type report struct {
@@ -41,7 +42,7 @@ func newReporter(server *HttpServer) *reporter {
 
 func (r *reporter) startTicker() {
 	for {
-		time.Sleep(1 * time.Second)
+		time.Sleep(tickerInterval)
 
 		if err := r.handleReports(); err != nil {
 			log.Errorf("sendReports error:%s", err.Error())
@@ -84,12 +85,13 @@ func (r *reporter) handleReports() error {
 
 func (r *reporter) mergeReports(rps []*report) []*types.WorkloadReport {
 	type reportStats struct {
-		tokenID      string
-		clientID     string
-		downloadSize int64
-		costTime     float64
-		startTime    int64
-		endTime      int64
+		tokenID         string
+		clientID        string
+		downloadSize    int64
+		speedCount      int
+		accumulateSpeed int64
+		startTime       int64
+		endTime         int64
 	}
 	// reportMap := make(map[string]*types.WorkloadReport)
 	reportStatsMap := make(map[string]*reportStats)
@@ -101,7 +103,8 @@ func (r *reporter) mergeReports(rps []*report) []*types.WorkloadReport {
 
 		r.downloadSize += rp.DownloadSize
 		if rp.DownloadSpeed > 0 {
-			r.costTime += float64(rp.DownloadSize) / float64(rp.DownloadSpeed)
+			r.accumulateSpeed += rp.DownloadSpeed
+			r.speedCount++
 		}
 		if r.startTime == 0 || rp.StartTime < r.startTime {
 			r.startTime = rp.StartTime
@@ -114,11 +117,11 @@ func (r *reporter) mergeReports(rps []*report) []*types.WorkloadReport {
 
 	reports := make([]*types.WorkloadReport, 0, len(reportStatsMap))
 	for _, v := range reportStatsMap {
-		downloadSpeed := float64(0)
-		if v.costTime > 0 {
-			downloadSpeed = float64(v.downloadSize) / v.costTime
+		downloadSpeed := int64(0)
+		if v.speedCount > 0 {
+			downloadSpeed = v.accumulateSpeed / int64(v.speedCount)
 		}
-		workload := &types.Workload{DownloadSpeed: int64(downloadSpeed), DownloadSize: v.downloadSize, StartTime: v.startTime, EndTime: v.endTime}
+		workload := &types.Workload{DownloadSpeed: downloadSpeed, DownloadSize: v.downloadSize, StartTime: v.startTime, EndTime: v.endTime}
 		workloadReport := &types.WorkloadReport{TokenID: v.tokenID, ClientID: v.clientID, Workload: workload}
 		reports = append(reports, workloadReport)
 	}

@@ -58,5 +58,5 @@ func NewHTTP3Client(pConn net.PacketConn, insecureSkipVerify bool, caCertPath st
 		Dial:       dial,
 	}
 
-	return &http.Client{Transport: roundTripper, Timeout: 10 * time.Second}, nil
+	return &http.Client{Transport: roundTripper, Timeout: 30 * time.Second}, nil
 }

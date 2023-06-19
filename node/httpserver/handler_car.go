@@ -95,6 +95,11 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, tkPayload
 	// If-None-Match+Etag, Content-Length and range requests
 	http.ServeContent(w, r, name, modtime, reader)
 
+	// if not come from sdk, don't send workload
+	if len(tkPayload.ID) == 0 {
+		return
+	}
+
 	contentLength, err := getContentLength(w)
 	if err != nil {
 		log.Errorf("get Content-length error:", err.Error())

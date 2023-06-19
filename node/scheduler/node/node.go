@@ -23,20 +23,34 @@ import (
 
 // Node represents an Edge or Candidate node
 type Node struct {
+	NodeID string
+
 	*API
 	jsonrpc.ClientCloser
 
 	token string
 
-	*types.NodeInfo
-	publicKey  *rsa.PublicKey
-	remoteAddr string
-	tcpPort    int
-
 	lastRequestTime time.Time // Node last keepalive time
-	pullingCount    int       // The number of asset waiting and pulling in progress
 
-	nodeNum int // The node number assigned by the scheduler to each online node
+	selectWeights []int // The select weights assigned by the scheduler to each online node
+
+	// node info
+	PublicKey  *rsa.PublicKey
+	RemoteAddr string
+	TCPPort    int
+
+	NATType     types.NatType
+	CPUUsage    float64
+	MemoryUsage float64
+	DiskUsage   float64
+	ExternalIP  string
+
+	OnlineDuration int
+	Type           types.NodeType
+	PortMapping    string
+	BandwidthDown  int64
+	BandwidthUp    int64
+	DiskSpace      float64
 }
 
 // API represents the node API
@@ -127,54 +141,34 @@ func (n *Node) ConnectRPC(addr string, nodeType types.NodeType) error {
 	return xerrors.Errorf("node %s type %d not wrongful", n.NodeID, n.Type)
 }
 
+// SelectWeights get node select weights
+func (n *Node) SelectWeights() []int {
+	return n.selectWeights
+}
+
 // SetToken sets the token of the node
 func (n *Node) SetToken(t string) {
 	n.token = t
 }
 
-// PublicKey  returns the publicKey of the node
-func (n *Node) PublicKey() *rsa.PublicKey {
-	return n.publicKey
-}
-
-// SetPublicKey sets the publicKey of the node
-func (n *Node) SetPublicKey(pKey *rsa.PublicKey) {
-	n.publicKey = pKey
-}
-
-// RemoteAddr returns the rpc address of the node
-func (n *Node) RemoteAddr() string {
-	return n.remoteAddr
-}
-
-// SetRemoteAddr sets the remoteAddr of the node
-func (n *Node) SetRemoteAddr(addr string) {
-	n.remoteAddr = addr
-}
-
-// SetTCPPort sets the tcpPort of the node
-func (n *Node) SetTCPPort(port int) {
-	n.tcpPort = port
-}
-
 // TCPAddr returns the tcp address of the node
 func (n *Node) TCPAddr() string {
-	index := strings.Index(n.remoteAddr, ":")
-	ip := n.remoteAddr[:index+1]
-	return fmt.Sprintf("%s%d", ip, n.tcpPort)
+	index := strings.Index(n.RemoteAddr, ":")
+	ip := n.RemoteAddr[:index+1]
+	return fmt.Sprintf("%s%d", ip, n.TCPPort)
 }
 
 // RPCURL returns the rpc url of the node
 func (n *Node) RPCURL() string {
-	return fmt.Sprintf("https://%s/rpc/v0", n.remoteAddr)
+	return fmt.Sprintf("https://%s/rpc/v0", n.RemoteAddr)
 }
 
 // DownloadAddr returns the download address of the node
 func (n *Node) DownloadAddr() string {
-	addr := n.remoteAddr
+	addr := n.RemoteAddr
 	if n.PortMapping != "" {
-		index := strings.Index(n.remoteAddr, ":")
-		ip := n.remoteAddr[:index+1]
+		index := strings.Index(n.RemoteAddr, ":")
+		ip := n.RemoteAddr[:index+1]
 		addr = ip + n.PortMapping
 	}
 
@@ -191,38 +185,23 @@ func (n *Node) SetLastRequestTime(t time.Time) {
 	n.lastRequestTime = t
 }
 
-// SetCurPullingCount sets the number of assets being pulled by the node
-func (n *Node) SetCurPullingCount(t int) {
-	n.pullingCount = t
-}
-
-// IncrCurPullingCount  increments the number of assets being pulled by the node
-func (n *Node) IncrCurPullingCount(v int) {
-	n.pullingCount += v
-}
-
-// CurPullingCount returns the number of assets being pulled by the node
-func (n *Node) CurPullingCount() int {
-	return n.pullingCount
-}
-
 // UpdateNodePort updates the node port
 func (n *Node) UpdateNodePort(port string) {
 	n.PortMapping = port
 }
 
 // Token returns the token of the node
-func (n *Node) Token(cid string, titanRsa *titanrsa.Rsa, privateKey *rsa.PrivateKey) (*types.Token, *types.TokenPayload, error) {
+func (n *Node) Token(cid, clientID string, titanRsa *titanrsa.Rsa, privateKey *rsa.PrivateKey) (*types.Token, *types.TokenPayload, error) {
 	tkPayload := &types.TokenPayload{
-		ID:         uuid.NewString(),
-		NodeID:     n.NodeID,
-		AssetCID:   cid,
-		ClientID:   uuid.NewString(), // TODO auth client and allocate id
-		CreateTime: time.Now(),
-		Expiration: time.Now().Add(10 * time.Hour),
+		ID:          uuid.NewString(),
+		NodeID:      n.NodeID,
+		AssetCID:    cid,
+		ClientID:    clientID, // TODO auth client and allocate id
+		CreatedTime: time.Now(),
+		Expiration:  time.Now().Add(10 * time.Hour),
 	}
 
-	b, err := n.encryptTokenPayload(tkPayload, n.publicKey, titanRsa)
+	b, err := n.encryptTokenPayload(tkPayload, n.PublicKey, titanRsa)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("%s encryptTokenPayload err:%s", n.NodeID, err.Error())
 	}

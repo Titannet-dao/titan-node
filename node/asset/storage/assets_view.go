@@ -123,9 +123,7 @@ func (av *assetsView) addAsset(ctx context.Context, root cid.Cid) error {
 	}
 
 	assetHashes = append(assetHashes, root.Hash().String())
-	av.update(ctx, bucketID, assetHashes)
-
-	return nil
+	return av.update(ctx, bucketID, assetHashes)
 }
 
 // removeAsset removes an asset from the AssetView.
@@ -144,9 +142,7 @@ func (av *assetsView) removeAsset(ctx context.Context, root cid.Cid) error {
 	}
 
 	assetHashes = removeHash(assetHashes, root.Hash().String())
-	av.update(ctx, bucketID, assetHashes)
-
-	return nil
+	return av.update(ctx, bucketID, assetHashes)
 }
 
 // update updates the hash values in the AssetView after adding or removing an asset.

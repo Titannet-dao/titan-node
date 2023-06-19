@@ -43,7 +43,7 @@ func (d *Datastore) Get(ctx context.Context, key datastore.Key) (value []byte, e
 		return nil, err
 	}
 
-	cInfo.ReplicaInfos, err = d.assetDB.LoadAssetReplicas(cInfo.Hash)
+	cInfo.ReplicaInfos, err = d.assetDB.LoadReplicasByStatus(cInfo.Hash, types.ReplicaStatusAll)
 	if err != nil {
 		return nil, err
 	}
@@ -65,15 +65,17 @@ func (d *Datastore) Has(ctx context.Context, key datastore.Key) (exists bool, er
 
 // GetSize gets the data size from the datastore
 func (d *Datastore) GetSize(ctx context.Context, key datastore.Key) (size int, err error) {
-	return d.assetDB.LoadAssetCount(d.ServerID)
+	return d.assetDB.LoadAssetCount(d.ServerID, Remove.String())
 }
 
 // Query queries asset records from the datastore
 func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, error) {
+	log.Debugln("------------Datastore Query-------------")
+
 	var rows *sqlx.Rows
 	var err error
 
-	rows, err = d.assetDB.LoadAllAssetRecords(d.ServerID)
+	rows, err = d.assetDB.LoadAllAssetRecords(d.ServerID, checkAssetReplicaLimit, 0, PullingStates)
 	if err != nil {
 		log.Errorf("LoadAssets :%s", err.Error())
 		return nil, err
@@ -90,7 +92,7 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 			continue
 		}
 
-		cInfo.ReplicaInfos, err = d.assetDB.LoadAssetReplicas(cInfo.Hash)
+		cInfo.ReplicaInfos, err = d.assetDB.LoadReplicasByStatus(cInfo.Hash, types.ReplicaStatusAll)
 		if err != nil {
 			log.Errorf("asset %s load replicas err: %s", cInfo.CID, err.Error())
 			continue
@@ -130,7 +132,7 @@ func (d *Datastore) Put(ctx context.Context, key datastore.Key, value []byte) er
 
 	aInfo.Hash = AssetHash(trimPrefix(key))
 
-	return d.assetDB.UpdateStateOfAsset(aInfo.Hash.String(), aInfo.State.String(), aInfo.Blocks, aInfo.Size, aInfo.RetryCount, aInfo.ReplenishReplicas, d.ServerID)
+	return d.assetDB.UpdateAssetInfo(aInfo.Hash.String(), aInfo.State.String(), aInfo.Blocks, aInfo.Size, aInfo.RetryCount, aInfo.ReplenishReplicas, d.ServerID)
 }
 
 // Delete delete asset record info (This func has no place to call it)

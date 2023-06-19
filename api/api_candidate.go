@@ -1,6 +1,8 @@
 package api
 
-import "context"
+import (
+	"context"
+)
 
 // Candidate is an interface for candidate node
 type Candidate interface {
@@ -28,6 +30,10 @@ type ValidationResult struct {
 	CostTime  int64
 	IsTimeout bool
 
+	// Msg string
+	// if IsCancel is true, Token is valid
+	// use for verify edge providing download
+	Token string
 	// key is random index
 	// values is cid
 	Cids []string

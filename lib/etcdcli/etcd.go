@@ -16,12 +16,12 @@ const (
 	connectServerTimeoutTime = 5  // Second
 	serverKeepAliveDuration  = 10 // Second
 
-	validationResultAliveDuration = 60 // Second
+	masterAliveDuration = 60 * 5 // Second
 
 	masterName = "/master/%s"
 )
 
-// Client ...
+// Client etcd client
 type Client struct {
 	cli *clientv3.Client
 }
@@ -93,11 +93,32 @@ func (c *Client) ServerRegister(t context.Context, serverID, nodeType, value str
 	// lease keepalive response queue capacity only 16 , so need to read it
 	go func() {
 		for {
-			<-keepRespChan
+			ch := <-keepRespChan
+			if ch == nil {
+				c.startRegisterTimer(serverID, nodeType, value)
+				return
+			}
 		}
 	}()
 
 	return nil
+}
+
+func (c *Client) startRegisterTimer(serverID, nodeType, value string) {
+	interval := 10 * time.Second
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		err := c.ServerRegister(context.Background(), serverID, nodeType, value)
+		if err != nil {
+			fmt.Printf("register to etcd server err: %v \n", err.Error())
+		} else {
+			return
+		}
+	}
 }
 
 // WatchServers watch server login and logout
@@ -170,36 +191,58 @@ func (c *Client) releaseLock(lockPfx string, leaseID clientv3.LeaseID) error {
 }
 
 // AcquireMasterLock Request to become a master server
-func (c *Client) AcquireMasterLock(serverType string) (clientv3.LeaseID, error) {
+func (c *Client) AcquireMasterLock(serverType string, lID int64) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
 	defer cancel()
 
-	lease, err := c.cli.Grant(ctx, validationResultAliveDuration)
-	if err != nil {
-		return 0, err
+	leaseID := int64(0)
+
+	if lID != 0 {
+		rsp, err := c.cli.Leases(ctx)
+		if err == nil {
+			for _, lease := range rsp.Leases {
+				if lID == int64(lease.ID) {
+					// lease exist
+					leaseID = lID
+					break
+				}
+			}
+		}
+	}
+	if leaseID == 0 {
+		// create a lease
+		lease, err := c.cli.Grant(ctx, masterAliveDuration)
+		if err != nil {
+			return 0, err
+		}
+		leaseID = int64(lease.ID)
 	}
 
-	err = c.acquireLock(fmt.Sprintf(masterName, serverType), lease.ID)
+	err := c.acquireLock(fmt.Sprintf(masterName, serverType), clientv3.LeaseID(leaseID))
 	if err != nil {
 		return 0, err
 	}
 
 	// KeepAlive
-	keepRespChan, err := c.cli.KeepAlive(context.TODO(), lease.ID)
+	keepRespChan, err := c.cli.KeepAlive(context.TODO(), clientv3.LeaseID(leaseID))
 	if err != nil {
 		return 0, err
 	}
+
 	// lease keepalive response queue capacity only 16 , so need to read it
 	go func() {
 		for {
-			<-keepRespChan
+			ch := <-keepRespChan
+			if ch == nil {
+				return
+			}
 		}
 	}()
 
-	return lease.ID, nil
+	return leaseID, nil
 }
 
 // ReleaseMasterLock release master lock
-func (c *Client) ReleaseMasterLock(leaseID clientv3.LeaseID, serverType string) error {
-	return c.releaseLock(fmt.Sprintf(masterName, serverType), leaseID)
+func (c *Client) ReleaseMasterLock(leaseID int64, serverType string) error {
+	return c.releaseLock(fmt.Sprintf(masterName, serverType), clientv3.LeaseID(leaseID))
 }

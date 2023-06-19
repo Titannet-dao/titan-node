@@ -116,11 +116,13 @@ func (t *TCPServer) handleMessage(conn *net.TCPConn) {
 
 	log.Debugf("node %s connect to Validator", nodeID)
 
-	timer := time.NewTimer(time.Duration(t.config.ValidateDuration) * time.Second)
+	timer := time.NewTimer(time.Duration(t.config.ValidateDuration+validateTimeout) * time.Second)
 	for {
 		select {
 		case <-timer.C:
-			conn.Close()
+			if err = conn.Close(); err != nil {
+				log.Errorf("close tcp connect error %s", err.Error())
+			}
 			return
 		default:
 		}
@@ -133,7 +135,9 @@ func (t *TCPServer) handleMessage(conn *net.TCPConn) {
 		bw.ch <- *msg
 
 		if msg.msgType == api.TCPMsgTypeCancel {
-			conn.Close()
+			if err = conn.Close(); err != nil {
+				log.Errorf("close tcp connect error %s", err.Error())
+			}
 			return
 		}
 	}

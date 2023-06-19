@@ -29,11 +29,11 @@ func (hs *HttpServer) headHandler(w http.ResponseWriter, r *http.Request) {
 // path=/ipfs/{cid}[/{path}].
 func getCIDFromURLPath(path string) (cid.Cid, error) {
 	parts := strings.Split(path, "/")
-	if len(parts) < 2 {
+	if len(parts) < 3 {
 		return cid.Cid{}, fmt.Errorf("path not found")
 	}
 
-	cidStr := parts[1]
+	cidStr := parts[2]
 	c, err := cid.Decode(cidStr)
 	if err != nil {
 		return cid.Cid{}, err

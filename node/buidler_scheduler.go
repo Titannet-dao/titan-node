@@ -14,10 +14,13 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	"github.com/Filecoin-Titan/titan/node/scheduler/filelogger"
+	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/nat"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/Filecoin-Titan/titan/node/scheduler/sync"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
+	"github.com/Filecoin-Titan/titan/node/scheduler/workload"
 	"github.com/docker/go-units"
 	"github.com/filecoin-project/pubsub"
 	"github.com/jmoiron/sqlx"
@@ -57,11 +60,14 @@ func ConfigScheduler(c interface{}) Option {
 		Override(new(dtypes.ServerID), modules.NewServerID),
 		Override(new(*config.SchedulerCfg), cfg),
 		Override(new(*etcdcli.Client), modules.RegisterToEtcd),
+		Override(new(*leadership.Manager), leadership.NewManager),
+		Override(new(*filelogger.Manager), filelogger.NewManager),
 		Override(new(*sqlx.DB), modules.NewDB),
 		Override(new(*db.SQLDB), db.NewSQLDB),
 		Override(new(*pubsub.PubSub), modules.NewPubSub),
 		Override(InitDataTables, db.InitTables),
 		Override(new(*node.Manager), node.NewManager),
+		Override(new(*workload.Manager), workload.NewManager),
 		Override(new(dtypes.MetadataDS), modules.Datastore),
 		Override(new(*assets.Manager), modules.NewStorageManager),
 		Override(new(*sync.DataSync), sync.NewDataSync),

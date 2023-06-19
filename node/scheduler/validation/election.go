@@ -8,7 +8,7 @@ import (
 
 var (
 	firstElectionInterval = 5 * time.Minute    // Time of the first election
-	electionCycle         = 5 * 24 * time.Hour // Length of the election cycle
+	electionCycle         = 1 * 24 * time.Hour // Election cycle
 )
 
 func getTimeAfter(t time.Duration) time.Time {
@@ -23,7 +23,7 @@ func (m *Manager) startElectionTicker() {
 		return
 	}
 
-	expiration := electionCycle
+	expiration := m.getElectionCycle()
 	if len(validators) <= 0 {
 		expiration = firstElectionInterval
 	}
@@ -34,9 +34,9 @@ func (m *Manager) startElectionTicker() {
 	defer ticker.Stop()
 
 	doElect := func() {
-		m.nextElectionTime = getTimeAfter(electionCycle)
+		m.nextElectionTime = getTimeAfter(m.getElectionCycle())
 
-		ticker.Reset(electionCycle)
+		ticker.Reset(m.getElectionCycle())
 		err := m.elect()
 		if err != nil {
 			log.Errorf("elect err:%s", err.Error())
@@ -78,6 +78,17 @@ func (m *Manager) getValidatorRatio() float64 {
 	}
 
 	return cfg.ValidatorRatio
+}
+
+// returns the election cycle
+func (m *Manager) getElectionCycle() time.Duration {
+	cfg, err := m.config()
+	if err != nil {
+		log.Errorf("get schedulerConfig err:%s", err.Error())
+		return electionCycle
+	}
+
+	return time.Duration(cfg.ElectionCycle*24) * time.Hour
 }
 
 // performs the election process and returns the list of elected validators.
