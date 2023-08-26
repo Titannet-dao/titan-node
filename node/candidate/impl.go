@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/handler"
@@ -74,6 +75,14 @@ func (c *Candidate) CheckNetworkConnectivity(ctx context.Context, network, targe
 	}
 
 	return fmt.Errorf("unknow network %s type", network)
+}
+
+func (c *Candidate) GetMinioConfig(ctx context.Context) (*types.MinioConfig, error) {
+	return &types.MinioConfig{
+		Endpoint:        c.Config.MinioConfig.Endpoint,
+		AccessKeyID:     c.Config.MinioConfig.AccessKeyID,
+		SecretAccessKey: c.Config.MinioConfig.SecretAccessKey,
+	}, nil
 }
 
 func (c *Candidate) verifyTCPConnectivity(targetURL string) error {

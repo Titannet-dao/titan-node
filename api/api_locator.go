@@ -15,8 +15,13 @@ type Locator interface {
 	// EdgeDownloadInfos retrieves download information for a content identifier (CID).
 	EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.EdgeDownloadInfoList, error) //perm:default
 	// GetUserAccessPoint retrieves an access point for a user with a specified IP address.
-	GetUserAccessPoint(ctx context.Context, userIP string) (*AccessPoint, error)                    //perm:default
+	GetUserAccessPoint(ctx context.Context, userIP string) (*AccessPoint, error) //perm:default
+	// CandidateDownloadInfos retrieves information about candidate's download interface
 	CandidateDownloadInfos(ctx context.Context, cid string) ([]*types.CandidateDownloadInfo, error) //perm:default
+	// GetCandidateIP retrieves ip of candidate
+	GetCandidateIP(ctx context.Context, nodeID string) (string, error) //perm:admin
+	// GetSchedulerWithNode get the scheduler that the node is already connected to
+	GetSchedulerWithNode(ctx context.Context, nodeID string) (string, error) //perm:default
 }
 
 // AccessPoint represents an access point within an area, containing scheduler information.

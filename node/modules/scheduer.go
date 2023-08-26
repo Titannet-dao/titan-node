@@ -12,6 +12,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/repo"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
 	"github.com/Filecoin-Titan/titan/node/sqldb"
 	"github.com/filecoin-project/go-jsonrpc/auth"
@@ -80,8 +81,8 @@ func NewStorageManager(params StorageManagerParams) *assets.Manager {
 }
 
 // NewValidation creates a new validation manager instance
-func NewValidation(mctx helpers.MetricsCtx, l fx.Lifecycle, nm *node.Manager, am *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *validation.Manager {
-	v := validation.NewManager(nm, am, configFunc, p)
+func NewValidation(mctx helpers.MetricsCtx, l fx.Lifecycle, nm *node.Manager, am *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *validation.Manager {
+	v := validation.NewManager(nm, am, configFunc, p, lmgr)
 
 	ctx := helpers.LifecycleCtx(mctx, l)
 	l.Append(fx.Hook{
@@ -142,6 +143,7 @@ func RegisterToEtcd(mctx helpers.MetricsCtx, lc fx.Lifecycle, configFunc dtypes.
 		AreaID:       cfg.AreaID,
 		SchedulerURL: cfg.ExternalURL,
 		AccessToken:  string(token),
+		Weight:       cfg.Weight,
 	}
 
 	value, err := etcdcli.SCMarshal(sCfg)

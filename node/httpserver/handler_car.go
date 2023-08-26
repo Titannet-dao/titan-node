@@ -4,17 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
-	"time"
 
-	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/interface-go-ipfs-core/path"
-	"golang.org/x/xerrors"
 )
 
 // ServeCar handles HTTP requests for serving CAR files
-func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload, carVersion string) {
+func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, assetCID string, carVersion string) (int, error) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -23,33 +19,28 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, tkPayload
 	case "1":
 	case "2":
 	default:
-		http.Error(w, fmt.Sprintf("not support car version %s", carVersion), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("not support car version %s", carVersion)
 	}
 
-	root, err := cid.Decode(tkPayload.AssetCID)
+	root, err := cid.Decode(assetCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("decode root cid error: %s", err.Error()), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("decode root cid error: %s", err.Error())
 	}
 
 	contentPath := path.New(r.URL.Path)
 	resolvedPath, err := hs.resolvePath(ctx, contentPath, root)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("can not resolved path: %s", err.Error()), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("can not resolved path: %s", err.Error())
 	}
 	rootCID := resolvedPath.Cid()
 
 	has, err := hs.asset.AssetExists(rootCID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	if !has {
-		http.Error(w, fmt.Sprintf("can not found car %s", contentPath.String()), http.StatusNotFound)
-		return
+		return http.StatusNotFound, fmt.Errorf("can not found car %s", contentPath.String())
 	}
 
 	// Set Content-Disposition
@@ -74,8 +65,7 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, tkPayload
 
 	// Finish early if Etag match
 	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
+		return http.StatusNotModified, fmt.Errorf("header If-None-Match == %s", etag)
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.ipld.car; version=1")
@@ -83,61 +73,14 @@ func (hs *HttpServer) serveCar(w http.ResponseWriter, r *http.Request, tkPayload
 
 	modtime := addCacheControlHeaders(w, r, contentPath, rootCID)
 
-	startTime := time.Now()
 	// TODO limit rate
 	reader, err := hs.asset.GetAsset(rootCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("not support car version %s", carVersion), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, fmt.Errorf("not support car version %s", carVersion)
 	}
 	defer reader.Close() //nolint:errcheck  // ignore error
 
 	// If-None-Match+Etag, Content-Length and range requests
 	http.ServeContent(w, r, name, modtime, reader)
-
-	// if not come from sdk, don't send workload
-	if len(tkPayload.ID) == 0 {
-		return
-	}
-
-	contentLength, err := getContentLength(w)
-	if err != nil {
-		log.Errorf("get Content-length error:", err.Error())
-		return
-	}
-
-	duration := time.Since(startTime)
-	speed := time.Duration(0)
-	if duration > 0 {
-		speed = time.Duration(contentLength) / duration * time.Second
-	}
-
-	workload := &types.Workload{
-		DownloadSpeed: int64(speed),
-		DownloadSize:  contentLength,
-		StartTime:     startTime.Unix(),
-		EndTime:       time.Now().Unix(),
-	}
-
-	report := &report{
-		TokenID:  tkPayload.ID,
-		ClientID: tkPayload.ClientID,
-		Workload: workload,
-	}
-	hs.reporter.addReport(report)
-}
-
-func getContentLength(rw http.ResponseWriter) (int64, error) {
-	length := rw.Header().Get("Content-Length")
-	if length == "" {
-		return 0, xerrors.Errorf("content length is empty")
-	}
-
-	size, err := strconv.ParseInt(length, 10, 64)
-	if err != nil {
-		return 0, xerrors.Errorf("parse content length error: %w", err)
-	}
-
-	return size, nil
-
+	return 0, nil
 }

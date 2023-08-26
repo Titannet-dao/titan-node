@@ -7,18 +7,23 @@ import (
 	"strings"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/handler"
+	"github.com/Filecoin-Titan/titan/region"
 	"github.com/miekg/dns"
 )
+
+const prefixOfCandidateNodeID = "c_"
 
 type DNSServer struct {
 	*config.LocatorCfg
 	api.Locator
+	reg region.Region
 }
 
-func NewDNSServer(config *config.LocatorCfg, locator api.Locator) *DNSServer {
-	dnsServer := &DNSServer{config, locator}
+func NewDNSServer(config *config.LocatorCfg, locator api.Locator, reg region.Region) *DNSServer {
+	dnsServer := &DNSServer{config, locator, reg}
 	go dnsServer.start()
 
 	return dnsServer
@@ -70,6 +75,25 @@ func (h *dnsHandler) parseQuery(m *dns.Msg, remoteAddr string) {
 				return
 			}
 
+			// find candidate by id
+			if h.isMatchCandidateID(fields[0]) {
+				// add prefix
+				nodeID := fmt.Sprintf("%s%s", prefixOfCandidateNodeID, fields[0])
+				ip, err := h.dnsServer.GetCandidateIP(context.Background(), nodeID)
+				if err != nil {
+					log.Errorf("GetCandidateIP error %s", err.Error())
+					return
+				}
+
+				if rr, err := dns.NewRR(fmt.Sprintf("%s A %s", q.Name, ip)); err == nil {
+					m.Answer = append(m.Answer, rr)
+				} else {
+					log.Errorf("NewRR error %s", err.Error())
+				}
+				return
+			}
+
+			// find candidate for asset
 			cid := fields[0]
 			ctx := context.WithValue(context.Background(), handler.RemoteAddr{}, remoteAddr)
 			infos, err := h.dnsServer.CandidateDownloadInfos(ctx, cid)
@@ -78,26 +102,54 @@ func (h *dnsHandler) parseQuery(m *dns.Msg, remoteAddr string) {
 				return
 			}
 
-			if len(infos) == 0 {
-				log.Errorf("can not get candidate for cid %s", cid)
-				rr, err := dns.NewRR(fmt.Sprintf("%s A %s", q.Name, "127.0.0.1"))
-				if err == nil {
-					m.Answer = append(m.Answer, rr)
-				}
-				return
-			}
-
-			ip, _, err := net.SplitHostPort(infos[0].Address)
+			userIP, _, err := net.SplitHostPort(remoteAddr)
 			if err != nil {
-				log.Errorf("parse candidate address error %s, address %s", err.Error(), infos[0].Address)
+				log.Errorf("parase dns client addr error %s, remoteAddr %s", err.Error(), remoteAddr)
 				return
 			}
 
-			rr, err := dns.NewRR(fmt.Sprintf("%s A %s", q.Name, ip))
-			if err == nil {
-				m.Answer = append(m.Answer, rr)
+			ips := h.getIPs(infos)
+			if len(ips) == 0 {
+				log.Errorf("can not get candidate for cid %s", cid)
+				return
 			}
 
+			targetIP := getUserNearestIP(userIP, ips, h.dnsServer.reg)
+			rr := &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   q.Name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    60, // 60s
+				},
+				A: net.ParseIP(targetIP),
+			}
+			m.Answer = append(m.Answer, rr)
 		}
 	}
+}
+
+func (h *dnsHandler) getIPs(downloadInfos []*types.CandidateDownloadInfo) []string {
+	if len(downloadInfos) == 0 {
+		return []string{}
+	}
+
+	ips := make([]string, 0, len(downloadInfos))
+	for _, info := range downloadInfos {
+		ip, _, err := net.SplitHostPort(info.Address)
+		if err != nil {
+			log.Errorf("parse candidate address error %s, address %s", err.Error(), info.Address)
+			continue
+		}
+		ips = append(ips, ip)
+	}
+	return ips
+}
+
+func (h *dnsHandler) isMatchCandidateID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) == 32 {
+		return true
+	}
+	return false
 }

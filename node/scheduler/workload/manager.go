@@ -18,10 +18,11 @@ import (
 var log = logging.Logger("workload")
 
 const (
-	workloadInterval = 1 * time.Hour
+	workloadInterval = 2 * time.Minute
+	confirmationTime = 70 * time.Second
 
-	// Process 1000 pieces of workload result data at a time
-	vWorkloadLimit = 1000
+	// Process 100 pieces of workload result data at a time
+	vWorkloadLimit = 100
 )
 
 // Manager node workload
@@ -41,15 +42,12 @@ func NewManager(sdb *db.SQLDB, configFunc dtypes.GetSchedulerConfigFunc, lmgr *l
 		nodeMgr:       nmgr,
 	}
 
-	go manager.startHandleWorkloadResult()
+	go manager.startHandleWorkloadResults()
 
 	return manager
 }
 
-func (m *Manager) startHandleWorkloadResult() {
-	// play one
-	m.handleWorkloadResult()
-
+func (m *Manager) startHandleWorkloadResults() {
 	ticker := time.NewTicker(workloadInterval)
 	defer ticker.Stop()
 
@@ -57,80 +55,78 @@ func (m *Manager) startHandleWorkloadResult() {
 		select {
 		case <-ticker.C:
 			log.Debugln("start workload timer...")
-			m.handleWorkloadResult()
+			m.handleWorkloadResults()
 		}
 	}
 }
 
-func (m *Manager) handleWorkloadResult() {
+func (m *Manager) handleWorkloadResults() {
 	if !m.leadershipMgr.RequestAndBecomeMaster() {
 		return
 	}
 
-	defer log.Infoln("handleWorkloadResult end")
-	log.Infoln("handleWorkloadResult start")
+	defer log.Debugf("handleWorkloadResult end  %s", time.Now().Format("2006-01-02 15:04:05"))
+	log.Debugf("handleWorkloadResult start  %s", time.Now().Format("2006-01-02 15:04:05"))
 
 	profit := m.getValidationProfit()
 
 	// do handle workload result
-	for {
-		rows, err := m.LoadUnprocessedWorkloadResults(vWorkloadLimit)
+	rows, err := m.LoadUnprocessedWorkloadResults(vWorkloadLimit, time.Now().Add(-confirmationTime).Unix())
+	if err != nil {
+		log.Errorf("LoadWorkloadResults err:%s", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	updateIDs := make(map[string]types.WorkloadStatus)
+	removeIDs := make([]string, 0)
+
+	for rows.Next() {
+		record := &types.WorkloadRecord{}
+		err = rows.StructScan(record)
 		if err != nil {
-			log.Errorf("LoadWorkloadResults err:%s", err.Error())
-			return
+			log.Errorf("ValidationResultInfo StructScan err: %s", err.Error())
+			continue
 		}
 
-		updateIDs := make(map[string]types.WorkloadStatus)
-		nodeInfos := make(map[string]*types.NodeDynamicInfo)
-		removeIDs := make([]string, 0)
+		// check workload ...
+		status, cWorkload := m.checkWorkload(record)
+		if status == types.WorkloadStatusInvalid {
+			removeIDs = append(removeIDs, record.ID)
+			continue
+		}
 
-		for rows.Next() {
-			record := &types.WorkloadRecord{}
-			err = rows.StructScan(record)
-			if err != nil {
-				log.Errorf("ValidationResultInfo StructScan err: %s", err.Error())
+		if status == types.WorkloadStatusSucceeded {
+			// Retrieve Event
+			if err := m.SaveRetrieveEventInfo(&types.RetrieveEvent{
+				CID:         record.AssetCID,
+				TokenID:     record.ID,
+				NodeID:      record.NodeID,
+				ClientID:    record.ClientID,
+				Size:        cWorkload.DownloadSize,
+				CreatedTime: cWorkload.StartTime,
+				EndTime:     cWorkload.EndTime,
+				Profit:      profit,
+			}); err != nil {
+				log.Errorf("SaveRetrieveEventInfo token:%s ,  error %s", record.ID, err.Error())
 				continue
 			}
 
-			// check workload ...
-			status, size := m.checkWorkload(record)
-			if status == types.WorkloadStatusInvalid {
-				removeIDs = append(removeIDs, record.ID)
-				continue
-			}
-
-			updateIDs[record.ID] = status
-			if status == types.WorkloadStatusSucceeded {
-				nInfo := nodeInfos[record.NodeID]
-				if nInfo == nil {
-					nInfo = &types.NodeDynamicInfo{}
-					nodeInfos[record.NodeID] = nInfo
-				}
-				nInfo.Profit += profit
-				nInfo.UploadTraffic += size
-				nInfo.RetrieveCount++
-
-				if err := m.nodeMgr.NodeExists(record.ClientID, types.NodeEdge); err == nil {
-					cInfo := nodeInfos[record.ClientID]
-					if cInfo == nil {
-						cInfo = &types.NodeDynamicInfo{}
-						nodeInfos[record.ClientID] = cInfo
-					}
-					cInfo.DownloadTraffic += size
-				}
-			}
-		}
-		rows.Close()
-
-		if len(updateIDs) == 0 && len(removeIDs) == 0 {
-			return
+			removeIDs = append(removeIDs, record.ID)
+			continue
 		}
 
-		err = m.UpdateNodeInfosByWorkloadResult(updateIDs, nodeInfos)
+		updateIDs[record.ID] = status
+	}
+
+	if len(updateIDs) > 0 {
+		err = m.UpdateNodeInfosByWorkloadResult(updateIDs)
 		if err != nil {
-			log.Errorf("UpdateNodeProfitsByWorkloadResult err:%s", err.Error())
+			log.Errorf("UpdateNodeInfosByWorkloadResult err:%s", err.Error())
 		}
+	}
 
+	if len(removeIDs) > 0 {
 		err = m.RemoveInvalidWorkloadResult(removeIDs)
 		if err != nil {
 			log.Errorf("RemoveInvalidWorkloadResult err:%s", err.Error())
@@ -149,14 +145,14 @@ func (m *Manager) getValidationProfit() float64 {
 	return cfg.WorkloadProfit
 }
 
-func (m *Manager) checkWorkload(record *types.WorkloadRecord) (types.WorkloadStatus, int64) {
+func (m *Manager) checkWorkload(record *types.WorkloadRecord) (types.WorkloadStatus, *types.Workload) {
 	nWorkload := &types.Workload{}
 	if len(record.NodeWorkload) > 0 {
 		dec := gob.NewDecoder(bytes.NewBuffer(record.NodeWorkload))
 		err := dec.Decode(nWorkload)
 		if err != nil {
 			log.Errorf("decode data to *types.Workload error: %w", err)
-			return types.WorkloadStatusFailed, 0
+			return types.WorkloadStatusFailed, nil
 		}
 	}
 
@@ -166,21 +162,21 @@ func (m *Manager) checkWorkload(record *types.WorkloadRecord) (types.WorkloadSta
 		err := dec.Decode(cWorkload)
 		if err != nil {
 			log.Errorf("decode data to *types.Workload error: %w", err)
-			return types.WorkloadStatusFailed, 0
+			return types.WorkloadStatusFailed, nil
 		}
 	}
 
 	if len(record.ClientWorkload) == 0 && len(record.NodeWorkload) == 0 {
-		return types.WorkloadStatusInvalid, 0
+		return types.WorkloadStatusInvalid, cWorkload
 	}
 
 	if nWorkload.DownloadSize == 0 || nWorkload.DownloadSize != cWorkload.DownloadSize {
-		return types.WorkloadStatusFailed, 0
+		return types.WorkloadStatusFailed, cWorkload
 	}
 
 	// TODO other ...
 
-	return types.WorkloadStatusSucceeded, nWorkload.DownloadSize
+	return types.WorkloadStatusSucceeded, cWorkload
 }
 
 // HandleUserWorkload handle user workload
@@ -203,7 +199,9 @@ func (m *Manager) HandleUserWorkload(data []byte, node *node.Node) error {
 		if node != nil {
 			rp.ClientID = node.NodeID
 		}
-		if err = m.handleWorkloadReport(rp.NodeID, rp, true); err != nil {
+
+		_, err := m.handleWorkloadReport(rp.NodeID, rp, true)
+		if err != nil {
 			log.Errorf("handler user workload report error %s, token id %s", err.Error(), rp.TokenID)
 			continue
 		}
@@ -223,7 +221,7 @@ func (m *Manager) HandleNodeWorkload(data []byte, node *node.Node) error {
 
 	// TODO merge workload report by token
 	for _, rp := range reports {
-		if err = m.handleWorkloadReport(node.NodeID, rp, false); err != nil {
+		if _, err = m.handleWorkloadReport(node.NodeID, rp, false); err != nil {
 			log.Errorf("handler node workload report error %s", err.Error())
 			continue
 		}
@@ -232,21 +230,21 @@ func (m *Manager) HandleNodeWorkload(data []byte, node *node.Node) error {
 	return nil
 }
 
-func (m *Manager) handleWorkloadReport(nodeID string, report *types.WorkloadReport, isClient bool) error {
+func (m *Manager) handleWorkloadReport(nodeID string, report *types.WorkloadReport, isClient bool) (*types.WorkloadRecord, error) {
 	workloadRecord, err := m.LoadWorkloadRecord(report.TokenID)
 	if err != nil {
-		return xerrors.Errorf("load token payload and workloads with token id %s error: %w", report.TokenID, err)
+		return nil, xerrors.Errorf("load token payload and workloads with token id %s error: %w", report.TokenID, err)
 	}
 	if isClient && workloadRecord.NodeID != nodeID {
-		return fmt.Errorf("token payload node id %s, but report node id is %s", workloadRecord.NodeID, report.NodeID)
+		return nil, fmt.Errorf("token payload node id %s, but report node id is %s", workloadRecord.NodeID, report.NodeID)
 	}
 
 	if !isClient && workloadRecord.ClientID != report.ClientID {
-		return fmt.Errorf("token payload client id %s, but report client id is %s", workloadRecord.ClientID, report.ClientID)
+		return nil, fmt.Errorf("token payload client id %s, but report client id is %s", workloadRecord.ClientID, report.ClientID)
 	}
 
 	if workloadRecord.Expiration.Before(time.Now()) {
-		return fmt.Errorf("token payload expiration %s < %s", workloadRecord.Expiration.Local().String(), time.Now().Local().String())
+		return nil, fmt.Errorf("token payload expiration %s < %s", workloadRecord.Expiration.Local().String(), time.Now().Local().String())
 	}
 
 	workloadBytes := workloadRecord.NodeWorkload
@@ -259,7 +257,7 @@ func (m *Manager) handleWorkloadReport(nodeID string, report *types.WorkloadRepo
 		dec := gob.NewDecoder(bytes.NewBuffer(workloadBytes))
 		err = dec.Decode(workload)
 		if err != nil {
-			return xerrors.Errorf("decode data to []*types.Workload error: %w", err)
+			return nil, xerrors.Errorf("decode data to []*types.Workload error: %w", err)
 		}
 	}
 
@@ -269,16 +267,17 @@ func (m *Manager) handleWorkloadReport(nodeID string, report *types.WorkloadRepo
 	enc := gob.NewEncoder(buffer)
 	err = enc.Encode(workload)
 	if err != nil {
-		return xerrors.Errorf("encode data to Buffer error: %w", err)
+		return nil, xerrors.Errorf("encode data to Buffer error: %w", err)
 	}
 
 	if isClient {
 		workloadRecord.ClientWorkload = buffer.Bytes()
+		workloadRecord.ClientEndTime = time.Now().Unix()
 	} else {
 		workloadRecord.NodeWorkload = buffer.Bytes()
 	}
 
-	return m.UpdateWorkloadRecord(workloadRecord)
+	return workloadRecord, m.UpdateWorkloadRecord(workloadRecord)
 }
 
 func (m *Manager) mergeWorkloads(workloads []*types.Workload) *types.Workload {

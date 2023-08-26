@@ -32,33 +32,39 @@ type Validation interface {
 }
 
 type HttpServer struct {
-	asset              Asset
-	scheduler          api.Scheduler
-	privateKey         *rsa.PrivateKey
-	schedulerPublicKey *rsa.PublicKey
-	reporter           *reporter
-	validation         Validation
-	tokens             *sync.Map
-	apiSecret          *jwt.HMACSHA
+	asset               Asset
+	scheduler           api.Scheduler
+	privateKey          *rsa.PrivateKey
+	schedulerPublicKey  *rsa.PublicKey
+	reporter            *reporter
+	validation          Validation
+	tokens              *sync.Map
+	apiSecret           *jwt.HMACSHA
+	maxSizeOfUploadFile int
+	webRedirect         string
 }
 
 type HttpServerOptions struct {
-	Asset      Asset
-	Scheduler  api.Scheduler
-	PrivateKey *rsa.PrivateKey
-	Validation Validation
-	APISecret  *jwt.HMACSHA
+	Asset               Asset
+	Scheduler           api.Scheduler
+	PrivateKey          *rsa.PrivateKey
+	Validation          Validation
+	APISecret           *jwt.HMACSHA
+	MaxSizeOfUploadFile int
+	WebRedirect         string
 }
 
 // NewHttpServer creates a new HttpServer with the given Asset, Scheduler, and RSA private key.
 func NewHttpServer(opts *HttpServerOptions) *HttpServer {
 	hs := &HttpServer{
-		asset:      opts.Asset,
-		scheduler:  opts.Scheduler,
-		privateKey: opts.PrivateKey,
-		validation: opts.Validation,
-		apiSecret:  opts.APISecret,
-		tokens:     &sync.Map{},
+		asset:               opts.Asset,
+		scheduler:           opts.Scheduler,
+		privateKey:          opts.PrivateKey,
+		validation:          opts.Validation,
+		apiSecret:           opts.APISecret,
+		tokens:              &sync.Map{},
+		maxSizeOfUploadFile: opts.MaxSizeOfUploadFile,
+		webRedirect:         opts.WebRedirect,
 	}
 	hs.reporter = newReporter(hs)
 

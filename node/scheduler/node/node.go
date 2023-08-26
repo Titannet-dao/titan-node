@@ -51,6 +51,10 @@ type Node struct {
 	BandwidthDown  int64
 	BandwidthUp    int64
 	DiskSpace      float64
+
+	DeactivateTime int64
+
+	IsPrivateMinioOnly bool
 }
 
 // API represents the node API
@@ -68,6 +72,7 @@ type API struct {
 	// candidate api
 	GetBlocksOfAsset         func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error)
 	CheckNetworkConnectivity func(ctx context.Context, network, targetURL string) error
+	GetMinioConfig           func(ctx context.Context) (*types.MinioConfig, error)
 }
 
 // New creates a new node
@@ -103,6 +108,7 @@ func APIFromCandidate(api api.Candidate) *API {
 		WaitQuiet:                api.WaitQuiet,
 		GetBlocksOfAsset:         api.GetBlocksWithAssetCID,
 		CheckNetworkConnectivity: api.CheckNetworkConnectivity,
+		GetMinioConfig:           api.GetMinioConfig,
 	}
 	return a
 }
@@ -139,6 +145,15 @@ func (n *Node) ConnectRPC(addr string, nodeType types.NodeType) error {
 	}
 
 	return xerrors.Errorf("node %s type %d not wrongful", n.NodeID, n.Type)
+}
+
+// IsAbnormal is node abnormal
+func (n *Node) IsAbnormal() bool {
+	if n.DeactivateTime > 0 {
+		return true
+	}
+
+	return false
 }
 
 // SelectWeights get node select weights
@@ -183,11 +198,6 @@ func (n *Node) LastRequestTime() time.Time {
 // SetLastRequestTime sets the last request time of the node
 func (n *Node) SetLastRequestTime(t time.Time) {
 	n.lastRequestTime = t
-}
-
-// UpdateNodePort updates the node port
-func (n *Node) UpdateNodePort(port string) {
-	n.PortMapping = port
 }
 
 // Token returns the token of the node

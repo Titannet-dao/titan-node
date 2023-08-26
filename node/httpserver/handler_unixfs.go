@@ -5,50 +5,47 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/files"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
-func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
+// return true if is directory
+func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, assetCID string) (bool, int, error) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	root, err := cid.Decode(tkPayload.AssetCID)
+	root, err := cid.Decode(assetCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("decode car cid error: %s", err.Error()), http.StatusBadRequest)
-		return
+		return false, http.StatusBadRequest, fmt.Errorf("decode car cid error: %s", err.Error())
 	}
 
 	contentPath := path.New(r.URL.Path)
 	resolvedPath, err := hs.resolvePath(ctx, contentPath, root)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("can not resolved path: %s", err.Error()), http.StatusBadRequest)
-		return
+		return false, http.StatusBadRequest, fmt.Errorf("can not resolved path: %s", err.Error())
 	}
 
 	node, err := hs.getUnixFsNode(ctx, resolvedPath, root)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("error while getting UnixFS node: %s", err.Error()), http.StatusInternalServerError)
-		return
+		return false, http.StatusInternalServerError, fmt.Errorf("error while getting UnixFS node: %s", err.Error())
 	}
 	defer node.Close() //nolint:errcheck // ignore error
 
 	// Handling Unixfs file
 	if f, ok := node.(files.File); ok {
 		log.Debugw("serving unixfs file", "path", contentPath)
-		hs.serveFile(w, r, tkPayload, f)
-		return
+		statusCode, err := hs.serveFile(w, r, assetCID, f)
+		return false, statusCode, err
 	}
 
 	// Handling Unixfs directory
 	dir, ok := node.(files.Directory)
 	if !ok {
-		http.Error(w, "unsupported UnixFS type", http.StatusInternalServerError)
-		return
+		return false, http.StatusInternalServerError, fmt.Errorf("unsupported UnixFS type")
 	}
 
 	log.Debugw("serving unixfs directory", "path", contentPath)
-	hs.serveDirectory(w, r, tkPayload, dir)
+	statusCode, err := hs.serveDirectory(w, r, assetCID, dir)
+	return true, statusCode, err
 }

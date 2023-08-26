@@ -147,13 +147,30 @@ func (m *Manager) pullAssets() {
 
 // doPullAsset pulls a single asset from the waitList
 func (m *Manager) doPullAsset() {
+	udpConn, httpClient, err := newHTTP3Client()
+	if err != nil {
+		log.Errorf("newHTTP3Client error %s", err.Error())
+		return
+	}
+	defer udpConn.Close()
+
 	cw := m.headFromWaitList()
 	if cw == nil {
 		return
 	}
 	defer m.removeAssetFromWaitList(cw.Root)
 
-	opts := &pullerOptions{cw.Root, cw.Dss, m.Storage, m.ipfsAPIURL, m.pullParallel, m.pullTimeout, m.pullRetry}
+	opts := &pullerOptions{
+		root:       cw.Root,
+		dss:        cw.Dss,
+		storage:    m.Storage,
+		ipfsAPIURL: m.ipfsAPIURL,
+		parallel:   m.pullParallel,
+		timeout:    m.pullTimeout,
+		retry:      m.pullRetry,
+		httpClient: httpClient,
+	}
+
 	assetPuller, err := m.restoreAssetPullerOrNew(opts)
 	if err != nil {
 		log.Errorf("restore asset puller error:%s", err)
@@ -269,6 +286,12 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller) {
 
 	if err := m.submitPullerWorkloadReport(puller); err != nil {
 		log.Errorf("submitPullerWorkloadReport error %s", err.Error())
+	}
+
+	speed := float64(puller.totalSize) / float64(time.Since(puller.startTime)) * float64(time.Second)
+	if speed > 0 {
+		log.Debugf("UpdateBandwidths, bandwidthDown %d", int64(speed))
+		m.Scheduler.UpdateBandwidths(context.Background(), int64(speed), 0)
 	}
 }
 
@@ -413,6 +436,10 @@ func (m *Manager) assetStatus(root cid.Cid) (types.ReplicaStatus, error) {
 
 	if v, ok := m.uploadingAssets.Load(root.Hash().String()); ok {
 		asset := v.(*types.UploadingAsset)
+		if asset.TokenExpiration.Before(time.Now()) {
+			return types.ReplicaStatusFailed, nil
+		}
+
 		if asset.Progress.DoneSize == 0 {
 			return types.ReplicaStatusWaiting, nil
 		}

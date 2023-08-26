@@ -23,15 +23,7 @@ type CandidateFetcher struct {
 }
 
 // NewCandidateFetcher creates a new CandidateFetcher with the specified timeout and retry count
-func NewCandidateFetcher() *CandidateFetcher {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.MaxIdleConns = 10
-	t.IdleConnTimeout = 120 * time.Second
-
-	httpClient := &http.Client{
-		Transport: t,
-	}
-
+func NewCandidateFetcher(httpClient *http.Client) *CandidateFetcher {
 	return &CandidateFetcher{httpClient: httpClient}
 }
 
@@ -54,7 +46,7 @@ func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource 
 	if err != nil {
 		return nil, err
 	}
-	url := fmt.Sprintf("http://%s/ipfs/%s?format=raw", downloadSource.Address, cidStr)
+	url := fmt.Sprintf("https://%s/ipfs/%s?format=raw", downloadSource.Address, cidStr)
 
 	req, err := http.NewRequest(http.MethodGet, url, buf)
 	if err != nil {

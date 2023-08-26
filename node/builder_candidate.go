@@ -50,6 +50,7 @@ func ConfigCandidate(c interface{}) Option {
 		Override(new(*config.CandidateCfg), cfg),
 		Override(new(*device.Device), modules.NewDevice(cfg.BandwidthUp, cfg.BandwidthDown)),
 		Override(new(dtypes.NodeMetadataPath), dtypes.NodeMetadataPath(cfg.MetadataPath)),
+		Override(new(*config.MinioConfig), &cfg.MinioConfig),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
 		Override(new(*asset.Manager), modules.NewAssetsManager(cfg.PullBlockParallel, cfg.PullBlockTimeout, cfg.PullBlockRetry, cfg.IPFSAPIURL)),
 		Override(new(*validation.Validation), modules.NewNodeValidation),

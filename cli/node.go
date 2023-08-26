@@ -23,6 +23,54 @@ var nodeCmds = &cli.Command{
 		setNodePortCmd,
 		edgeExternalAddrCmd,
 		listNodeCmd,
+		deactivateCmd,
+		unDeactivateCmd,
+	},
+}
+
+var deactivateCmd = &cli.Command{
+	Name:  "deactivate",
+	Usage: "node deactivate",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		nodeID := cctx.String("node-id")
+		if nodeID == "" {
+			return xerrors.New("node-id is nil")
+		}
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.DeactivateNode(ctx, nodeID, 24)
+	},
+}
+
+var unDeactivateCmd = &cli.Command{
+	Name:  "un-deactivate",
+	Usage: "node undo deactivate",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		nodeID := cctx.String("node-id")
+		if nodeID == "" {
+			return xerrors.New("node-id is nil")
+		}
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.UndoNodeDeactivation(ctx, nodeID)
 	},
 }
 
@@ -67,7 +115,7 @@ var listNodeCmd = &cli.Command{
 		limit := cctx.Int("limit")
 		offset := cctx.Int("offset")
 
-		rsp, err := schedulerAPI.GetNodeList(ctx, offset, limit)
+		r, err := schedulerAPI.GetNodeList(ctx, offset, limit)
 		if err != nil {
 			return err
 		}
@@ -78,30 +126,35 @@ var listNodeCmd = &cli.Command{
 			tablewriter.Col("Status"),
 		)
 
-		for w := 0; w < len(rsp.Data); w++ {
-			info := rsp.Data[w]
+		for w := 0; w < len(r.Data); w++ {
+			info := r.Data[w]
+
 			m := map[string]interface{}{
 				"NodeID":   info.NodeID,
 				"NodeType": info.Type.String(),
-				"Status":   info.Status.String(),
+				"Status":   colorOnline(info.Status),
 			}
 
 			tw.Write(m)
 		}
 		err = tw.Flush(os.Stdout)
 
-		fmt.Printf(color.YellowString("\n Total:%d ", rsp.Total))
+		fmt.Printf(color.YellowString("\n Total:%d ", r.Total))
 
 		return err
 	},
 }
 
-func colorOnline(IsOnline bool) string {
-	if IsOnline {
-		return color.GreenString("true")
+func colorOnline(status types.NodeStatus) string {
+	if status == types.NodeServicing {
+		return color.GreenString(status.String())
 	}
 
-	return color.RedString("false")
+	if status == types.NodeOffline {
+		return color.RedString(status.String())
+	}
+
+	return color.YellowString(status.String())
 }
 
 var requestActivationCodesCmd = &cli.Command{
@@ -124,8 +177,12 @@ var requestActivationCodesCmd = &cli.Command{
 		}
 		defer closer()
 
-		codes, err := schedulerAPI.RequestActivationCodes(ctx, types.NodeType(t), 1)
-		for _, code := range codes {
+		list, err := schedulerAPI.RequestActivationCodes(ctx, types.NodeType(t), 1)
+		if err != nil {
+			return err
+		}
+
+		for _, code := range list {
 			fmt.Println("node:", code.NodeID)
 			fmt.Println("code:", code.ActivationCode)
 			fmt.Println("")
@@ -204,7 +261,7 @@ var nodeQuitCmd = &cli.Command{
 		}
 		defer closer()
 
-		err = schedulerAPI.UnregisterNode(ctx, nodeID)
+		err = schedulerAPI.DeactivateNode(ctx, nodeID, 10)
 		if err != nil {
 			return err
 		}

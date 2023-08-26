@@ -7,11 +7,14 @@ type CreateAssetReq struct {
 	AssetCID  string
 	AssetName string
 	AssetSize int64
+	AssetType string
+	NodeID    string
 }
 
 type CreateAssetRsp struct {
-	CandidateAddr string
+	UploadURL     string
 	Token         string
+	AlreadyExists bool
 }
 
 type AssetProperty struct {
@@ -21,16 +24,11 @@ type AssetProperty struct {
 	Size   int64
 }
 
-type AuthUserUploadAsset struct {
+type AuthUserUploadDownloadAsset struct {
 	UserID     string
 	AssetCID   string
 	AssetSize  int64
 	Expiration time.Time
-}
-
-type AuthUserDownloadAsset struct {
-	UserID   string
-	AssetCID string
 }
 
 type UploadProgress struct {
@@ -44,7 +42,24 @@ type UploadingAsset struct {
 	Progress        *UploadProgress
 }
 
-type StorageSize struct {
-	TotalSize int64 `db:"total_storage_size"`
-	UsedSize  int64 `db:"used_storage_size"`
+type UserInfo struct {
+	TotalSize     int64 `db:"total_storage_size"`
+	UsedSize      int64 `db:"used_storage_size"`
+	TotalTraffic  int64 `db:"total_traffic"`
+	PeakBandwidth int64 `db:"peak_bandwidth"`
+	DownloadCount int64 `db:"download_count"`
+	EnableVIP     bool  `db:"enable_vip"`
 }
+
+type UserAPIKeysInfo struct {
+	CreatedTime time.Time
+	APIKey      string
+}
+
+type UserAssetShareStatus int
+
+const (
+	UserAssetShareStatusUnshare UserAssetShareStatus = iota
+	UserAssetShareStatusShared
+	UserAssetShareStatusForbid
+)

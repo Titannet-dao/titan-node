@@ -25,7 +25,7 @@ func TestWorkloadRecord(t *testing.T) {
 	}
 
 	tkPayload := types.TokenPayload{ID: "123", NodeID: "222", AssetCID: "11111", ClientID: "3333", CreatedTime: time.Now(), Expiration: time.Now().Add(1 * time.Hour)}
-	record := &types.WorkloadRecord{TokenPayload: tkPayload, Status: types.WorkloadStatusCreate}
+	record := &types.WorkloadRecord{TokenPayload: tkPayload, Status: types.WorkloadStatusCreate, ClientEndTime: tkPayload.Expiration.Unix()}
 	if err := db.SaveWorkloadRecord([]*types.WorkloadRecord{record}); err != nil {
 		t.Errorf("SaveToken error:%s", err.Error())
 		return

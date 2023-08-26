@@ -193,7 +193,7 @@ var runCmd = &cli.Command{
 		}
 		jsonrpc.SetHttp3Client(httpClient)
 
-		url, err := getSchedulerURL(cctx, candidateCfg.NodeID, candidateCfg.AreaID, candidateCfg.Locator)
+		url, err := getSchedulerURL(cctx, candidateCfg.NodeID, candidateCfg.AreaID)
 		if err != nil {
 			return err
 		}
@@ -265,9 +265,11 @@ var runCmd = &cli.Command{
 			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA) error {
 				opts := &httpserver.HttpServerOptions{
 					Asset: assetMgr, Scheduler: schedulerAPI,
-					PrivateKey: privateKey,
-					Validation: validation,
-					APISecret:  apiSecret,
+					PrivateKey:          privateKey,
+					Validation:          validation,
+					APISecret:           apiSecret,
+					MaxSizeOfUploadFile: candidateCfg.MaxSizeOfUploadFile,
+					WebRedirect:         candidateCfg.WebRedirect,
 				}
 				httpServer = httpserver.NewHttpServer(opts)
 				return nil
@@ -280,6 +282,11 @@ var runCmd = &cli.Command{
 			return xerrors.Errorf("creating node: %w", err)
 		}
 
+		tlsConfig, err := getTLSConfig(candidateCfg)
+		if err != nil {
+			return xerrors.Errorf("get tls config error: %w", err)
+		}
+
 		handler := CandidateHandler(candidateAPI.AuthVerify, candidateAPI, true)
 		handler = httpServer.NewHandler(handler)
 
@@ -290,9 +297,10 @@ var runCmd = &cli.Command{
 				ctx, _ := tag.New(context.Background(), tag.Upsert(metrics.APIInterface, "titan-candidate"))
 				return ctx
 			},
+			TLSConfig: tlsConfig,
 		}
 
-		go startUDPServer(udpPacketConn, handler, candidateCfg) //nolint:errcheck
+		go startUDPServer(udpPacketConn, handler, tlsConfig) //nolint:errcheck
 
 		go func() {
 			<-ctx.Done()
@@ -376,7 +384,7 @@ var runCmd = &cli.Command{
 
 					select {
 					case <-readyCh:
-						opts := &types.ConnectOptions{Token: token, TcpServerPort: tcpServerPort}
+						opts := &types.ConnectOptions{Token: token, TcpServerPort: tcpServerPort, IsPrivateMinioOnly: isPrivateMinioOnly(candidateCfg)}
 						err := schedulerAPI.CandidateConnect(ctx, opts)
 						if err != nil {
 							log.Errorf("Registering candidate failed: %s", err.Error())
@@ -403,8 +411,19 @@ var runCmd = &cli.Command{
 			}
 		}()
 
+		if isEnableTLS(candidateCfg) {
+			return srv.ServeTLS(nl, "", "")
+		}
 		return srv.Serve(nl)
 	},
+}
+
+// private minio storage only, not public storage
+func isPrivateMinioOnly(config *config.CandidateCfg) bool {
+	if len(config.AccessKeyID) > 0 && len(config.SecretAccessKey) > 0 && len(config.Endpoint) > 0 {
+		return true
+	}
+	return false
 }
 
 func getSchedulerSession(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
@@ -457,22 +476,22 @@ func getAccessPoint(cctx *cli.Context, nodeID, areaID string) (string, error) {
 	return schedulerURLs[0], nil
 }
 
-func getSchedulerURL(cctx *cli.Context, nodeID, areaID string, isPassLocator bool) (string, error) {
-	if isPassLocator {
-		schedulerURL, err := getAccessPoint(cctx, nodeID, areaID)
-		if err != nil {
-			return "", err
-		}
-
+func getSchedulerURL(cctx *cli.Context, nodeID, areaID string) (string, error) {
+	schedulerURL, _, err := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
+	if err == nil {
 		return schedulerURL, nil
 	}
 
-	schedulerURL, _, err := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
-	if err != nil {
-		return "", err
+	log.Debugf("get scheduler raw api error %s", err.Error())
+
+	schedulerURL, err = getAccessPoint(cctx, nodeID, areaID)
+	if err == nil {
+		return schedulerURL, nil
 	}
 
-	return schedulerURL, nil
+	log.Debugf("get access point error %s", err.Error())
+
+	return "", fmt.Errorf("please set SCHEDULER_API_INFO or LOCATOR_API_INFO")
 }
 
 func newSchedulerAPI(cctx *cli.Context, schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (api.Scheduler, jsonrpc.ClientCloser, error) {
@@ -499,35 +518,37 @@ func newSchedulerAPI(cctx *cli.Context, schedulerURL, nodeID string, privateKey 
 	return schedulerAPI, closer, nil
 }
 
-func startUDPServer(conn net.PacketConn, handler http.Handler, candidateCfg *config.CandidateCfg) error {
-	var tlsConfig *tls.Config
-	if candidateCfg.InsecureSkipVerify {
-		config, err := defaultTLSConfig()
-		if err != nil {
-			log.Errorf("startUDPServer, defaultTLSConfig error:%s", err.Error())
-			return err
-		}
-		tlsConfig = config
-	} else {
-		cert, err := tls.LoadX509KeyPair(candidateCfg.CaCertificatePath, candidateCfg.PrivateKeyPath)
-		if err != nil {
-			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
-			return err
-		}
-
-		tlsConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			Certificates:       []tls.Certificate{cert},
-			InsecureSkipVerify: false,
-		}
-	}
-
+func startUDPServer(conn net.PacketConn, handler http.Handler, tlsConfig *tls.Config) error {
 	srv := http3.Server{
 		TLSConfig: tlsConfig,
 		Handler:   handler,
 	}
 
 	return srv.Serve(conn)
+}
+
+func isEnableTLS(candidateCfg *config.CandidateCfg) bool {
+	if len(candidateCfg.CertificatePath) > 0 && len(candidateCfg.PrivateKeyPath) > 0 {
+		return true
+	}
+	return false
+}
+
+func getTLSConfig(candidateCfg *config.CandidateCfg) (*tls.Config, error) {
+	if isEnableTLS(candidateCfg) {
+		cert, err := tls.LoadX509KeyPair(candidateCfg.CertificatePath, candidateCfg.PrivateKeyPath)
+		if err != nil {
+			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
+			return nil, err
+		}
+
+		return &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+		}, nil
+	}
+
+	return defaultTLSConfig()
 }
 
 func defaultTLSConfig() (*tls.Config, error) {

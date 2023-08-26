@@ -9,7 +9,6 @@ import (
 	gopath "path"
 	"strings"
 
-	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/files"
@@ -17,21 +16,19 @@ import (
 )
 
 // serveFile serves a single file to the client.
-func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload, file files.File) {
+func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, assetCID string, file files.File) (int, error) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	root, err := cid.Decode(tkPayload.AssetCID)
+	root, err := cid.Decode(assetCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("decode car cid error: %s", err.Error()), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("decode car cid error: %s", err.Error())
 	}
 
 	contentPath := path.New(r.URL.Path)
 	resolvedPath, err := hs.resolvePath(ctx, contentPath, root)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("can not resolved path: %s", err.Error()), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("can not resolved path: %s", err.Error())
 	}
 
 	// Set Cache-Control and read optional Last-Modified time
@@ -43,14 +40,13 @@ func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, tkPayloa
 	// Prepare size value for Content-Length HTTP header (set inside of http.ServeContent)
 	size, err := file.Size()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("cannot serve files with unknown sizes: %s", err.Error()), http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, fmt.Errorf("cannot get files with unknown sizes: %s", err.Error())
 	}
 
 	if size == 0 {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		return
+		return 0, nil
 	}
 
 	// Lazy seeker enables efficient range-requests and HTTP HEAD responses
@@ -73,13 +69,13 @@ func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, tkPayloa
 			// Fixes https://github.com/ipfs/kubo/issues/7252
 			mimeType, err := mimetype.DetectReader(content)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("cannot detect content-type: %s", err.Error()), http.StatusInternalServerError)
+				return http.StatusInternalServerError, fmt.Errorf("cannot detect content-type: %s", err.Error())
 			}
 
 			ctype = mimeType.String()
 			_, err = content.Seek(0, io.SeekStart)
 			if err != nil {
-				http.Error(w, "seeker can't seek", http.StatusInternalServerError)
+				return http.StatusInternalServerError, fmt.Errorf("seeker can't seek")
 			}
 		}
 		// Strip the encoding from the HTML Content-Type header and let the
@@ -92,4 +88,11 @@ func (hs *HttpServer) serveFile(w http.ResponseWriter, r *http.Request, tkPayloa
 	// (unifies behavior across gateways and web browsers)
 	w.Header().Set("Content-Type", ctype)
 	http.ServeContent(w, r, name, modtime, content)
+
+	if countWrite, ok := w.(*SpeedCountWriter); ok {
+		if countWrite.dataSize == 0 {
+			countWrite.dataSize = size
+		}
+	}
+	return 0, nil
 }

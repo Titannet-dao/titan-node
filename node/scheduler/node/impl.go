@@ -5,15 +5,23 @@ import (
 )
 
 // GetAllCandidateNodes  returns a list of all candidate nodes
-func (m *Manager) GetAllCandidateNodes() []string {
-	var out []string
+func (m *Manager) GetAllCandidateNodes() ([]string, []*Node) {
+	var ids []string
+	var nodes []*Node
 	m.candidateNodes.Range(func(key, value interface{}) bool {
 		nodeID := key.(string)
-		out = append(out, nodeID)
+		node := value.(*Node)
+
+		if node.IsAbnormal() {
+			return true
+		}
+
+		ids = append(ids, nodeID)
+		nodes = append(nodes, node)
 		return true
 	})
 
-	return out
+	return ids, nodes
 }
 
 // GetCandidateNodes return n candidate node
@@ -91,6 +99,8 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	node.Type = info.Type
 	node.BandwidthDown = info.BandwidthDown
 	node.BandwidthUp = info.BandwidthUp
+	node.PortMapping = info.PortMapping
+	node.DeactivateTime = info.DeactivateTime
 
 	err := m.saveInfo(info)
 	if err != nil {

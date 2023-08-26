@@ -7,56 +7,50 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/files"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 // serveTAR responds to an HTTP request with the content at the specified path in a TAR archive format.
-func (hs *HttpServer) serveTAR(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
+func (hs *HttpServer) serveTAR(w http.ResponseWriter, r *http.Request, assetCID string) (int, error) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	assetCID, err := cid.Decode(tkPayload.AssetCID)
+	rootCID, err := cid.Decode(assetCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("decode car cid error: %s", err.Error()), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("decode car cid error: %s", err.Error())
 	}
 
 	contentPath := path.New(r.URL.Path)
-	resolvedPath, err := hs.resolvePath(ctx, contentPath, assetCID)
+	resolvedPath, err := hs.resolvePath(ctx, contentPath, rootCID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("can not resolved path: %s", err.Error()), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, fmt.Errorf("can not resolved path: %s", err.Error())
 	}
 
 	// Get Unixfs file
-	file, err := hs.getUnixFsNode(ctx, resolvedPath, assetCID)
+	file, err := hs.getUnixFsNode(ctx, resolvedPath, rootCID)
 	if err != nil {
-		err = fmt.Errorf("error getting UnixFS node for %s: %w", html.EscapeString(contentPath.String()), err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, fmt.Errorf("error getting UnixFS node for %s: %w", html.EscapeString(contentPath.String()), err)
 	}
 	defer file.Close() //nolint:errcheck // ignore error
 
-	rootCID := resolvedPath.Cid()
+	targetCID := resolvedPath.Cid()
 
 	// Set Cache-Control and read optional Last-Modified time
-	modtime := addCacheControlHeaders(w, r, contentPath, rootCID)
+	modtime := addCacheControlHeaders(w, r, contentPath, targetCID)
 
 	// Weak Etag W/ because we can't guarantee byte-for-byte identical
 	// responses, but still want to benefit from HTTP Caching. Two TAR
 	// responses for the same CID will be logically equivalent,
 	// but when TAR is streamed, then in theory, files and directories
 	// may arrive in different order (depends on TAR lib and filesystem/inodes).
-	etag := `W/` + getEtag(r, rootCID)
+	etag := `W/` + getEtag(r, targetCID)
 	w.Header().Set("Etag", etag)
 
 	// Finish early if Etag match
 	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
+		return http.StatusNotModified, fmt.Errorf("header If-None-Match == %s", etag)
 	}
 
 	// Set Content-Disposition
@@ -71,8 +65,7 @@ func (hs *HttpServer) serveTAR(w http.ResponseWriter, r *http.Request, tkPayload
 	// Construct the TAR writer
 	tarw, err := files.NewTarWriter(w)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("could not build tar writer: %s", err.Error()), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, fmt.Errorf("could not build tar writer: %s", err.Error())
 	}
 	defer tarw.Close() //nolint:errcheck // ignore error
 
@@ -87,10 +80,10 @@ func (hs *HttpServer) serveTAR(w http.ResponseWriter, r *http.Request, tkPayload
 	w.Header().Set("X-Content-Type-Options", "nosniff") // no funny business in the browsers :^)
 
 	// The TAR has a top-level directory (or file) named by the CID.
-	if err := tarw.WriteFile(file, rootCID.String()); err != nil {
-		log.Errorf("write tag file %s error: %s", rootCID.String(), err.Error())
-		return
+	err = tarw.WriteFile(file, rootCID.String())
+	if err != nil {
+		return http.StatusInternalServerError, err
 	}
 
-	// TODO: limit rate and report to scheduler
+	return 0, nil
 }

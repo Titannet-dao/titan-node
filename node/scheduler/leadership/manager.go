@@ -6,6 +6,8 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/lib/etcdcli"
+	"github.com/Filecoin-Titan/titan/node/config"
+	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	nTypes "github.com/Filecoin-Titan/titan/node/types"
 	logging "github.com/ipfs/go-log/v2"
@@ -22,17 +24,25 @@ type Manager struct {
 	lr      repo.LockedRepo
 	etcdcli *etcdcli.Client
 
+	cfg config.SchedulerCfg
+
 	isMaster bool
 }
 
 // NewManager creates a new instance of the node manager
-func NewManager(lr repo.LockedRepo, ec *etcdcli.Client) *Manager {
+func NewManager(lr repo.LockedRepo, ec *etcdcli.Client, configFunc dtypes.GetSchedulerConfigFunc) (*Manager, error) {
+	c, err := configFunc()
+	if err != nil {
+		return nil, err
+	}
+
 	manager := &Manager{
 		lr:      lr,
 		etcdcli: ec,
+		cfg:     c,
 	}
 
-	return manager
+	return manager, nil
 }
 
 // RequestAndBecomeMaster tries to acquire a lock from etcd. If the lock is successfully acquired,
@@ -48,7 +58,7 @@ func (m *Manager) RequestAndBecomeMaster() bool {
 	}
 
 	// Try to acquire the master lock in etcd using the old lease ID.
-	newLeaseID, err := m.etcdcli.AcquireMasterLock(types.RunningNodeType.String(), oldLeaseID)
+	newLeaseID, err := m.etcdcli.AcquireMasterLock(types.RunningNodeType.String(), m.cfg.AreaID, oldLeaseID)
 	if err != nil {
 		log.Errorf("RequestAndBecomeMaster SetMasterScheduler err:%s", err.Error())
 		return m.isMaster

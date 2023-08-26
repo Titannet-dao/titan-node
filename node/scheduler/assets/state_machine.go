@@ -221,7 +221,7 @@ func (m *Manager) initStateMachines(ctx context.Context) error {
 			continue
 		}
 
-		m.startAssetTimeoutCounting(asset.Hash.String())
+		m.startAssetTimeoutCounting(asset.Hash.String(), 0)
 	}
 
 	return nil

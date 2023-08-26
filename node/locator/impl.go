@@ -3,8 +3,10 @@ package locator
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,11 +28,13 @@ import (
 var log = logging.Logger("locator")
 
 const (
-	unknownAreaID = "unknown-unknown"
+	unknownAreaID   = "unknown-unknown"
+	maxRandomNumber = 10000
 )
 
 type Storage interface {
 	GetSchedulerConfigs(areaID string) ([]*types.SchedulerCfg, error)
+	GetAllSchedulerConfigs() []*types.SchedulerCfg
 }
 
 type Locator struct {
@@ -41,12 +45,13 @@ type Locator struct {
 	Storage
 	*config.LocatorCfg
 	*DNSServer
+	Rand *rand.Rand
 }
 
 type schedulerAPI struct {
 	api.Scheduler
-	close jsonrpc.ClientCloser
-	url   string
+	close  jsonrpc.ClientCloser
+	config *types.SchedulerCfg
 }
 
 func isValid(geo string) bool {
@@ -87,40 +92,59 @@ func (l *Locator) selectBestSchedulers(apis []*schedulerAPI, nodeID string) ([]s
 	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
 	defer cancel()
 
-	urlCh := make(chan string)
-	errCh := make(chan error)
+	schedulerConfigs := make([]*types.SchedulerCfg, 0)
+	wg := &sync.WaitGroup{}
+	lock := &sync.Mutex{}
 
 	for _, api := range apis {
-		go func(ctx context.Context, s *schedulerAPI, urlCh chan string, errCh chan error) {
+		wg.Add(1)
+		go func(ctx context.Context, s *schedulerAPI) {
 			defer s.close()
+			defer wg.Done()
 
 			if err := s.NodeExists(ctx, nodeID); err != nil {
-				errCh <- err
-			} else {
-				urlCh <- s.url
+				log.Warnf("check node exists %s", err.Error())
+				return
 			}
 
-		}(ctx, api, urlCh, errCh)
+			lock.Lock()
+			schedulerConfigs = append(schedulerConfigs, s.config)
+			lock.Unlock()
+
+		}(ctx, api)
 	}
 
-	schedulerURLs := make([]string, 0)
-	resultCount := 0
+	wg.Wait()
 
-	for {
-		select {
-		case url := <-urlCh:
-			cancel()
-			resultCount++
-			schedulerURLs = append(schedulerURLs, url)
-		case err := <-errCh:
-			log.Debugf("check node exists error:%s", err.Error())
-			resultCount++
-		}
+	return l.randomSchedulerConfigWithWeight(schedulerConfigs), nil
+}
 
-		if resultCount == len(apis) {
-			return schedulerURLs, nil
-		}
+func (l *Locator) randomSchedulerConfigWithWeight(configs []*types.SchedulerCfg) []string {
+	totalWeight := 0
+	for _, config := range configs {
+		totalWeight += config.Weight
 	}
+
+	sort.Slice(configs, func(i, j int) bool {
+		return configs[i].SchedulerURL < configs[j].SchedulerURL
+	})
+
+	randomWeight := float32(l.Rand.Intn(maxRandomNumber)) / float32(maxRandomNumber)
+	preAddWeight := float32(0)
+
+	for _, config := range configs {
+		nextAddWeight := preAddWeight + float32(config.Weight)
+		preWeight := preAddWeight / float32(totalWeight)
+		nextWeight := nextAddWeight / float32(totalWeight)
+
+		if randomWeight > preWeight && randomWeight <= nextWeight {
+			return []string{config.SchedulerURL}
+		}
+
+		preAddWeight = nextAddWeight
+	}
+
+	return nil
 }
 
 func (l *Locator) newSchedulerAPIs(configs []*types.SchedulerCfg) ([]*schedulerAPI, error) {
@@ -148,7 +172,7 @@ func (l *Locator) newSchedulerAPI(config *types.SchedulerCfg) (*schedulerAPI, er
 		return nil, err
 	}
 
-	return &schedulerAPI{api, close, config.SchedulerURL}, nil
+	return &schedulerAPI{api, close, config}, nil
 }
 
 func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.EdgeDownloadInfoList, error) {
@@ -163,11 +187,8 @@ func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.E
 		return nil, err
 	}
 
-	if len(configs) == 0 && l.UseDefaultAreaID {
-		configs, err = l.GetSchedulerConfigs(l.DefaultAreaID)
-		if err != nil {
-			return nil, err
-		}
+	if len(configs) == 0 {
+		configs = l.GetAllSchedulerConfigs()
 	}
 
 	schedulerAPIs, err := l.newSchedulerAPIs(configs)
@@ -181,6 +202,7 @@ func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.E
 
 	log.Debugf("EdgeDownloadInfos, schedulerAPIs %#v", schedulerAPIs)
 
+	// TODO limit concurrency
 	return l.getEdgeDownloadInfoFromBestScheduler(schedulerAPIs, cid)
 }
 
@@ -266,11 +288,8 @@ func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*ty
 		return nil, err
 	}
 
-	if len(configs) == 0 && l.UseDefaultAreaID {
-		configs, err = l.GetSchedulerConfigs(l.DefaultAreaID)
-		if err != nil {
-			return nil, err
-		}
+	if len(configs) == 0 {
+		configs = l.GetAllSchedulerConfigs()
 	}
 
 	schedulerAPIs, err := l.newSchedulerAPIs(configs)
@@ -283,7 +302,7 @@ func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*ty
 	}
 
 	log.Debugf("CandidateDownloadInfos, schedulerAPIs %#v", schedulerAPIs)
-
+	// TODO limit concurrency
 	return l.getCandidateDownloadInfoFromBestScheduler(schedulerAPIs, cid)
 }
 
@@ -310,10 +329,12 @@ func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*schedulerAPI
 			defer s.close()
 			defer wg.Done()
 
-			if info, err := s.GetCandidateDownloadInfos(ctx, cid); err == nil {
-				lock.Lock()
-				infoList = append(infoList, info...)
-				lock.Unlock()
+			if infos, err := s.GetCandidateDownloadInfos(ctx, cid); err == nil {
+				if len(infos) > 0 {
+					lock.Lock()
+					infoList = append(infoList, infos...)
+					lock.Unlock()
+				}
 			} else {
 				log.Errorf("GetCandidateDownloadInfos cid %s, error: %s", cid, err.Error())
 			}
@@ -353,17 +374,112 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		return nil, err
 	}
 
-	if len(configs) == 0 && l.UseDefaultAreaID {
-		configs, err = l.GetSchedulerConfigs(l.DefaultAreaID)
-		if err != nil {
-			return nil, err
+	if len(configs) == 0 {
+		configs = l.GetAllSchedulerConfigs()
+	}
+
+	schedulerURLs := make(map[string][]string)
+	for _, config := range configs {
+		urls, ok := schedulerURLs[config.AreaID]
+		if !ok {
+			urls = make([]string, 0)
+			urls = append(urls, config.SchedulerURL)
 		}
+
+		urls = append(urls, config.SchedulerURL)
+		schedulerURLs[config.AreaID] = urls
 	}
 
-	schedulerURLs := make([]string, 0, len(configs))
-	for _, cfg := range configs {
-		schedulerURLs = append(schedulerURLs, cfg.SchedulerURL)
+	if len(schedulerURLs) == 0 {
+		return &api.AccessPoint{AreaID: areaID, SchedulerURLs: make([]string, 0)}, nil
 	}
 
-	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: schedulerURLs}, nil
+	// get scheduler configs of first areaID
+	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: schedulerURLs[configs[0].AreaID]}, nil
+}
+
+// GetCandidateIP retrieves ip of candidate
+func (l *Locator) GetCandidateIP(ctx context.Context, nodeID string) (string, error) {
+	configs := l.GetAllSchedulerConfigs()
+	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	if err != nil {
+		return "", err
+	}
+
+	if len(schedulerAPIs) == 0 {
+		return "", fmt.Errorf("no scheduler exist")
+	}
+
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	defer cancel()
+
+	// TODO limit concurrency
+	var candidateIP string
+	wg := &sync.WaitGroup{}
+	for _, api := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(ctx context.Context, s *schedulerAPI) {
+			defer s.close()
+			defer wg.Done()
+
+			if ip, err := s.GetCandidateNodeIP(ctx, nodeID); err == nil {
+				candidateIP = ip
+				cancel()
+			} else {
+				log.Debugf("GetCandidateNodeIP %s", err.Error())
+			}
+		}(ctx, api)
+	}
+	wg.Wait()
+
+	return candidateIP, nil
+}
+
+// GetSchedulerWithNode get the scheduler that the node is already connected to
+func (l *Locator) GetSchedulerWithNode(ctx context.Context, nodeID string) (string, error) {
+	configs := l.GetAllSchedulerConfigs()
+	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	if err != nil {
+		return "", err
+	}
+
+	if len(schedulerAPIs) == 0 {
+		return "", fmt.Errorf("no scheduler exist")
+	}
+
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	defer cancel()
+
+	// TODO limit concurrency
+	var schedulerURL string
+	wg := &sync.WaitGroup{}
+	for _, api := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(ctx context.Context, s *schedulerAPI) {
+			defer s.close()
+			defer wg.Done()
+
+			if _, err := s.GetCandidateNodeIP(ctx, nodeID); err == nil {
+				schedulerURL = s.config.SchedulerURL
+				cancel()
+			} else {
+				log.Debugf("GetCandidateNodeIP %s", err.Error())
+			}
+		}(ctx, api)
+	}
+	wg.Wait()
+
+	return schedulerURL, nil
 }

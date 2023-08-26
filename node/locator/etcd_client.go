@@ -142,3 +142,12 @@ func (ec *EtcdClient) onDelete(kv *mvccpb.KeyValue) error {
 func (ec *EtcdClient) GetSchedulerConfigs(areaID string) ([]*types.SchedulerCfg, error) {
 	return ec.schedulerConfigs[areaID], nil
 }
+
+func (ec *EtcdClient) GetAllSchedulerConfigs() []*types.SchedulerCfg {
+	schedulerConfigs := make([]*types.SchedulerCfg, 0)
+	for _, configs := range ec.schedulerConfigs {
+		schedulerConfigs = append(schedulerConfigs, configs...)
+	}
+
+	return schedulerConfigs
+}

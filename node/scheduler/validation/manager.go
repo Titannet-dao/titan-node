@@ -9,6 +9,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
+	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/filecoin-project/pubsub"
 	logging "github.com/ipfs/go-log/v2"
@@ -18,6 +19,7 @@ var log = logging.Logger("validation")
 
 const (
 	validationWorkers = 50
+	oneDay            = 24 * time.Hour
 )
 
 // VWindow represents a validation window that contains a validator id and validatable node list.
@@ -73,10 +75,12 @@ type Manager struct {
 
 	// validation result worker
 	resultQueue chan *api.ValidationResult
+
+	leadershipMgr *leadership.Manager
 }
 
 // NewManager return new node manager instance
-func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub) *Manager {
+func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *Manager {
 	manager := &Manager{
 		nodeMgr:       nodeMgr,
 		assetMgr:      assetMgr,
@@ -86,6 +90,7 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 		updateCh:      make(chan struct{}, 1),
 		notify:        p,
 		resultQueue:   make(chan *api.ValidationResult),
+		leadershipMgr: lmgr,
 	}
 
 	return manager
@@ -95,6 +100,7 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 func (m *Manager) Start(ctx context.Context) {
 	go m.startValidationTicker(ctx)
 	go m.startElectionTicker()
+	go m.startHandleResultsTimer()
 
 	m.subscribeNodeEvents()
 	m.pullResults()
@@ -141,6 +147,10 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 	}
 
 	if isOnline {
+		if node.IsAbnormal() {
+			return
+		}
+
 		if isV {
 			m.addValidator(nodeID, node.BandwidthDown)
 

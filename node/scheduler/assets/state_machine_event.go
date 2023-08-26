@@ -54,6 +54,7 @@ func (evt AssetForceState) applyGlobal(state *AssetPullingInfo) bool {
 	state.Requester = evt.Requester
 	state.Details = evt.Details
 	state.SeedNodeID = evt.SeedNodeID
+	state.RetryCount = 0
 	return true
 }
 

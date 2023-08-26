@@ -186,7 +186,7 @@ var runCmd = &cli.Command{
 		}
 		jsonrpc.SetHttp3Client(httpClient)
 
-		url, err := getSchedulerURL(cctx, edgeCfg.NodeID, edgeCfg.AreaID, edgeCfg.Locator)
+		url, err := getSchedulerURL(cctx, edgeCfg.NodeID, edgeCfg.AreaID)
 		if err != nil {
 			return xerrors.Errorf("get scheduler url: %w", err)
 		}
@@ -259,9 +259,10 @@ var runCmd = &cli.Command{
 			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA) error {
 				opts := &httpserver.HttpServerOptions{
 					Asset: assetMgr, Scheduler: schedulerAPI,
-					PrivateKey: privateKey,
-					Validation: validation,
-					APISecret:  apiSecret,
+					PrivateKey:          privateKey,
+					Validation:          validation,
+					APISecret:           apiSecret,
+					MaxSizeOfUploadFile: edgeCfg.MaxSizeOfUploadFile,
 				}
 				httpServer = httpserver.NewHttpServer(opts)
 
@@ -284,7 +285,12 @@ var runCmd = &cli.Command{
 			},
 		}
 
-		go startUDPServer(udpPacketConn, handler, edgeCfg) //nolint:errcheck
+		tlsConfig, err := getTLSConfig(edgeCfg)
+		if err != nil {
+			return xerrors.Errorf("get tls config error: %w", err)
+		}
+
+		go startUDPServer(udpPacketConn, handler, tlsConfig) //nolint:errcheck
 
 		go func() {
 			<-ctx.Done()
@@ -438,22 +444,22 @@ func getAccessPoint(cctx *cli.Context, nodeID, areaID string) (string, error) {
 	return schedulerURLs[0], nil
 }
 
-func getSchedulerURL(cctx *cli.Context, nodeID, areaID string, isPassLocator bool) (string, error) {
-	if isPassLocator {
-		schedulerURL, err := getAccessPoint(cctx, nodeID, areaID)
-		if err != nil {
-			return "", err
-		}
-
+func getSchedulerURL(cctx *cli.Context, nodeID, areaID string) (string, error) {
+	schedulerURL, _, err := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
+	if err == nil {
 		return schedulerURL, nil
 	}
 
-	schedulerURL, _, err := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
-	if err != nil {
-		return "", err
+	log.Debugf("get scheduler raw api error %s", err.Error())
+
+	schedulerURL, err = getAccessPoint(cctx, nodeID, areaID)
+	if err == nil {
+		return schedulerURL, nil
 	}
 
-	return schedulerURL, nil
+	log.Debugf("get access point error %s", err.Error())
+
+	return "", fmt.Errorf("please set SCHEDULER_API_INFO or LOCATOR_API_INFO")
 }
 
 func newSchedulerAPI(cctx *cli.Context, schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (api.Scheduler, jsonrpc.ClientCloser, error) {
@@ -479,35 +485,30 @@ func newSchedulerAPI(cctx *cli.Context, schedulerURL, nodeID string, privateKey 
 	return schedulerAPI, closer, nil
 }
 
-func startUDPServer(conn net.PacketConn, handler http.Handler, edgeCfg *config.EdgeCfg) error {
-	var tlsConfig *tls.Config
-	if edgeCfg.InsecureSkipVerify {
-		config, err := defaultTLSConfig()
-		if err != nil {
-			log.Errorf("startUDPServer, defaultTLSConfig error:%s", err.Error())
-			return err
-		}
-		tlsConfig = config
-	} else {
-		cert, err := tls.LoadX509KeyPair(edgeCfg.CaCertificatePath, edgeCfg.PrivateKeyPath)
-		if err != nil {
-			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
-			return err
-		}
-
-		tlsConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			Certificates:       []tls.Certificate{cert},
-			InsecureSkipVerify: false,
-		}
-	}
-
+func startUDPServer(conn net.PacketConn, handler http.Handler, tlsConfig *tls.Config) error {
 	srv := http3.Server{
 		TLSConfig: tlsConfig,
 		Handler:   handler,
 	}
 
 	return srv.Serve(conn)
+}
+
+func getTLSConfig(edgeCfg *config.EdgeCfg) (*tls.Config, error) {
+	if len(edgeCfg.CertificatePath) > 0 && len(edgeCfg.PrivateKeyPath) > 0 {
+		cert, err := tls.LoadX509KeyPair(edgeCfg.CertificatePath, edgeCfg.PrivateKeyPath)
+		if err != nil {
+			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
+			return nil, err
+		}
+
+		return &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+		}, nil
+	}
+
+	return defaultTLSConfig()
 }
 
 func defaultTLSConfig() (*tls.Config, error) {

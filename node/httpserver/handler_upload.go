@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,10 +11,11 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/ipfs/go-cid"
+	"golang.org/x/xerrors"
 )
 
 const (
-	maxUploadSize = 100 * 1024 * 1024 // 100 MB
+	// maxUploadSize = 104857600 // 100 MB
 	maxConcurrent = 5
 )
 
@@ -27,34 +29,34 @@ func (hs *HttpServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		http.Error(w, "only allow post method", http.StatusMethodNotAllowed)
+		uploadResult(w, -1, fmt.Sprintf("only allow post method, http status code %d", http.StatusMethodNotAllowed))
 		return
 	}
 
 	payload, err := hs.verifyUserToken(r)
 	if err != nil {
 		log.Errorf("verfiy token error: %s", err.Error())
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		uploadResult(w, -1, fmt.Sprintf("%s, http status code %d", err.Error(), http.StatusUnauthorized))
 		return
 	}
 
-	if payload.AssetSize > maxUploadSize {
-		log.Errorf("max file size is: %d, current file size:%d", maxUploadSize, payload.AssetSize)
-		http.Error(w, fmt.Sprintf("asset Size is %d, max size is %d", payload.AssetSize, maxUploadSize), http.StatusBadRequest)
+	if payload.AssetSize > int64(hs.maxSizeOfUploadFile) {
+		log.Errorf("max file size is: %d, current file size:%d", hs.maxSizeOfUploadFile, payload.AssetSize)
+		uploadResult(w, -1, fmt.Sprintf("asset Size %d, out of max size %d, http status code %d", payload.AssetSize, hs.maxSizeOfUploadFile, http.StatusBadRequest))
 		return
 	}
 
 	c, err := cid.Decode(payload.AssetCID)
 	if err != nil {
 		log.Errorf("decode asset cid error: %s", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		uploadResult(w, -1, fmt.Sprintf("%s, http status code %d", err.Error(), http.StatusInternalServerError))
 		return
 	}
 
 	_, err = hs.asset.GetUploadingAsset(context.Background(), c)
 	if err != nil {
 		log.Errorf("get uploading asset error: %s", err.Error())
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		uploadResult(w, -1, fmt.Sprintf("%s, http status code %d", err.Error(), http.StatusBadRequest))
 		return
 	}
 
@@ -63,17 +65,30 @@ func (hs *HttpServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() { <-semaphore }()
 
 	// limit size
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	r.Body = http.MaxBytesReader(w, r.Body, int64(hs.maxSizeOfUploadFile))
 
+	var statusCode int
 	contentType := getContentType(r)
 	switch contentType {
 	case "multipart/form-data":
-		hs.handleUploadFormData(w, r, payload)
+		statusCode, err = hs.handleUploadFormData(r, payload)
 	case "application/car":
-		hs.handleUploadCar(w, r, payload)
+		statusCode, err = hs.handleUploadCar(r, payload)
 	default:
 		log.Errorf("unsupported Content-type %s", contentType)
-		http.Error(w, fmt.Sprintf("unsupported Content-type %s", contentType), http.StatusBadRequest)
+		statusCode = http.StatusBadRequest
+		err = fmt.Errorf("unsupported Content-type %s", contentType)
+	}
+
+	code := 0
+	errMsg := "Upload succeeded"
+	if statusCode != http.StatusOK {
+		code = -1
+		errMsg = fmt.Sprintf("%s, http status code %d", err.Error(), statusCode)
+	}
+
+	if err = uploadResult(w, code, errMsg); err != nil {
+		log.Errorf("uploadResult %s", err.Error())
 	}
 }
 
@@ -83,7 +98,7 @@ func getContentType(r *http.Request) string {
 	return strings.TrimSpace(mediaType)
 }
 
-func (hs *HttpServer) verifyUserToken(r *http.Request) (*types.AuthUserUploadAsset, error) {
+func (hs *HttpServer) verifyUserToken(r *http.Request) (*types.AuthUserUploadDownloadAsset, error) {
 	token := r.Header.Get("Authorization")
 	if token == "" {
 		token = r.FormValue("token")
@@ -99,7 +114,7 @@ func (hs *HttpServer) verifyUserToken(r *http.Request) (*types.AuthUserUploadAss
 		token = strings.TrimPrefix(token, "Bearer ")
 	}
 
-	payload := &types.AuthUserUploadAsset{}
+	payload := &types.AuthUserUploadDownloadAsset{}
 	if _, err := jwt.Verify([]byte(token), hs.apiSecret, payload); err != nil {
 		return nil, err
 	}
@@ -111,69 +126,68 @@ func (hs *HttpServer) verifyUserToken(r *http.Request) (*types.AuthUserUploadAss
 	return payload, nil
 }
 
-func (hs *HttpServer) handleUploadFormData(w http.ResponseWriter, r *http.Request, payload *types.AuthUserUploadAsset) {
-	// try to read from multipart form
-	err := r.ParseMultipartForm(maxUploadSize)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("parse multipart form error %s", err.Error()), http.StatusBadRequest)
-		return
-	}
-
+func (hs *HttpServer) handleUploadFormData(r *http.Request, payload *types.AuthUserUploadDownloadAsset) (int, error) {
 	root, err := cid.Decode(payload.AssetCID)
 	if err != nil {
-		log.Errorf("decode asset cid error: %s", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	// Get the uploaded file
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		// Handle error
-		log.Errorf("read file from form error : %s", err.Error())
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, err
 	}
 	defer file.Close()
 
+	log.Debugf("handleUploadFormData asset cid %s, size:%d", payload.AssetCID, payload.AssetSize)
+
 	progressReader := newProgressReader(file, hs, root, payload.AssetSize)
 	if err := hs.asset.SaveUserAsset(context.Background(), payload.UserID, root, payload.AssetSize, progressReader); err != nil {
-		http.Error(w, fmt.Sprintf("upload file error %s", err.Error()), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, xerrors.Errorf("save user asset error %w", err.Error())
 	}
 
 	progress := &types.UploadProgress{TotalSize: payload.AssetSize, DoneSize: payload.AssetSize}
 	if err := hs.asset.SetAssetUploadProgress(context.Background(), root, progress); err != nil {
-		http.Error(w, fmt.Sprintf("set asset upload progress error %s", err.Error()), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, xerrors.Errorf("set asset upload progress error %w", err.Error())
 	}
+
+	return http.StatusOK, nil
 }
 
-func (hs *HttpServer) handleUploadCar(w http.ResponseWriter, r *http.Request, payload *types.AuthUserUploadAsset) {
+func (hs *HttpServer) handleUploadCar(r *http.Request, payload *types.AuthUserUploadDownloadAsset) (int, error) {
 	root, err := cid.Decode(payload.AssetCID)
 	if err != nil {
-		log.Errorf("decode asset cid error: %s", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	progressReader := newProgressReader(r.Body, hs, root, payload.AssetSize)
 	if err := hs.asset.SaveUserAsset(context.Background(), payload.UserID, root, payload.AssetSize, progressReader); err != nil {
-		http.Error(w, fmt.Sprintf("upload file error %s", err.Error()), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, xerrors.Errorf("save user asset error %w", err.Error())
 	}
 
 	progress := &types.UploadProgress{TotalSize: payload.AssetSize, DoneSize: payload.AssetSize}
 	if err := hs.asset.SetAssetUploadProgress(context.Background(), root, progress); err != nil {
-		log.Debugf("SetAssetUploadProgress error %s", err.Error())
+		return http.StatusInternalServerError, xerrors.Errorf("set asset upload progress error %w", err.Error())
+
 	}
+
+	return http.StatusOK, nil
 }
 
-func setAccessControlAllowForHeader(w http.ResponseWriter) {
-	allowedHeaders := "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, Unauthorized, X-CSRF-Token"
+func uploadResult(w http.ResponseWriter, code int, msg string) error {
+	type Result struct {
+		Code int    `json:"code"`
+		Err  int    `json:"err"`
+		Msg  string `json:"msg"`
+	}
 
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-	w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
-	w.Header().Set("Access-Control-Expose-Headers", "Authorization")
+	ret := Result{Code: code, Err: 0, Msg: msg}
+	buf, err := json.Marshal(ret)
+	if err != nil {
+		return err
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write(buf)
+	return err
 }

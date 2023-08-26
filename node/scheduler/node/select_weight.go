@@ -117,6 +117,10 @@ func (wm *weightManager) getWeightRandom(lock *sync.RWMutex, r *rand.Rand, max i
 	lock.Lock()
 	defer lock.Unlock()
 
+	if max <= 0 {
+		return "", -1
+	}
+
 	w := r.Intn(max) + 1
 	return distributed[w], w
 }

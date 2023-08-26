@@ -10,7 +10,6 @@ import (
 	"github.com/filecoin-project/pubsub"
 
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
-	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	logging "github.com/ipfs/go-log/v2"
 )
 
@@ -22,11 +21,6 @@ const (
 
 	// saveInfoInterval is the interval at which node information is saved during keepalive requests
 	saveInfoInterval = 2 // keepalive saves information every 2 times
-
-	// Processing validation result data from 5 days ago
-	vResultDay = 5 * oneDay
-	// Process 1000 pieces of validation result data at a time
-	vResultLimit = 1000
 
 	oneDay = 24 * time.Hour
 )
@@ -43,19 +37,17 @@ type Manager struct {
 	*db.SQLDB
 	*rsa.PrivateKey // scheduler privateKey
 	dtypes.ServerID // scheduler server id
-	leadershipMgr   *leadership.Manager
 }
 
 // NewManager creates a new instance of the node manager
-func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, config dtypes.GetSchedulerConfigFunc, lmgr *leadership.Manager) *Manager {
+func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, config dtypes.GetSchedulerConfigFunc) *Manager {
 	nodeManager := &Manager{
-		SQLDB:         sdb,
-		ServerID:      serverID,
-		PrivateKey:    pk,
-		notify:        pb,
-		config:        config,
-		weightMgr:     newWeightManager(config),
-		leadershipMgr: lmgr,
+		SQLDB:      sdb,
+		ServerID:   serverID,
+		PrivateKey: pk,
+		notify:     pb,
+		config:     config,
+		weightMgr:  newWeightManager(config),
 	}
 
 	go nodeManager.startNodeKeepaliveTimer()
@@ -99,7 +91,8 @@ func (m *Manager) startNodeTimer() {
 		log.Debugln("start node timer...")
 
 		m.redistributeNodeSelectWeights()
-		m.handleValidationResults()
+
+		m.checkNodeDeactivate()
 
 		timer.Reset(oneDay)
 	}
@@ -117,9 +110,7 @@ func (m *Manager) storeEdgeNode(node *Node) {
 	}
 	m.Edges++
 
-	score := m.getNodeScoreLevel(node.NodeID)
-	wNum := m.weightMgr.getWeightNum(score)
-	node.selectWeights = m.weightMgr.distributeEdgeWeight(nodeID, wNum)
+	m.DistributeNodeWeight(node)
 
 	m.notify.Pub(node, types.EventNodeOnline.String())
 }
@@ -137,16 +128,14 @@ func (m *Manager) storeCandidateNode(node *Node) {
 	}
 	m.Candidates++
 
-	score := m.getNodeScoreLevel(node.NodeID)
-	wNum := m.weightMgr.getWeightNum(score)
-	node.selectWeights = m.weightMgr.distributeCandidateWeight(nodeID, wNum)
+	m.DistributeNodeWeight(node)
 
 	m.notify.Pub(node, types.EventNodeOnline.String())
 }
 
 // deleteEdgeNode removes an edge node from the manager's list of edge nodes
 func (m *Manager) deleteEdgeNode(node *Node) {
-	m.weightMgr.repayEdgeWeight(node.selectWeights)
+	m.RepayNodeWeight(node)
 	m.notify.Pub(node, types.EventNodeOffline.String())
 
 	nodeID := node.NodeID
@@ -159,7 +148,7 @@ func (m *Manager) deleteEdgeNode(node *Node) {
 
 // deleteCandidateNode removes a candidate node from the manager's list of candidate nodes
 func (m *Manager) deleteCandidateNode(node *Node) {
-	m.weightMgr.repayCandidateWeight(node.selectWeights)
+	m.RepayNodeWeight(node)
 	m.notify.Pub(node, types.EventNodeOffline.String())
 
 	nodeID := node.NodeID
@@ -168,6 +157,36 @@ func (m *Manager) deleteCandidateNode(node *Node) {
 		return
 	}
 	m.Candidates--
+}
+
+// DistributeNodeWeight Distribute Node Weight
+func (m *Manager) DistributeNodeWeight(node *Node) {
+	if node.IsAbnormal() {
+		return
+	}
+
+	if node.IsPrivateMinioOnly {
+		return
+	}
+
+	score := m.getNodeScoreLevel(node.NodeID)
+	wNum := m.weightMgr.getWeightNum(score)
+	if node.Type == types.NodeCandidate {
+		node.selectWeights = m.weightMgr.distributeCandidateWeight(node.NodeID, wNum)
+	} else if node.Type == types.NodeEdge {
+		node.selectWeights = m.weightMgr.distributeEdgeWeight(node.NodeID, wNum)
+	}
+}
+
+// RepayNodeWeight Repay Node Weight
+func (m *Manager) RepayNodeWeight(node *Node) {
+	if node.Type == types.NodeCandidate {
+		m.weightMgr.repayCandidateWeight(node.selectWeights)
+		node.selectWeights = nil
+	} else if node.Type == types.NodeEdge {
+		m.weightMgr.repayEdgeWeight(node.selectWeights)
+		node.selectWeights = nil
+	}
 }
 
 // nodeKeepalive checks if a node has sent a keepalive recently and updates node status accordingly
@@ -255,88 +274,6 @@ func (m *Manager) saveInfo(n *types.NodeInfo) error {
 	return nil
 }
 
-func (m *Manager) handleValidationResults() {
-	if !m.leadershipMgr.RequestAndBecomeMaster() {
-		return
-	}
-
-	defer log.Infoln("handleValidationResults end")
-	log.Infoln("handleValidationResults start")
-
-	maxTime := time.Now().Add(-vResultDay)
-
-	// do handle validation result
-	for {
-		infos, nodeProfits, err := m.loadResults(maxTime)
-		if err != nil {
-			log.Errorf("loadResults err:%s", err.Error())
-			return
-		}
-
-		if len(infos) == 0 {
-			return
-		}
-
-		err = m.UpdateNodeInfosByValidationResult(infos, nodeProfits)
-		if err != nil {
-			log.Errorf("UpdateNodeProfitsByValidationResult err:%s", err.Error())
-			return
-		}
-
-	}
-}
-
-func (m *Manager) loadResults(maxTime time.Time) ([]*types.ValidationResultInfo, map[string]float64, error) {
-	rows, err := m.LoadUnCalculatedValidationResults(maxTime, vResultLimit)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-
-	infos := make([]*types.ValidationResultInfo, 0)
-	nodeProfits := make(map[string]float64)
-
-	for rows.Next() {
-		vInfo := &types.ValidationResultInfo{}
-		err = rows.StructScan(vInfo)
-		if err != nil {
-			log.Errorf("loadResults StructScan err: %s", err.Error())
-			continue
-		}
-
-		if vInfo.Status == types.ValidationStatusCancel {
-			tokenID := vInfo.TokenID
-			record, err := m.LoadWorkloadRecord(tokenID)
-			if err != nil {
-				vInfo.Profit = 0
-			}
-
-			if record.Status != types.WorkloadStatusSucceeded {
-				vInfo.Profit = 0
-			}
-
-			// check time
-			if record.CreatedTime.After(vInfo.EndTime) {
-				vInfo.Profit = 0
-			}
-
-			if record.Expiration.Before(vInfo.StartTime) {
-				vInfo.Profit = 0
-			}
-		}
-
-		infos = append(infos, vInfo)
-
-		if vInfo.Profit == 0 {
-			continue
-		}
-
-		nodeProfits[vInfo.NodeID] += vInfo.Profit
-	}
-
-	return infos, nodeProfits, nil
-}
-
 func (m *Manager) redistributeNodeSelectWeights() {
 	// repay all weights
 	m.weightMgr.cleanWeights()
@@ -344,6 +281,14 @@ func (m *Manager) redistributeNodeSelectWeights() {
 	// redistribute weights
 	m.candidateNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
+
+		if node.IsAbnormal() {
+			return true
+		}
+
+		if node.IsPrivateMinioOnly {
+			return true
+		}
 
 		score := m.getNodeScoreLevel(node.NodeID)
 		wNum := m.weightMgr.getWeightNum(score)
@@ -354,6 +299,10 @@ func (m *Manager) redistributeNodeSelectWeights() {
 
 	m.edgeNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
+
+		if node.IsAbnormal() {
+			return true
+		}
 
 		score := m.getNodeScoreLevel(node.NodeID)
 		wNum := m.weightMgr.getWeightNum(score)
@@ -375,4 +324,39 @@ func (m *Manager) GetAllEdgeNode() []*Node {
 	})
 
 	return nodes
+}
+
+// UpdateNodeBandwidths update node bandwidthDown and bandwidthUp
+func (m *Manager) UpdateNodeBandwidths(nodeID string, bandwidthDown, bandwidthUp int64) {
+	node := m.GetNode(nodeID)
+	if node == nil {
+		return
+	}
+
+	if bandwidthDown > 0 {
+		node.BandwidthDown = bandwidthDown
+	}
+	if bandwidthUp > 0 {
+		node.BandwidthUp = bandwidthUp
+	}
+
+	err := m.UpdateBandwidths(nodeID, node.BandwidthDown, node.BandwidthUp)
+	if err != nil {
+		log.Errorf("UpdateBandwidths err:%s", err.Error())
+	}
+}
+
+func (m *Manager) checkNodeDeactivate() {
+	nodes, err := m.LoadDeactivateNodes()
+	if err != nil {
+		log.Errorf("LoadDeactivateNodes err:%s", err.Error())
+		return
+	}
+
+	for _, nodeID := range nodes {
+		err = m.DeleteAssetRecordsOfNode(nodeID)
+		if err != nil {
+			log.Errorf("DeleteAssetOfNode err:%s", err.Error())
+		}
+	}
 }

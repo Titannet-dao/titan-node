@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+
+	"github.com/Filecoin-Titan/titan/api/types"
 )
 
 // Candidate is an interface for candidate node
@@ -16,6 +18,7 @@ type Candidate interface {
 	// GetExternalAddress retrieves the external address of the caller.
 	GetExternalAddress(ctx context.Context) (string, error)                        //perm:default
 	CheckNetworkConnectivity(ctx context.Context, network, targetURL string) error //perm:default
+	GetMinioConfig(ctx context.Context) (*types.MinioConfig, error)                //perm:admin
 }
 
 // ValidationResult node Validation result

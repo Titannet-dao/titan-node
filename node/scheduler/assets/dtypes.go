@@ -2,6 +2,7 @@ package assets
 
 import (
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 )
 
 // AssetHash is an identifier for a asset.
@@ -59,7 +60,7 @@ func (state *AssetPullingInfo) ToAssetRecord() *types.AssetRecord {
 }
 
 // assetPullingInfoFrom converts types.AssetRecord to AssetPullingInfo
-func assetPullingInfoFrom(info *types.AssetRecord) *AssetPullingInfo {
+func assetPullingInfoFrom(info *types.AssetRecord, assetDB *db.SQLDB) *AssetPullingInfo {
 	cInfo := &AssetPullingInfo{
 		CID:               info.CID,
 		State:             AssetState(info.State),
@@ -77,7 +78,10 @@ func assetPullingInfoFrom(info *types.AssetRecord) *AssetPullingInfo {
 		switch r.Status {
 		case types.ReplicaStatusSucceeded:
 			if r.IsCandidate {
-				cInfo.CandidateReplicaSucceeds = append(cInfo.CandidateReplicaSucceeds, r.NodeID)
+				deactivateTime, err := assetDB.LoadDeactivateNodeTime(r.NodeID)
+				if err == nil && deactivateTime == 0 {
+					cInfo.CandidateReplicaSucceeds = append(cInfo.CandidateReplicaSucceeds, r.NodeID)
+				}
 			} else {
 				cInfo.EdgeReplicaSucceeds = append(cInfo.EdgeReplicaSucceeds, r.NodeID)
 			}

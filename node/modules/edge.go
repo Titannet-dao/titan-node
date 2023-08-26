@@ -3,7 +3,6 @@ package modules
 import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/asset"
-	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/device"
@@ -26,8 +25,14 @@ func NewRateLimiter(device *device.Device) *rate.Limiter {
 }
 
 // NewNodeStorageManager creates a new instance of storage.Manager with the given carfile store path.
-func NewNodeStorageManager(metadataPaths dtypes.NodeMetadataPath, assetsPaths dtypes.AssetsPaths) (*storage.Manager, error) {
-	return storage.NewManager(&storage.ManagerOptions{MetaDataPath: string(metadataPaths), AssetsPaths: assetsPaths})
+func NewNodeStorageManager(metadataPaths dtypes.NodeMetadataPath, assetsPaths dtypes.AssetsPaths, minioConfig *config.MinioConfig, schedulerAPI api.Scheduler) (*storage.Manager, error) {
+	opts := &storage.ManagerOptions{
+		MetaDataPath: string(metadataPaths),
+		AssetsPaths:  assetsPaths,
+		MinioConfig:  minioConfig,
+		SchedulerAPI: schedulerAPI,
+	}
+	return storage.NewManager(opts)
 }
 
 // NewAssetsManager creates a function that generates new instances of asset.Manager.
@@ -43,11 +48,6 @@ func NewAssetsManager(pullParallel int, pullTimeout int, pullRetry int, ipfsAPIU
 		}
 		return asset.NewManager(opts)
 	}
-}
-
-// NewBlockFetcherFromCandidate creates a new instance of fetcher.BlockFetcher for the candidate network.
-func NewBlockFetcherFromCandidate(cfg *config.EdgeCfg) fetcher.BlockFetcher {
-	return fetcher.NewCandidateFetcher()
 }
 
 // NewDataSync creates a new instance of datasync.DataSync with the given asset.Manager.

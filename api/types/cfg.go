@@ -7,3 +7,9 @@ type SchedulerCfg struct {
 	Weight       int    `db:"weight"`
 	AccessToken  string `db:"access_token"`
 }
+
+type MinioConfig struct {
+	Endpoint        string
+	AccessKeyID     string
+	SecretAccessKey string
+}

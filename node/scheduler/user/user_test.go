@@ -29,16 +29,16 @@ func TestUserAllocateStorage(t *testing.T) {
 		t.Logf("AllocateStorage totalSize %d, usedSize %d", storageSize.TotalSize, storageSize.UsedSize)
 	}
 
-	if storageSize, err := u.LoadUserStorageSize(u.ID); err != nil {
-		t.Errorf("LoadUserStorageSize error:%s", err.Error())
+	if storageSize, err := u.LoadUserInfo(u.ID); err != nil {
+		t.Errorf("LoadUserInfo error:%s", err.Error())
 	} else {
-		t.Logf("LoadUserStorageSize totalSize %d, usedSize %d", storageSize.TotalSize, storageSize.UsedSize)
+		t.Logf("LoadUserInfo totalSize %d, usedSize %d", storageSize.TotalSize, storageSize.UsedSize)
 	}
 
-	if storageSize, err := u.LoadUserStorageSize(u.ID); err != nil {
-		t.Errorf("LoadUserStorageSize error:%s", err.Error())
+	if storageSize, err := u.LoadUserInfo(u.ID); err != nil {
+		t.Errorf("LoadUserInfo error:%s", err.Error())
 	} else {
-		t.Logf("LoadUserStorageSize totalSize %d, usedSize %d", storageSize.TotalSize, storageSize.UsedSize)
+		t.Logf("LoadUserInfo totalSize %d, usedSize %d", storageSize.TotalSize, storageSize.UsedSize)
 	}
 
 	// u.CreateAPIKey(context.Background(), "abc")
@@ -108,4 +108,27 @@ func TestGetUserAPIKeys(t *testing.T) {
 	}
 
 	t.Logf("GetAPIKeys %s", apiKeys)
+}
+
+func TestGetAssetName(t *testing.T) {
+	sqldb, err := sqldb.NewDB("user01:sql001@tcp(127.0.0.1:3306)/test")
+	if err != nil {
+		t.Errorf("NewDB error:%s", err.Error())
+		return
+	}
+
+	db, err := db.NewSQLDB(sqldb)
+	if err != nil {
+		t.Errorf("NewSQLDB error:%s", err.Error())
+		return
+	}
+
+	u := User{SQLDB: db, ID: "123"}
+	name, err := u.GetAssetName("12200c6579f02e720c35c9580ab6c3a991e322f70844e04d5a90ce7add4dfcb3c343", "123")
+	if err != nil {
+		t.Errorf("GetAPIKeys error %s", err.Error())
+		return
+	}
+
+	t.Logf("name %s", name)
 }

@@ -27,19 +27,22 @@ func NewSQLDB(db *sqlx.DB) (*SQLDB, error) {
 
 const (
 	// Database table names.
-	assetRecordTable       = "asset_record"
-	replicaInfoTable       = "replica_info"
-	edgeUpdateTable        = "edge_update_info"
-	nodeInfoTable          = "node_info"
-	validatorsTable        = "validators"
-	nodeRegisterTable      = "node_register_info"
-	validationResultTable  = "validation_result"
-	assetsViewTable        = "asset_view"
-	bucketTable            = "bucket"
-	workloadRecordTable    = "workload_record"
-	userAssetTable         = "user_asset"
-	userAPIKeyStorageTable = "user_api_key_storage"
-	replicaEventTable      = "replica_event"
+	assetRecordTable      = "asset_record"
+	replicaInfoTable      = "replica_info"
+	edgeUpdateTable       = "edge_update_info"
+	nodeInfoTable         = "node_info"
+	validatorsTable       = "validators"
+	nodeRegisterTable     = "node_register_info"
+	validationResultTable = "validation_result"
+	assetsViewTable       = "asset_view"
+	bucketTable           = "bucket"
+	workloadRecordTable   = "workload_record"
+	userAssetTable        = "user_asset"
+	userInfoTable         = "user_info"
+	replicaEventTable     = "replica_event"
+	retrieveEventTable    = "retrieve_event"
+	assetVisitCountTable  = "asset_visit_count"
+	replenishBackupTable  = "replenish_backup"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 100
@@ -48,6 +51,8 @@ const (
 	loadExpiredAssetRecordsDefaultLimit = 100
 	loadWorkloadDefaultLimit            = 100
 	loadReplicaEventDefaultLimit        = 100
+	loadRetrieveDefaultLimit            = 100
+	loadReplicaDefaultLimit             = 100
 )
 
 // assetStateTable returns the asset state table name for the given serverID.
@@ -84,8 +89,11 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cBucketTable, bucketTable))
 	tx.MustExec(fmt.Sprintf(cWorkloadTable, workloadRecordTable))
 	tx.MustExec(fmt.Sprintf(cUserAssetTable, userAssetTable))
-	tx.MustExec(fmt.Sprintf(cUserAPIKeyStorageTable, userAPIKeyStorageTable))
+	tx.MustExec(fmt.Sprintf(cUserInfoTable, userInfoTable))
 	tx.MustExec(fmt.Sprintf(cReplicaEventTable, replicaEventTable))
+	tx.MustExec(fmt.Sprintf(cRetrieveEventTable, retrieveEventTable))
+	tx.MustExec(fmt.Sprintf(cAssetVisitCountTable, assetVisitCountTable))
+	tx.MustExec(fmt.Sprintf(cReplenishBackupTable, replenishBackupTable))
 
 	return tx.Commit()
 }

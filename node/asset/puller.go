@@ -5,14 +5,18 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/ipfs/go-cid"
 	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
+	"golang.org/x/xerrors"
 )
 
 type pulledResult struct {
@@ -47,6 +51,7 @@ type assetPuller struct {
 	retry    int
 
 	workloadReports map[string]*workloadReport
+	startTime       time.Time
 }
 
 type pullerOptions struct {
@@ -58,7 +63,8 @@ type pullerOptions struct {
 	// pull block time out
 	timeout int
 	// retry times of pull block on failed
-	retry int
+	retry      int
+	httpClient *http.Client
 }
 
 // newAssetPuller creates a new asset puller with the given options
@@ -69,7 +75,7 @@ func newAssetPuller(opts *pullerOptions) (*assetPuller, error) {
 
 	var blockFetcher fetcher.BlockFetcher
 	if len(opts.dss) != 0 {
-		blockFetcher = fetcher.NewCandidateFetcher()
+		blockFetcher = fetcher.NewCandidateFetcher(opts.httpClient)
 	} else {
 		blockFetcher = fetcher.NewIPFSClient(opts.ipfsAPIURL)
 	}
@@ -81,6 +87,7 @@ func newAssetPuller(opts *pullerOptions) (*assetPuller, error) {
 		parallel:        opts.parallel,
 		timeout:         opts.timeout,
 		retry:           opts.retry,
+		startTime:       time.Now(),
 	}, nil
 }
 
@@ -380,4 +387,19 @@ func (ap *assetPuller) encodeWorkloadReports() ([]byte, error) {
 	}
 
 	return buffer.Bytes(), nil
+}
+
+func newHTTP3Client() (net.PacketConn, *http.Client, error) {
+	udpPacketConn, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// all jsonrpc client use udp
+	httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, true, "")
+	if err != nil {
+		return nil, nil, xerrors.Errorf("new http3 client error %w", err)
+	}
+
+	return udpPacketConn, httpClient, nil
 }

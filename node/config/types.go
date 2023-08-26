@@ -26,7 +26,7 @@ type EdgeCfg struct {
 	BandwidthDown int64
 	// if true, get scheduler url from locator
 	Locator bool
-	// InsecureSkipVerify skip tls verify
+	// InsecureSkipVerify http3 client skip tls verify
 	InsecureSkipVerify bool
 	// used for http3 server
 	// be used if InsecureSkipVerify is true
@@ -45,12 +45,21 @@ type EdgeCfg struct {
 	TCPSrvAddr        string
 	IPFSAPIURL        string
 	// seconds
-	ValidateDuration int
+	ValidateDuration    int
+	MaxSizeOfUploadFile int
+}
+
+type MinioConfig struct {
+	Endpoint        string
+	AccessKeyID     string
+	SecretAccessKey string
 }
 
 // CandidateCfg candidate node config
 type CandidateCfg struct {
 	EdgeCfg
+	MinioConfig
+	WebRedirect string
 }
 
 // LocatorCfg locator config
@@ -61,7 +70,7 @@ type LocatorCfg struct {
 	Timeout string
 	// geodb path
 	GeoDBPath string
-	// InsecureSkipVerify skip tls verify
+	// InsecureSkipVerify http3 client skip tls verify
 	InsecureSkipVerify bool
 	// used for http3 server
 	// be used if InsecureSkipVerify is false
@@ -75,7 +84,6 @@ type LocatorCfg struct {
 	EtcdAddresses    []string
 	DefaultAreaID    string
 	DNSServerAddress string
-	UseDefaultAreaID bool
 }
 
 // SchedulerCfg scheduler config
@@ -125,6 +133,7 @@ type SchedulerCfg struct {
 	LevelSelectWeight map[string]int
 
 	UserFreeStorageSize int64
+	UserVipStorageSize  int64
 
 	LotusRPCAddress string
 	LotusToken      string
@@ -135,10 +144,14 @@ type SchedulerCfg struct {
 	AssetPullTaskLimit int
 
 	NatDetectConcurrency int
-	AssetDomain          string
-
+	// will remove later, used for old edge
+	CandidateDomainAddr string
 	// Default number of backups for user uploaded files
 	UploadAssetReplicaCount int
 	// Default expiration time for user uploaded files
 	UploadAssetExpiration int // (Unit:day)
+	// Non vip user
+	MaxCountOfVisitShareLink int
+	// if the area has several scheduler, node will connect to the scheduler which weight is bigger
+	Weight int
 }

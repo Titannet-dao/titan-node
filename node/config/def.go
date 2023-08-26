@@ -63,15 +63,17 @@ func DefaultCandidateCfg() *CandidateCfg {
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
 
-		PullBlockTimeout:  15,
-		PullBlockRetry:    1,
-		PullBlockParallel: 5,
-		TCPSrvAddr:        "0.0.0.0:9000",
-		IPFSAPIURL:        "http://127.0.0.1:5001",
-		ValidateDuration:  10,
+		PullBlockTimeout:    15,
+		PullBlockRetry:      1,
+		PullBlockParallel:   5,
+		TCPSrvAddr:          "0.0.0.0:9000",
+		IPFSAPIURL:          "http://127.0.0.1:5001",
+		ValidateDuration:    10,
+		MaxSizeOfUploadFile: 104857600, // 100 MB
 	}
 	return &CandidateCfg{
-		EdgeCfg: edgeCfg,
+		EdgeCfg:     edgeCfg,
+		WebRedirect: "https://storage.titannet.io/#/redirect",
 	}
 }
 
@@ -87,7 +89,7 @@ func DefaultLocatorCfg() *LocatorCfg {
 		CaCertificatePath:  "",
 		EtcdAddresses:      []string{"127.0.0.1:2379"},
 		DefaultAreaID:      "Asia-China-Guangdong-Shenzhen",
-		DNSServerAddress:   "0.0.0.0:5555",
+		DNSServerAddress:   "0.0.0.0:53",
 	}
 }
 
@@ -127,8 +129,11 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 			"C": 1,
 		},
 		NatDetectConcurrency: 5,
-		// allocate 200M for user
-		UserFreeStorageSize: 209715200,
+		// allocate 100M for user
+		UserFreeStorageSize:      104857600,
+		UserVipStorageSize:       5368709120,
+		MaxCountOfVisitShareLink: 10,
+		Weight:                   100,
 	}
 }
 
