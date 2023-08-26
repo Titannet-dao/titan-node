@@ -5,7 +5,6 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/asset"
-	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/device"
@@ -51,12 +50,12 @@ func ConfigEdge(c interface{}) Option {
 		Override(new(*config.EdgeCfg), cfg),
 		Override(new(*device.Device), modules.NewDevice(cfg.BandwidthUp, cfg.BandwidthDown)),
 		Override(new(dtypes.NodeMetadataPath), dtypes.NodeMetadataPath(cfg.MetadataPath)),
+		Override(new(*config.MinioConfig), &config.MinioConfig{}),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
 		Override(new(*asset.Manager), modules.NewAssetsManager(cfg.PullBlockParallel, cfg.PullBlockTimeout, cfg.PullBlockRetry, cfg.IPFSAPIURL)),
 		Override(new(*validation.Validation), modules.NewNodeValidation),
 		Override(new(*rate.Limiter), modules.NewRateLimiter),
 		Override(new(*asset.Asset), asset.NewAsset),
 		Override(new(*datasync.DataSync), modules.NewDataSync),
-		Override(new(fetcher.BlockFetcher), modules.NewBlockFetcherFromCandidate),
 	)
 }

@@ -3,13 +3,17 @@ package user
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/terrors"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/filecoin-project/go-jsonrpc/auth"
@@ -26,17 +30,26 @@ type User struct {
 }
 
 // AllocateStorage allocates storage space.
-func (u *User) AllocateStorage(ctx context.Context, size int64) (*types.StorageSize, error) {
+func (u *User) AllocateStorage(ctx context.Context, size int64) (*types.UserInfo, error) {
+	userInfo, err := u.GetInfo(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	// already allocate storage
+	if userInfo != nil && userInfo.TotalSize > 0 {
+		return userInfo, nil
+	}
 	// TODO check total size of the titan
 	if err := u.SaveUserTotalStorageSize(u.ID, size); err != nil {
 		return nil, err
 	}
-	return u.GetStorageSize(ctx)
+	return u.GetInfo(ctx)
 }
 
-// GetStorage get size of user storage
-func (u *User) GetStorageSize(ctx context.Context) (*types.StorageSize, error) {
-	return u.LoadUserStorageSize(u.ID)
+// GetInfo get user info
+func (u *User) GetInfo(ctx context.Context) (*types.UserInfo, error) {
+	return u.LoadUserInfo(u.ID)
 }
 
 // CreateAPIKey creates a key for the client API.
@@ -46,7 +59,7 @@ func (u *User) CreateAPIKey(ctx context.Context, keyName string, commonAPI api.C
 		return "", err
 	}
 
-	apiKeys := make(map[string]string)
+	apiKeys := make(map[string]types.UserAPIKeysInfo)
 	if len(buf) > 0 {
 		apiKeys, err = u.decodeAPIKeys(buf)
 		if err != nil {
@@ -62,7 +75,7 @@ func (u *User) CreateAPIKey(ctx context.Context, keyName string, commonAPI api.C
 	if err != nil {
 		return "", err
 	}
-	apiKeys[keyName] = keyValue
+	apiKeys[keyName] = types.UserAPIKeysInfo{CreatedTime: time.Now(), APIKey: keyValue}
 
 	buf, err = u.encodeAPIKeys(apiKeys)
 	if err != nil {
@@ -77,13 +90,13 @@ func (u *User) CreateAPIKey(ctx context.Context, keyName string, commonAPI api.C
 }
 
 // GetAPIKeys get all api key for user.
-func (u *User) GetAPIKeys(ctx context.Context) (map[string]string, error) {
+func (u *User) GetAPIKeys(ctx context.Context) (map[string]types.UserAPIKeysInfo, error) {
 	buf, err := u.LoadUserAPIKeys(u.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	apiKeys := make(map[string]string)
+	apiKeys := make(map[string]types.UserAPIKeysInfo)
 	if len(buf) > 0 {
 		apiKeys, err = u.decodeAPIKeys(buf)
 		if err != nil {
@@ -94,13 +107,23 @@ func (u *User) GetAPIKeys(ctx context.Context) (map[string]string, error) {
 	return apiKeys, nil
 }
 
+// UpdateShareStatus update status
+func (u *User) SetAssetAtShareStatus(ctx context.Context, assetCID string) error {
+	hash, err := cidutil.CIDToHash(assetCID)
+	if err != nil {
+		return xerrors.Errorf("%s cid to hash err:%s", assetCID, err.Error())
+	}
+
+	return u.UpdateAssetShareStatus(hash, u.ID, int64(types.UserAssetShareStatusShared))
+}
+
 func (u *User) DeleteAPIKey(ctx context.Context, name string) error {
 	buf, err := u.LoadUserAPIKeys(u.ID)
 	if err != nil {
 		return err
 	}
 
-	apiKeys := make(map[string]string)
+	apiKeys := make(map[string]types.UserAPIKeysInfo)
 	if len(buf) > 0 {
 		apiKeys, err = u.decodeAPIKeys(buf)
 		if err != nil {
@@ -125,58 +148,72 @@ func (u *User) DeleteAPIKey(ctx context.Context, name string) error {
 func (u *User) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
 	hash, err := cidutil.CIDToHash(req.AssetCID)
 	if err != nil {
-		return nil, xerrors.Errorf("%s cid to hash err:%s", req.AssetCID, err.Error())
+		return nil, &api.ErrWeb{Code: terrors.CidToHashFiled, Message: err.Error()}
 	}
 
-	storageSize, err := u.LoadUserStorageSize(req.UserID)
+	storageSize, err := u.LoadUserInfo(req.UserID)
 	if err != nil {
-		return nil, xerrors.Errorf("LoadUserStorageSize err:%s", err.Error())
+		return nil, &api.ErrWeb{Code: terrors.DatabaseErr, Message: err.Error()}
 	}
 
 	if storageSize.TotalSize-storageSize.UsedSize < req.AssetSize {
-		return nil, xerrors.New("user storage size not enough")
+		return nil, &api.ErrWeb{Code: terrors.UserStorageSizeNotEnough}
 	}
 
 	return u.Manager.CreateAssetUploadTask(hash, req)
 }
 
 // ListAssets lists the assets of the user.
-func (u *User) ListAssets(ctx context.Context, limit, offset int) ([]*types.AssetRecord, error) {
-	aRows, err := u.ListAssetsForUser(u.ID, limit, offset)
+func (u *User) ListAssets(ctx context.Context, limit, offset int, maxCountOfVisitAsset int) (*types.ListAssetRecordRsp, error) {
+	count, err := u.GetAssetCountsForUser(u.ID)
+	if err != nil {
+		log.Errorf("GetAssetCountsForUser err:%s", err.Error())
+		return nil, err
+	}
+
+	userInfo, err := u.LoadUserInfo(u.ID)
+
+	userAssets, err := u.ListAssetsForUser(u.ID, limit, offset)
 	if err != nil {
 		log.Errorf("ListAssetsForUser err:%s", err.Error())
 		return nil, err
 	}
-	defer aRows.Close()
 
-	list := make([]*types.AssetRecord, 0)
-	// loading asset records
-	for aRows.Next() {
-		cInfo := &types.AssetRecord{}
-		err = aRows.StructScan(cInfo)
+	list := make([]*types.AssetOverview, 0)
+	for _, userAsset := range userAssets {
+		record, err := u.LoadAssetRecord(userAsset.Hash)
 		if err != nil {
-			log.Errorf("asset StructScan err: %s", err.Error())
+			log.Errorf("asset LoadAssetRecord err: %s", err.Error())
 			continue
 		}
 
-		stateInfo, err := u.LoadAssetStateInfo(cInfo.Hash, cInfo.ServerID)
+		record.ReplicaInfos, err = u.LoadReplicasByStatus(userAsset.Hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
 		if err != nil {
-			log.Errorf("asset LoadAssetState err: %s", err.Error())
+			log.Errorf("asset LoadReplicasByStatus err: %s", err.Error())
 			continue
 		}
 
-		cInfo.ReplicaInfos, err = u.LoadReplicasByStatus(cInfo.Hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+		count, err := u.GetAssetVisitCount(userAsset.Hash)
 		if err != nil {
-			log.Errorf("asset %s load replicas err: %s", cInfo.CID, err.Error())
+			log.Errorf("get asset visit count err: %s", err.Error())
 			continue
 		}
 
-		cInfo.State = stateInfo.State
+		if !userInfo.EnableVIP && count >= maxCountOfVisitAsset {
+			userAsset.ShareStatus = int64(types.UserAssetShareStatusForbid)
+		}
 
-		list = append(list, cInfo)
+		r := &types.AssetOverview{
+			AssetRecord:      record,
+			UserAssetDetail:  userAsset,
+			VisitCount:       count,
+			RemainVisitCount: maxCountOfVisitAsset - count,
+		}
+
+		list = append(list, r)
 	}
 
-	return list, nil
+	return &types.ListAssetRecordRsp{Total: count, AssetOverviews: list}, nil
 }
 
 // DeleteAsset deletes the assets of the user.
@@ -192,37 +229,16 @@ func (u *User) DeleteAsset(ctx context.Context, cid string) error {
 	}
 
 	if len(users) == 1 && users[0] == u.ID {
-		err = u.Manager.RemoveAsset(hash)
-		if err != nil {
-			return err
-		}
+		return u.Manager.RemoveAsset(hash, true)
 	}
 
-	info, err := u.LoadAssetRecord(hash)
-	if err != nil {
-		return err
-	}
-
-	return u.DeleteAssetUser(hash, u.ID, info.TotalSize)
+	return u.DeleteAssetUser(hash, u.ID)
 }
 
 // ShareAssets shares the assets of the user.
 func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI api.Scheduler, domain string) (map[string]string, error) {
 	// TODO　check asset if belong to user
 	urls := make(map[string]string)
-	if len(domain) > 0 {
-		for _, assetCID := range assetCIDs {
-			tk, err := generateAccessToken(&types.AuthUserDownloadAsset{UserID: u.ID, AssetCID: assetCID}, schedulerAPI.(api.Common))
-			if err != nil {
-				return nil, err
-			}
-			url := fmt.Sprintf("http://%s.%s?token=%s", assetCID, domain, tk)
-			urls[assetCID] = url
-		}
-
-		return urls, nil
-	}
-
 	for _, assetCID := range assetCIDs {
 		downloadInfos, err := schedulerAPI.GetCandidateDownloadInfos(context.Background(), assetCID)
 		if err != nil {
@@ -233,20 +249,77 @@ func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI
 			return nil, fmt.Errorf("asset %s not exist", assetCID)
 		}
 
-		tk, err := generateAccessToken(&types.AuthUserDownloadAsset{UserID: u.ID, AssetCID: assetCID}, schedulerAPI.(api.Common))
+		tk, err := generateAccessToken(&types.AuthUserUploadDownloadAsset{UserID: u.ID, AssetCID: assetCID}, schedulerAPI.(api.Common))
 		if err != nil {
 			return nil, err
 		}
 
-		url := fmt.Sprintf("http://%s/ipfs/%s?token=%s", downloadInfos[0].Address, assetCID, tk)
+		hash, err := cidutil.CIDToHash(assetCID)
+		if err != nil {
+			return nil, err
+		}
+		assetName, err := u.GetAssetName(hash, u.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		url := fmt.Sprintf("http://%s/ipfs/%s?token=%s&filename=%s", downloadInfos[0].Address, assetCID, tk, assetName)
+		if len(domain) > 0 {
+			// remove prefix 'c_'
+			// nodeID := downloadInfos[0].NodeID[2:]
+			url = fmt.Sprintf("https://%s.%s/ipfs/%s?token=%s&filename=%s", assetCID, domain, assetCID, tk, assetName)
+		}
 		urls[assetCID] = url
 	}
 
 	return urls, nil
 }
 
-func (u *User) decodeAPIKeys(buf []byte) (map[string]string, error) {
-	apiKeys := make(map[string]string)
+// GetAssetStatus retrieves a asset status
+func (u *User) GetAssetStatus(ctx context.Context, assetCID string, config *config.SchedulerCfg) (*types.AssetStatus, error) {
+	hash, err := cidutil.CIDToHash(assetCID)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &types.AssetStatus{}
+	expiration, err := u.GetAssetExpiration(hash, u.ID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ret, nil
+		}
+		return nil, err
+	}
+
+	ret.IsExist = true
+	if expiration.Before(time.Now()) {
+		ret.IsExpiration = true
+		return ret, nil
+	}
+
+	userInfo, err := u.LoadUserInfo(u.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if userInfo.EnableVIP {
+		return ret, nil
+	}
+
+	count, err := u.GetAssetVisitCount(hash)
+	if err != nil {
+		return nil, err
+	}
+
+	if count >= config.MaxCountOfVisitShareLink {
+		ret.IsVisitOutOfLimit = true
+	}
+
+	return ret, nil
+}
+
+func (u *User) decodeAPIKeys(buf []byte) (map[string]types.UserAPIKeysInfo, error) {
+	apiKeys := make(map[string]types.UserAPIKeysInfo)
 
 	buffer := bytes.NewBuffer(buf)
 	dec := gob.NewDecoder(buffer)
@@ -257,7 +330,7 @@ func (u *User) decodeAPIKeys(buf []byte) (map[string]string, error) {
 	return apiKeys, nil
 }
 
-func (u *User) encodeAPIKeys(apiKeys map[string]string) ([]byte, error) {
+func (u *User) encodeAPIKeys(apiKeys map[string]types.UserAPIKeysInfo) ([]byte, error) {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
 	err := enc.Encode(apiKeys)
@@ -278,7 +351,7 @@ func generateAPIKey(userID string, commonAPI api.Common) (string, error) {
 	return tk, nil
 }
 
-func generateAccessToken(auth *types.AuthUserDownloadAsset, commonAPI api.Common) (string, error) {
+func generateAccessToken(auth *types.AuthUserUploadDownloadAsset, commonAPI api.Common) (string, error) {
 	buf, err := json.Marshal(auth)
 	if err != nil {
 		return "", err

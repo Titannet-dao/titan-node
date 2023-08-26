@@ -23,6 +23,8 @@ type AssetAPI interface {
 	GetAssetRecord(ctx context.Context, cid string) (*types.AssetRecord, error) //perm:web,admin
 	// GetAssetRecords retrieves a list of asset records with pagination using the specified limit, offset, and states
 	GetAssetRecords(ctx context.Context, limit, offset int, states []string, serverID dtypes.ServerID) ([]*types.AssetRecord, error) //perm:web,admin
+	// GetReplicas retrieves a list of asset replicas with pagination using the specified limit, offset
+	GetReplicas(ctx context.Context, cid string, limit, offset int) (*types.ListReplicaRsp, error) //perm:web,admin
 	// RePullFailedAssets retries the pull process for a list of failed assets
 	RePullFailedAssets(ctx context.Context, hashes []types.AssetHash) error //perm:admin
 	// UpdateAssetExpiration updates the expiration time for an asset with the specified CID
@@ -38,9 +40,9 @@ type AssetAPI interface {
 	// GetReplicaEventsForNode retrieves a replica event list of node
 	GetReplicaEventsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListReplicaEventRsp, error) //perm:web,admin
 	// CreateUserAsset creates an asset with car CID, car name, and car size.
-	CreateUserAsset(ctx context.Context, assetCID, assetName string, assetSize int64) (*types.CreateAssetRsp, error) //perm:user
+	CreateUserAsset(ctx context.Context, nodeID, assetCID, assetName, assetType string, assetSize int64) (*types.CreateAssetRsp, error) //perm:user
 	// ListUserAssets lists the assets of the user.
-	ListUserAssets(ctx context.Context, limit, offset int) ([]*types.AssetRecord, error) //perm:user
+	ListUserAssets(ctx context.Context, limit, offset int) (*types.ListAssetRecordRsp, error) //perm:user
 	// DeleteUserAsset deletes the asset of the user.
 	DeleteUserAsset(ctx context.Context, assetCID string) error //perm:user
 	// ShareUserAssets shares the assets of the user.
@@ -48,11 +50,17 @@ type AssetAPI interface {
 	// CreateAsset creates an asset with car CID, car name, and car size.
 	CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) //perm:web
 	// ListAssets lists the assets of the user.
-	ListAssets(ctx context.Context, userID string, limit, offset int) ([]*types.AssetRecord, error) //perm:web
+	ListAssets(ctx context.Context, userID string, limit, offset int) (*types.ListAssetRecordRsp, error) //perm:web,admin
 	// DeleteAsset deletes the asset of the user.
-	DeleteAsset(ctx context.Context, userID, assetCID string) error //perm:web
+	DeleteAsset(ctx context.Context, userID, assetCID string) error //perm:web,admin
 	// ShareAssets shares the assets of the user.
-	ShareAssets(ctx context.Context, userID string, assetCID []string) (map[string]string, error) //perm:web
+	ShareAssets(ctx context.Context, userID string, assetCID []string) (map[string]string, error) //perm:web,admin
+	// UpdateShareStatus update share status of the user asset
+	UpdateShareStatus(ctx context.Context, userID, assetCID string) error //perm:web,admin
+	// GetAssetStatus retrieves a asset status
+	GetAssetStatus(ctx context.Context, userID, assetCID string) (*types.AssetStatus, error) //perm:web,admin
+	// MinioUploadFileEvent the event of minio upload file
+	MinioUploadFileEvent(ctx context.Context, event *types.MinioUploadFileEvent) error //perm:candidate
 }
 
 // NodeAPI is an interface for node
@@ -62,8 +70,16 @@ type NodeAPI interface {
 	GetOnlineNodeCount(ctx context.Context, nodeType types.NodeType) (int, error) //perm:web,admin
 	// RegisterNode adds new node to the scheduler
 	RegisterNode(ctx context.Context, nodeID, publicKey, key string) error //perm:default
-	// UnregisterNode removes a node from the scheduler with the specified node ID
-	UnregisterNode(ctx context.Context, nodeID string) error //perm:web,admin
+	// DeactivateNode is used to deactivate a node in the titan server.
+	// It stops the node from serving any requests and marks it as inactive.
+	// - nodeID: The ID of the node to deactivate.
+	// - hours: The deactivation countdown time in hours. It specifies the duration
+	// before the deactivation is executed. If the deactivation is canceled within
+	// this period, the node will remain active.
+	DeactivateNode(ctx context.Context, nodeID string, hours int) error //perm:web,admin
+	// UndoNodeDeactivation is used to undo the deactivation of a node in the titan server.
+	// It allows the previously deactivated node to start serving requests again.
+	UndoNodeDeactivation(ctx context.Context, nodeID string) error //perm:web,admin
 	// UpdateNodePort updates the port for the node with the specified node
 	UpdateNodePort(ctx context.Context, nodeID, port string) error //perm:web,admin
 	// EdgeConnect edge node login to the scheduler
@@ -94,6 +110,16 @@ type NodeAPI interface {
 	NodeKeepalive(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate
 	// RequestActivationCodes Get the device's encrypted activation code
 	RequestActivationCodes(ctx context.Context, nodeType types.NodeType, count int) ([]*types.NodeActivation, error) //perm:web,admin
+	// VerifyTokenWithLimitCount verify token in limit count
+	VerifyTokenWithLimitCount(ctx context.Context, token string) (*types.JWTPayload, error) //perm:edge,candidate
+	// UpdateBandwidths update node bandwidthDown and bandwidthUp
+	UpdateBandwidths(ctx context.Context, bandwidthDown, bandwidthUp int64) error //perm:edge,candidate
+	// GetCandidateNodeIP get candidate ip for locator
+	GetCandidateNodeIP(ctx context.Context, nodeID string) (string, error) //perm:web,admin
+	// GetMinioConfigFromCandidate get minio config from candidate
+	GetMinioConfigFromCandidate(ctx context.Context, nodeID string) (*types.MinioConfig, error) //perm:default
+	// GetCandidateIPs get candidate ips
+	GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, error) //perm:web,admin
 }
 
 // UserAPI is an interface for user
@@ -103,15 +129,19 @@ type UserAPI interface {
 
 	// User-related methods
 	// AllocateStorage allocates storage space.
-	AllocateStorage(ctx context.Context, userID string) (*types.StorageSize, error) //perm:web
-	// GetStorageSize get size of user storage
-	GetStorageSize(ctx context.Context, userID string) (*types.StorageSize, error) // perm:web
+	AllocateStorage(ctx context.Context, userID string) (*types.UserInfo, error) //perm:web,admin
+	// GetUserInfo get user info
+	GetUserInfo(ctx context.Context, userID string) (*types.UserInfo, error) // perm:web,admin
 	// CreateAPIKey creates a key for the client API.
-	CreateAPIKey(ctx context.Context, userID, keyName string) (string, error) //perm:web
+	CreateAPIKey(ctx context.Context, userID, keyName string) (string, error) //perm:web,admin
 	// GetAPIKeys get all api key for user.
-	GetAPIKeys(ctx context.Context, userID string) (map[string]string, error) //perm:web
+	GetAPIKeys(ctx context.Context, userID string) (map[string]types.UserAPIKeysInfo, error) //perm:web,admin
 	// DeleteAPIKey delete a api key for user
-	DeleteAPIKey(ctx context.Context, userID, name string) error //perm:web
+	DeleteAPIKey(ctx context.Context, userID, name string) error //perm:web,admin
+	// UserAssetDownloadResult After a user downloads a resource from a candidate node, the candidate node reports the download result
+	UserAssetDownloadResult(ctx context.Context, userID, cid string, totalTraffic, peakBandwidth int64) error //perm:candidate
+	// SetUserVIP set user vip state
+	SetUserVIP(ctx context.Context, userID string, enableVIP bool) error //perm:admin
 }
 
 // Scheduler is an interface for scheduler
@@ -135,6 +165,8 @@ type Scheduler interface {
 	GetWorkloadRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListWorkloadRecordRsp, error) //perm:web,admin
 	// GetWorkloadRecord retrieves result with tokenID
 	GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) //perm:web,admin
+	// GetRetrieveEventRecords retrieves a list of retrieve event with pagination using the specified limit, offset, and node
+	GetRetrieveEventRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListRetrieveEventRsp, error) //perm:web,admin
 
 	// Server-related methods
 	// GetSchedulerPublicKey retrieves the scheduler's public key in PEM format

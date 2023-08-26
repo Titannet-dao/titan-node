@@ -4,15 +4,19 @@ import (
 	"context"
 	"crypto"
 	crand "crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/terrors"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/handler"
@@ -21,6 +25,10 @@ import (
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
 	"golang.org/x/xerrors"
+)
+
+const (
+	connectivityCheckTimeout = 2 * time.Second
 )
 
 // GetOnlineNodeCount returns the count of online nodes for a given node type
@@ -77,10 +85,77 @@ func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey, key str
 	return s.db.SaveNodePublicKey(publicKey, nodeID)
 }
 
+// DeactivateNode is used to deactivate a node in the titan server.
+// It stops the node from serving any requests and marks it as inactive.
+// - nodeID: The ID of the node to deactivate.
+// - hours: The deactivation countdown time in hours. It specifies the duration
+// before the deactivation is executed. If the deactivation is canceled within
+// this period, the node will remain active.
+func (s *Scheduler) DeactivateNode(ctx context.Context, nodeID string, hours int) error {
+	deactivateTime, err := s.db.LoadDeactivateNodeTime(nodeID)
+	if err != nil {
+		return xerrors.Errorf("LoadDeactivateNodeTime %s err : %s", nodeID, err.Error())
+	}
+
+	if deactivateTime > 0 {
+		return xerrors.Errorf("node %s is waiting to deactivate", nodeID)
+	}
+
+	deactivateTime = time.Now().Add(time.Duration(hours) * time.Hour).Unix()
+	err = s.db.SaveDeactivateNode(nodeID, deactivateTime)
+	if err != nil {
+		return xerrors.Errorf("SaveDeactivateNode %s err : %s", nodeID, err.Error())
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		node.DeactivateTime = deactivateTime
+		s.NodeManager.RepayNodeWeight(node)
+
+		// remove from validation
+	}
+
+	err = s.db.NodeExists(nodeID, types.NodeCandidate)
+	if err == nil {
+		// if node is candidate , need to backup asset
+		return s.AssetManager.CandidateDeactivate(nodeID)
+	}
+
+	return nil
+}
+
+// UndoNodeDeactivation is used to undo the deactivation of a node in the titan server.
+// It allows the previously deactivated node to start serving requests again.
+func (s *Scheduler) UndoNodeDeactivation(ctx context.Context, nodeID string) error {
+	deactivateTime, err := s.db.LoadDeactivateNodeTime(nodeID)
+	if err != nil {
+		return xerrors.Errorf("LoadDeactivateNodeTime %s err : %s", nodeID, err.Error())
+	}
+
+	if time.Now().Unix() > deactivateTime {
+		return xerrors.New("Node has been deactivation")
+	}
+
+	err = s.db.SaveDeactivateNode(nodeID, 0)
+	if err != nil {
+		return xerrors.Errorf("DeleteDeactivateNode %s err : %s", nodeID, err.Error())
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		node.DeactivateTime = 0
+		s.NodeManager.DistributeNodeWeight(node)
+
+		// add to validation
+	}
+
+	return nil
+}
+
 // RequestActivationCodes request node activation codes
 func (s *Scheduler) RequestActivationCodes(ctx context.Context, nodeType types.NodeType, count int) ([]*types.NodeActivation, error) {
 	if count < 1 {
-		return nil, xerrors.New("count is 0")
+		return nil, nil
 	}
 
 	areaID := s.SchedulerCfg.AreaID
@@ -90,7 +165,7 @@ func (s *Scheduler) RequestActivationCodes(ctx context.Context, nodeType types.N
 	for i := 0; i < count; i++ {
 		nodeID, err := newNodeID(nodeType)
 		if err != nil {
-			return nil, err
+			return nil, xerrors.Errorf("newNodeID err:%s", err.Error())
 		}
 
 		detail := &types.ActivationDetail{
@@ -102,7 +177,7 @@ func (s *Scheduler) RequestActivationCodes(ctx context.Context, nodeType types.N
 
 		code, err := detail.Marshal()
 		if err != nil {
-			return nil, err
+			return nil, xerrors.Errorf("Marshal err:%s", err.Error())
 		}
 
 		info := &types.NodeActivation{
@@ -116,23 +191,17 @@ func (s *Scheduler) RequestActivationCodes(ctx context.Context, nodeType types.N
 
 	err := s.db.SaveNodeRegisterInfos(details)
 	if err != nil {
-		return nil, err
+		return nil, xerrors.Errorf("SaveNodeRegisterInfos err:%s", err.Error())
 	}
 
 	return out, nil
 }
 
-// UnregisterNode removes a node from the scheduler with the specified node ID
-func (s *Scheduler) UnregisterNode(ctx context.Context, nodeID string) error {
-	// return s.db.DeleteNodeInfo(nodeID)
-	return xerrors.New("Function not implemented")
-}
-
 // UpdateNodePort sets the port for the specified node.
 func (s *Scheduler) UpdateNodePort(ctx context.Context, nodeID, port string) error {
-	baseInfo := s.NodeManager.GetNode(nodeID)
-	if baseInfo != nil {
-		baseInfo.UpdateNodePort(port)
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		node.PortMapping = port
 	}
 
 	return s.NodeManager.UpdatePortMapping(nodeID, port)
@@ -205,12 +274,11 @@ func (s *Scheduler) NodeLogin(ctx context.Context, nodeID, sign string) (string,
 // GetNodeInfo returns information about the specified node.
 func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeInfo, error) {
 	nodeInfo := types.NodeInfo{}
-	nodeInfo.Status = types.NodeOffine
+	nodeInfo.Status = types.NodeOffline
 
 	dbInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
 	if err != nil {
-		log.Errorf("getNodeInfo: %s ,nodeID : %s", err.Error(), nodeID)
-		return types.NodeInfo{}, err
+		return nodeInfo, xerrors.Errorf("LoadNodeInfo err:%s", err.Error())
 	}
 	nodeInfo = *dbInfo
 
@@ -223,6 +291,8 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		nodeInfo.MemoryUsage = node.MemoryUsage
 		nodeInfo.CPUUsage = node.CPUUsage
 		nodeInfo.DiskUsage = node.DiskUsage
+		nodeInfo.BandwidthDown = node.BandwidthDown
+		nodeInfo.BandwidthUp = node.BandwidthUp
 
 		log.Debugf("%s node select codes:%v", nodeID, node.SelectWeights())
 	}
@@ -232,14 +302,14 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 
 // GetNodeList retrieves a list of nodes with pagination.
 func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*types.ListNodesRsp, error) {
-	log.Debugf("GetNodeList start time %s", time.Now().Format("2006-01-02 15:04:05"))
-	defer log.Debugf("GetNodeList end time %s", time.Now().Format("2006-01-02 15:04:05"))
+	startTime := time.Now()
+	defer log.Debugf("GetNodeList request time:%s", time.Since(startTime))
 
-	rsp := &types.ListNodesRsp{Data: make([]types.NodeInfo, 0)}
+	info := &types.ListNodesRsp{Data: make([]types.NodeInfo, 0)}
 
 	rows, total, err := s.NodeManager.LoadNodeInfos(limit, offset)
 	if err != nil {
-		return rsp, err
+		return nil, xerrors.Errorf("LoadNodeInfos err:%s", err.Error())
 	}
 	defer rows.Close()
 
@@ -269,22 +339,23 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 		node := s.NodeManager.GetNode(nodeInfo.NodeID)
 		if node != nil {
 			nodeInfo.Status = nodeStatus(node)
-			nodeInfo.ExternalIP = node.ExternalIP
 			nodeInfo.NATType = node.NATType.String()
 			nodeInfo.Type = node.Type
 			nodeInfo.ExternalIP = node.ExternalIP
 			nodeInfo.MemoryUsage = node.MemoryUsage
 			nodeInfo.CPUUsage = node.CPUUsage
 			nodeInfo.DiskUsage = node.DiskUsage
+			nodeInfo.BandwidthDown = node.BandwidthDown
+			nodeInfo.BandwidthUp = node.BandwidthUp
 		}
 
 		nodeInfos = append(nodeInfos, *nodeInfo)
 	}
 
-	rsp.Data = nodeInfos
-	rsp.Total = total
+	info.Data = nodeInfos
+	info.Total = total
 
-	return rsp, nil
+	return info, nil
 }
 
 func (s *Scheduler) GetCandidateURLsForDetectNat(ctx context.Context) ([]string, error) {
@@ -354,7 +425,7 @@ func (s *Scheduler) GetEdgeDownloadInfos(ctx context.Context, cid string) (*type
 			continue
 		}
 
-		workloadRecord := &types.WorkloadRecord{TokenPayload: *tkPayload, Status: types.WorkloadStatusCreate}
+		workloadRecord := &types.WorkloadRecord{TokenPayload: *tkPayload, Status: types.WorkloadStatusCreate, ClientEndTime: tkPayload.Expiration.Unix()}
 		workloadRecords = append(workloadRecords, workloadRecord)
 
 		info := &types.EdgeDownloadInfo{
@@ -445,7 +516,7 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 			continue
 		}
 
-		workloadRecord := &types.WorkloadRecord{TokenPayload: *tkPayload, Status: types.WorkloadStatusCreate}
+		workloadRecord := &types.WorkloadRecord{TokenPayload: *tkPayload, Status: types.WorkloadStatusCreate, ClientEndTime: tkPayload.Expiration.Unix()}
 		workloadRecords = append(workloadRecords, workloadRecord)
 
 		source := &types.CandidateDownloadInfo{
@@ -488,6 +559,10 @@ func (s *Scheduler) NodeKeepalive(ctx context.Context) (uuid.UUID, error) {
 		if node != nil {
 			if remoteAddr != node.RemoteAddr {
 				return uuid, xerrors.Errorf("node %s remoteAddr inconsistent, new addr %s ,old addr %s", nodeID, remoteAddr, node.RemoteAddr)
+			}
+
+			if node.DeactivateTime > 0 && node.DeactivateTime < time.Now().Unix() {
+				return uuid, xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
 			}
 
 			node.SetLastRequestTime(lastTime)
@@ -535,4 +610,118 @@ func nodeStatus(node *node.Node) types.NodeStatus {
 	}
 
 	return types.NodeServicing
+}
+
+// VerifyTokenWithLimitCount verify token in limit count
+func (s *Scheduler) VerifyTokenWithLimitCount(ctx context.Context, token string) (*types.JWTPayload, error) {
+	jwtPayload, err := s.AuthVerify(ctx, token)
+	if err != nil {
+		return nil, &api.ErrWeb{Code: terrors.VerifyTokenError, Message: fmt.Sprintf("verify token error %s", err.Error())}
+	}
+
+	if len(jwtPayload.Extend) == 0 {
+		return nil, fmt.Errorf("JWTPayload.Extend can not empty")
+	}
+
+	payload := &types.AuthUserUploadDownloadAsset{}
+	if err = json.Unmarshal([]byte(jwtPayload.Extend), payload); err != nil {
+		return nil, err
+	}
+
+	if !payload.Expiration.IsZero() && payload.Expiration.Before(time.Now()) {
+		return nil, fmt.Errorf("token is expiration")
+	}
+
+	assetHash, err := cidutil.CIDToHash(payload.AssetCID)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err = s.db.GetAssetName(assetHash, payload.UserID); err == sql.ErrNoRows {
+		return nil, fmt.Errorf("asset %s does not exist", payload.AssetCID)
+	}
+
+	userInfo, err := s.db.LoadUserInfo(payload.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	if userInfo.EnableVIP {
+		return jwtPayload, nil
+	}
+
+	count, err := s.db.GetAssetVisitCount(assetHash)
+	if err != nil {
+		return nil, err
+	}
+
+	if count >= s.SchedulerCfg.MaxCountOfVisitShareLink {
+		return nil, &api.ErrWeb{Code: terrors.VisitShareLinkOutOfMaxCount, Message: fmt.Sprintf("visit share link is out of max count %d", s.SchedulerCfg.MaxCountOfVisitShareLink)}
+	}
+
+	if err = s.db.UpdateAssetVisitCount(assetHash); err != nil {
+		return nil, err
+	}
+
+	return jwtPayload, nil
+}
+
+// UpdateBandwidths update bandwidths
+func (s *Scheduler) UpdateBandwidths(ctx context.Context, bandwidthDown, bandwidthUp int64) error {
+	nodeID := handler.GetNodeID(ctx)
+	s.NodeManager.UpdateNodeBandwidths(nodeID, bandwidthDown, bandwidthUp)
+
+	return nil
+}
+
+// GetCandidateNodeIP get candidate ip for locator
+func (s *Scheduler) GetCandidateNodeIP(ctx context.Context, nodeID string) (string, error) {
+	node := s.NodeManager.GetCandidateNode(nodeID)
+	if node == nil {
+		return "", fmt.Errorf("node %s does not exist", nodeID)
+	}
+
+	ip, _, err := net.SplitHostPort(node.RemoteAddr)
+	if err != nil {
+		return "", err
+	}
+	return ip, nil
+}
+
+func (s *Scheduler) verifyTCPConnectivity(targetURL string) error {
+	conn, err := net.DialTimeout("tcp", targetURL, connectivityCheckTimeout)
+	if err != nil {
+		return xerrors.Errorf("dial tcp %w, addr %s", err, targetURL)
+	}
+	defer conn.Close()
+
+	return nil
+}
+
+func (s *Scheduler) GetMinioConfigFromCandidate(ctx context.Context, nodeID string) (*types.MinioConfig, error) {
+	node := s.NodeManager.GetCandidateNode(nodeID)
+	if node == nil {
+		return nil, fmt.Errorf("node %s does not exist", nodeID)
+	}
+
+	return node.API.GetMinioConfig(ctx)
+}
+
+func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, error) {
+	list := make([]*types.NodeIPInfo, 0)
+
+	_, cNodes := s.NodeManager.GetAllCandidateNodes()
+	if len(cNodes) == 0 {
+		return list, &api.ErrWeb{Code: terrors.NotFoundNode, Message: fmt.Sprintf("not found node")}
+	}
+
+	for _, n := range cNodes {
+		if n.IsPrivateMinioOnly {
+			continue
+		}
+
+		list = append(list, &types.NodeIPInfo{NodeID: n.NodeID, IP: n.ExternalIP})
+	}
+
+	return list, nil
 }

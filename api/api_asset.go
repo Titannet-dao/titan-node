@@ -19,5 +19,5 @@ type Asset interface {
 	// GetAssetProgresses retrieves the progress of assets with specified assetCIDs
 	GetAssetProgresses(ctx context.Context, assetCIDs []string) (*types.PullResult, error) //perm:admin
 	// CreateAsset notify candidate that user upload asset, return auth token of candidate
-	CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadAsset) (string, error) //perm:admin
+	CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadDownloadAsset) (string, error) //perm:admin
 }

@@ -68,7 +68,7 @@ func (ds *DataSync) CompareBucketHashes(ctx context.Context, hashes map[uint32]s
 		extraBuckets = append(extraBuckets, k)
 	}
 
-	go ds.doSync(ctx, extraBuckets, lostBuckets, mismatchBuckets)
+	go ds.doSync(context.Background(), extraBuckets, lostBuckets, mismatchBuckets)
 
 	return append(mismatchBuckets, lostBuckets...), nil
 }

@@ -2,6 +2,8 @@ package node
 
 import (
 	"errors"
+	"math/rand"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/config"
@@ -52,5 +54,6 @@ func ConfigLocator(c interface{}) Option {
 		Override(new(dtypes.GeoDBPath), func() dtypes.GeoDBPath {
 			return dtypes.GeoDBPath(cfg.GeoDBPath)
 		}),
+		Override(new(*rand.Rand), rand.New(rand.NewSource(time.Now().Unix()))),
 	)
 }

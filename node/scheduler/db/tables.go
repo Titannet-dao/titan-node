@@ -32,7 +32,7 @@ var cNodeInfoTable = `
 	    node_name          VARCHAR(64)  DEFAULT '',
 	    disk_type          VARCHAR(64)  DEFAULT '',
 	    io_system          VARCHAR(64)  DEFAULT '',
-	    system_version     VARCHAR(32)  DEFAULT '',
+	    system_version     VARCHAR(64)  DEFAULT '',
 	    nat_type           VARCHAR(32)  DEFAULT '',
 	    disk_space         FLOAT        DEFAULT 0,
     	bandwidth_up       INT          DEFAULT 0,
@@ -47,6 +47,7 @@ var cNodeInfoTable = `
     	download_traffic   BIGINT       DEFAULT 0,		
     	retrieve_count     INT          DEFAULT 0,	
     	asset_count        INT          DEFAULT 0,
+		deactivate_time    INT          DEFAULT 0,
 	    PRIMARY KEY (node_id)
 	) ENGINE=InnoDB COMMENT='node info';`
 
@@ -145,6 +146,7 @@ var cWorkloadTable = `
 		client_workload BLOB ,
 		node_workload   BLOB ,
 		status          TINYINT      DEFAULT 0,
+		client_end_time INT          DEFAULT 0,
 		PRIMARY KEY (token_id),
 		KEY idx_node_id (node_id),
 		KEY idx_status (status)
@@ -155,26 +157,64 @@ var cUserAssetTable = `
 	    hash              VARCHAR(128) NOT NULL,
 	    user_id           VARCHAR(128) NOT NULL,
 	    asset_name        VARCHAR(128) DEFAULT '' ,
+		asset_type        VARCHAR(128) DEFAULT '' ,
+		share_status      TINYINT      DEFAULT 0,
 	    created_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		total_size        BIGINT       DEFAULT 0,
+		expiration        DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (hash,user_id),
 		KEY idx_user_id (user_id)
     ) ENGINE=InnoDB COMMENT='user asset';`
 
-var cUserAPIKeyStorageTable = `
+var cUserInfoTable = `
     CREATE TABLE if not exists %s (
 	    user_id             VARCHAR(128) NOT NULL,
 		total_storage_size 	BIGINT      DEFAULT 0,
 		used_storage_size 	BIGINT      DEFAULT 0,
 		api_keys		    BLOB,
+		total_traffic       BIGINT      DEFAULT 0,
+		peak_bandwidth 	    INT         DEFAULT 0,
+		download_count 	    INT         DEFAULT 0,
+		enable_vip  	    BOOLEAN,
 		PRIMARY KEY (user_id)
-    ) ENGINE=InnoDB COMMENT='user api keys and storage';`
+    ) ENGINE=InnoDB COMMENT='user infos';`
 
 var cReplicaEventTable = `
     CREATE TABLE if not exists %s (
 		hash          VARCHAR(128) NOT NULL,
 		event         TINYINT      DEFAULT 0,
 		node_id       VARCHAR(128) NOT NULL,
+		cid           VARCHAR(128) DEFAULT '',
+		total_size    BIGINT       DEFAULT 0,
 	    end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		expiration    DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		KEY idx_hash (hash),
 		KEY idx_node_id (node_id)
 	) ENGINE=InnoDB COMMENT='asset replica event';`
+
+var cRetrieveEventTable = `
+    CREATE TABLE if not exists %s (
+		token_id        VARCHAR(128) NOT NULL UNIQUE,
+		node_id         VARCHAR(128) NOT NULL,
+		client_id       VARCHAR(128) NOT NULL,
+		cid             VARCHAR(128) NOT NULL,
+		size            INT          DEFAULT 0,
+		created_time    INT          DEFAULT 0,
+		end_time        INT          DEFAULT 0,
+	    profit          FLOAT        DEFAULT 0,
+		PRIMARY KEY (token_id),
+		KEY idx_node_id (node_id)
+	) ENGINE=InnoDB COMMENT='asset retrieve event';`
+
+var cAssetVisitCountTable = `
+    CREATE TABLE if not exists %s (
+	    hash        VARCHAR(128) NOT NULL,
+		count       INT 		 DEFAULT 0,
+		PRIMARY KEY (hash)
+    ) ENGINE=InnoDB COMMENT='user asset visit count';`
+
+var cReplenishBackupTable = `
+    CREATE TABLE if not exists %s (
+	    hash        VARCHAR(128) NOT NULL,
+		PRIMARY KEY (hash)
+    ) ENGINE=InnoDB COMMENT='Assets that need to be replenish backed up to candidate nodes';`

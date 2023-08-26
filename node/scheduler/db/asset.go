@@ -42,23 +42,37 @@ func (n *SQLDB) UpdateReplicaInfo(cInfo *types.ReplicaInfo) error {
 		return xerrors.New("nothing to update")
 	}
 
-	if cInfo.Status == types.ReplicaStatusSucceeded {
-		// replica event
-		query := fmt.Sprintf(
-			`INSERT INTO %s (hash, event, node_id) 
-			VALUES (?, ?, ?)`, replicaEventTable)
+	return tx.Commit()
+}
 
-		_, err := tx.Exec(query, cInfo.Hash, types.ReplicaEventAdd, cInfo.NodeID)
-		if err != nil {
-			return err
-		}
+func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiration time.Time) error {
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
 
-		// update node asset count
-		query = fmt.Sprintf(`UPDATE %s SET asset_count=asset_count+? WHERE node_id=?`, nodeInfoTable)
-		_, err = tx.Exec(query, 1, cInfo.NodeID)
-		if err != nil {
-			return err
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("Rollback err:%s", err.Error())
 		}
+	}()
+
+	// replica event
+	query := fmt.Sprintf(
+		`INSERT INTO %s (hash, event, node_id, total_size, cid, expiration) 
+			VALUES (?, ?, ?, ?, ?, ?)`, replicaEventTable)
+
+	_, err = tx.Exec(query, hash, types.ReplicaEventAdd, nodeID, size, cid, expiration)
+	if err != nil {
+		return err
+	}
+
+	// update node asset count
+	query = fmt.Sprintf(`UPDATE %s SET asset_count=asset_count+?,download_traffic=download_traffic+? WHERE node_id=?`, nodeInfoTable)
+	_, err = tx.Exec(query, 1, size, nodeID)
+	if err != nil {
+		return err
 	}
 
 	return tx.Commit()
@@ -97,8 +111,6 @@ func (n *SQLDB) UpdateAssetInfo(hash, state string, totalBlock, totalSize, retry
 			log.Errorf("SaveAssetRecord Rollback err:%s", err.Error())
 		}
 	}()
-
-	fmt.Println("UpdateAssetInfo state : ", state)
 
 	// update state table
 	query := fmt.Sprintf(
@@ -171,10 +183,10 @@ func (n *SQLDB) LoadReplicasByStatus(hash string, statuses []types.ReplicaStatus
 	return out, nil
 }
 
-// LoadReplicasOfNode load asset replica information based on node.
-func (n *SQLDB) LoadReplicasOfNode(nodeID string) ([]*types.ReplicaInfo, error) {
-	var out []*types.ReplicaInfo
-	query := fmt.Sprintf(`SELECT * FROM %s WHERE node_id=? AND status=?`, replicaInfoTable)
+// LoadAllHashesOfNode load asset replica information based on node.
+func (n *SQLDB) LoadAllHashesOfNode(nodeID string) ([]string, error) {
+	var out []string
+	query := fmt.Sprintf(`SELECT hash FROM %s WHERE node_id=? AND status=?`, replicaInfoTable)
 	if err := n.db.Select(&out, query, nodeID, types.ReplicaStatusSucceeded); err != nil {
 		return nil, err
 	}
@@ -182,13 +194,41 @@ func (n *SQLDB) LoadReplicasOfNode(nodeID string) ([]*types.ReplicaInfo, error) 
 	return out, nil
 }
 
-// LoadReplicas load replicas of node.
-func (n *SQLDB) LoadReplicas(nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) {
+// LoadReplicasByHash load replicas of asset hash.
+func (n *SQLDB) LoadReplicasByHash(hash string, limit, offset int) (*types.ListReplicaRsp, error) {
+	res := new(types.ListReplicaRsp)
+	var infos []*types.ReplicaInfo
+	query := fmt.Sprintf("SELECT * FROM %s WHERE hash=? AND status=? order by node_id desc LIMIT ? OFFSET ?", replicaInfoTable)
+	if limit > loadReplicaDefaultLimit {
+		limit = loadReplicaDefaultLimit
+	}
+
+	err := n.db.Select(&infos, query, hash, types.ReplicaStatusSucceeded, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	res.ReplicaInfos = infos
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE hash=? AND status=?", replicaInfoTable)
+	var count int
+	err = n.db.Get(&count, countQuery, hash, types.ReplicaStatusSucceeded)
+	if err != nil {
+		return nil, err
+	}
+
+	res.Total = count
+
+	return res, nil
+}
+
+// LoadReplicasByNodeID load replicas of node.
+func (n *SQLDB) LoadReplicasByNodeID(nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) {
 	res := new(types.ListNodeAssetRsp)
 	var infos []*types.NodeAssetInfo
 	query := fmt.Sprintf("SELECT a.hash,a.end_time,b.cid,b.total_size,b.expiration FROM %s a LEFT JOIN %s b ON a.hash = b.hash WHERE a.node_id=? AND a.status=? order by a.end_time desc LIMIT ? OFFSET ?", replicaInfoTable, assetRecordTable)
-	if limit > loadAssetRecordsDefaultLimit {
-		limit = loadAssetRecordsDefaultLimit
+	if limit > loadReplicaDefaultLimit {
+		limit = loadReplicaDefaultLimit
 	}
 
 	err := n.db.Select(&infos, query, nodeID, types.ReplicaStatusSucceeded, limit, offset)
@@ -294,7 +334,7 @@ func (n *SQLDB) DeleteUnfinishedReplicas(hash string) error {
 // AssetExists checks if an asset exists in the state machine table of the specified server.
 func (n *SQLDB) AssetExists(hash string, serverID dtypes.ServerID) (bool, error) {
 	var total int64
-	countSQL := fmt.Sprintf(`SELECT count(hash) FROM %s WHERE hash=?`, assetStateTable(serverID))
+	countSQL := fmt.Sprintf(`SELECT count(hash) FROM %s WHERE hash=? `, assetStateTable(serverID))
 	if err := n.db.Get(&total, countSQL, hash); err != nil {
 		return false, err
 	}
@@ -351,9 +391,9 @@ func (n *SQLDB) SaveAssetRecord(rInfo *types.AssetRecord) error {
 
 	// asset record
 	query := fmt.Sprintf(
-		`INSERT INTO %s (hash, scheduler_sid, cid, edge_replicas, candidate_replicas, expiration, bandwidth, total_size) 
-		        VALUES (:hash, :scheduler_sid, :cid, :edge_replicas, :candidate_replicas, :expiration, :bandwidth, :total_size)
-				ON DUPLICATE KEY UPDATE scheduler_sid=:scheduler_sid, edge_replicas=:edge_replicas,
+		`INSERT INTO %s (hash, scheduler_sid, cid, edge_replicas, candidate_replicas, expiration, bandwidth, total_size, created_time) 
+		        VALUES (:hash, :scheduler_sid, :cid, :edge_replicas, :candidate_replicas, :expiration, :bandwidth, :total_size, :created_time)
+				ON DUPLICATE KEY UPDATE scheduler_sid=:scheduler_sid, edge_replicas=:edge_replicas, created_time=:created_time,
 				candidate_replicas=:candidate_replicas, expiration=:expiration, bandwidth=:bandwidth, total_size=:total_size`, assetRecordTable)
 	_, err = tx.NamedExec(query, rInfo)
 	if err != nil {
@@ -377,7 +417,7 @@ func (n *SQLDB) LoadReplicaEvents(nodeID string, limit, offset int) (*types.List
 	res := new(types.ListReplicaEventRsp)
 
 	var infos []*types.ReplicaEventInfo
-	query := fmt.Sprintf("SELECT a.*,b.cid,b.total_size,b.expiration FROM %s a LEFT JOIN %s b ON a.hash=b.hash WHERE a.node_id=? AND a.event=? order by a.end_time desc LIMIT ? OFFSET ? ", replicaEventTable, assetRecordTable)
+	query := fmt.Sprintf("SELECT * FROM %s WHERE node_id=? AND event=? order by end_time desc LIMIT ? OFFSET ? ", replicaEventTable)
 	if limit > loadReplicaEventDefaultLimit {
 		limit = loadReplicaEventDefaultLimit
 	}
@@ -399,4 +439,85 @@ func (n *SQLDB) LoadReplicaEvents(nodeID string, limit, offset int) (*types.List
 	res.Total = count
 
 	return res, nil
+}
+
+// SaveReplenishBackup Save assets that require replenish backups
+func (n *SQLDB) SaveReplenishBackup(hashes []string) error {
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("SaveAssetRecord Rollback err:%s", err.Error())
+		}
+	}()
+
+	for _, hash := range hashes {
+		query := fmt.Sprintf(
+			`INSERT INTO %s (hash) 
+		        VALUES (?) 
+				ON DUPLICATE KEY UPDATE hash=?`, replenishBackupTable)
+		_, err := tx.Exec(query, hash, hash)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteReplenishBackup delete
+func (n *SQLDB) DeleteReplenishBackup(hash string) error {
+	query := fmt.Sprintf(`DELETE FROM %s WHERE hash=? `, replenishBackupTable)
+	_, err := n.db.Exec(query, hash)
+
+	return err
+}
+
+// LoadReplenishBackups load asset replica information
+func (n *SQLDB) LoadReplenishBackups() ([]string, error) {
+	var out []string
+	query := fmt.Sprintf(`SELECT hash FROM %s`, replenishBackupTable)
+	if err := n.db.Select(&out, query); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// DeleteAssetRecordsOfNode clean asset records of node
+func (n *SQLDB) DeleteAssetRecordsOfNode(nodeID string) error {
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("SaveAssetRecord Rollback err:%s", err.Error())
+		}
+	}()
+
+	query := fmt.Sprintf(`DELETE FROM %s WHERE node_id=? `, replicaInfoTable)
+	_, err = tx.Exec(query, nodeID)
+	if err != nil {
+		return err
+	}
+
+	query = fmt.Sprintf(`DELETE FROM %s WHERE node_id=?`, assetsViewTable)
+	_, err = tx.Exec(query, nodeID)
+	if err != nil {
+		return err
+	}
+
+	query = fmt.Sprintf(`DELETE FROM %s WHERE bucket_id LIKE ?`, bucketTable)
+	_, err = tx.Exec(query, nodeID+"%")
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

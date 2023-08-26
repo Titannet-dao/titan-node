@@ -30,7 +30,7 @@ type ValidationInfo struct {
 type JWTPayload struct {
 	Allow []auth.Permission
 	ID    string
-	//TODO remove NodeID later, any role id replace as ID
+	// TODO remove NodeID later, any role id replace as ID
 	NodeID string
 	// Extend is json string
 	Extend string

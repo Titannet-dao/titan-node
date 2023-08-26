@@ -33,6 +33,7 @@ var assetCmds = &cli.Command{
 		removeAssetRecordCmd,
 		removeAssetReplicaCmd,
 		resetExpirationCmd,
+		restartAssetCmd,
 	},
 }
 
@@ -155,6 +156,35 @@ var showAssetInfoCmd = &cli.Command{
 		fmt.Printf("Succeed: %d", succeed)
 
 		return nil
+	},
+}
+
+var restartAssetCmd = &cli.Command{
+	Name:  "restart",
+	Usage: "publish restart asset tasks to nodes",
+	Flags: []cli.Flag{
+		cidFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		cid := cctx.String("cid")
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		if cid == "" {
+			return xerrors.New("cid is nil")
+		}
+
+		info, err := schedulerAPI.GetAssetRecord(ctx, cid)
+		if err != nil {
+			return err
+		}
+
+		return schedulerAPI.RePullFailedAssets(ctx, []types.AssetHash{types.AssetHash(info.Hash)})
 	},
 }
 

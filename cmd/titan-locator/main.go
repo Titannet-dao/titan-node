@@ -23,6 +23,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/locator"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
+	"github.com/Filecoin-Titan/titan/region"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/quic-go/quic-go/http3"
 
@@ -158,8 +159,8 @@ var runCmd = &cli.Command{
 				node.Override(new(dtypes.GeoDBPath), func() dtypes.GeoDBPath {
 					return dtypes.GeoDBPath(cctx.String("geodb-path"))
 				})),
-			node.Override(new(*locator.DNSServer), func(config *config.LocatorCfg) *locator.DNSServer {
-				return locator.NewDNSServer(config, locatorAPI)
+			node.Override(new(*locator.DNSServer), func(config *config.LocatorCfg, reg region.Region) *locator.DNSServer {
+				return locator.NewDNSServer(config, locatorAPI, reg)
 			}),
 		)
 		if err != nil {

@@ -95,7 +95,7 @@ func (m *Manager) getElectionCycle() time.Duration {
 func (m *Manager) electValidators() []string {
 	ratio := m.getValidatorRatio()
 
-	list := m.nodeMgr.GetAllCandidateNodes()
+	list, _ := m.nodeMgr.GetAllCandidateNodes()
 
 	needValidatorCount := int(math.Ceil(float64(len(list)) * ratio))
 	if needValidatorCount <= 0 {

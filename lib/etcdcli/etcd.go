@@ -18,7 +18,7 @@ const (
 
 	masterAliveDuration = 60 * 5 // Second
 
-	masterName = "/master/%s"
+	masterName = "/master/%s/%s"
 )
 
 // Client etcd client
@@ -191,7 +191,7 @@ func (c *Client) releaseLock(lockPfx string, leaseID clientv3.LeaseID) error {
 }
 
 // AcquireMasterLock Request to become a master server
-func (c *Client) AcquireMasterLock(serverType string, lID int64) (int64, error) {
+func (c *Client) AcquireMasterLock(areaID, serverType string, lID int64) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectServerTimeoutTime*time.Second)
 	defer cancel()
 
@@ -218,7 +218,7 @@ func (c *Client) AcquireMasterLock(serverType string, lID int64) (int64, error) 
 		leaseID = int64(lease.ID)
 	}
 
-	err := c.acquireLock(fmt.Sprintf(masterName, serverType), clientv3.LeaseID(leaseID))
+	err := c.acquireLock(fmt.Sprintf(masterName, areaID, serverType), clientv3.LeaseID(leaseID))
 	if err != nil {
 		return 0, err
 	}
@@ -243,6 +243,6 @@ func (c *Client) AcquireMasterLock(serverType string, lID int64) (int64, error) 
 }
 
 // ReleaseMasterLock release master lock
-func (c *Client) ReleaseMasterLock(leaseID int64, serverType string) error {
-	return c.releaseLock(fmt.Sprintf(masterName, serverType), clientv3.LeaseID(leaseID))
+func (c *Client) ReleaseMasterLock(leaseID int64, areaID, serverType string) error {
+	return c.releaseLock(fmt.Sprintf(masterName, areaID, serverType), clientv3.LeaseID(leaseID))
 }

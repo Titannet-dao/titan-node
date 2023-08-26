@@ -79,11 +79,15 @@ func StateGetRandomnessFromBeacon(url string) (int64, error) {
 	if err != nil {
 		return seed, err
 	}
-	s := binary.BigEndian.Uint32(rs)
 
-	log.Debugf("lotus Randomness:%d \n", s)
+	if len(rs) >= 3 {
+		s := binary.BigEndian.Uint32(rs)
+		log.Debugf("lotus Randomness:%d \n", s)
+		return int64(s), nil
+	}
 
-	return int64(s), nil
+	log.Debugf("lotus Randomness rs:%v \n", rs)
+	return seed, nil
 }
 
 func requestLotus(url string, req request) (*response, error) {

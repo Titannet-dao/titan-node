@@ -31,6 +31,7 @@ func NewScheduler(ctx context.Context, addr string, requestHeader http.Header) (
 		api.GetInternalStructs(&res),
 		requestHeader,
 		rpcenc.ReaderParamEncoder(pushURL),
+		jsonrpc.WithErrors(api.RPCErrors),
 	)
 
 	return &res, closer, err
@@ -65,6 +66,7 @@ func NewCandidate(ctx context.Context, addr string, requestHeader http.Header, o
 		api.GetInternalStructs(&res), requestHeader,
 		append([]jsonrpc.Option{
 			rpcenc.ReaderParamEncoder(pushURL),
+			jsonrpc.WithErrors(api.RPCErrors),
 		}, opts...)...)
 
 	return &res, closer, err
@@ -81,6 +83,7 @@ func NewEdge(ctx context.Context, addr string, requestHeader http.Header) (api.E
 		api.GetInternalStructs(&res),
 		requestHeader,
 		rpcenc.ReaderParamEncoder(pushURL),
+		jsonrpc.WithErrors(api.RPCErrors),
 		jsonrpc.WithNoReconnect(),
 		jsonrpc.WithTimeout(30*time.Second),
 	)

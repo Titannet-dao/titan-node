@@ -1,12 +1,11 @@
 package httpserver
 
 import (
+	"fmt"
 	"net/http"
-
-	"github.com/Filecoin-Titan/titan/api/types"
 )
 
 // serveCodec serves requests for codec endpoints.
-func (hs *HttpServer) serveCodec(w http.ResponseWriter, r *http.Request, tkPayload *types.TokenPayload) {
-	http.Error(w, "not implement", http.StatusBadRequest)
+func (hs *HttpServer) serveCodec(w http.ResponseWriter, r *http.Request, assetCID string) (int, error) {
+	return http.StatusBadRequest, fmt.Errorf("not implement")
 }

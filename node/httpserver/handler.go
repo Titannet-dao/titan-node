@@ -33,7 +33,7 @@ type Handler struct {
 func resetPath(r *http.Request) {
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
-		log.Errorf("SplitHostPort error :%s", err.Error())
+		log.Debugf("SplitHostPort error :%s", err.Error())
 		return
 	}
 
@@ -75,7 +75,11 @@ func (hs *HttpServer) NewHandler(handler http.Handler) http.Handler {
 func (hs *HttpServer) handler(w http.ResponseWriter, r *http.Request) {
 	log.Debugf("handler path: %s", r.URL.Path)
 
+	setAccessControlAllowForHeader(w)
+
 	switch r.Method {
+	case http.MethodOptions:
+		return
 	case http.MethodHead:
 		hs.headHandler(w, r)
 	case http.MethodGet:
@@ -117,7 +121,7 @@ func addCacheControlHeaders(w http.ResponseWriter, r *http.Request, contentPath 
 		modtime = time.Now()
 	} else {
 		// immutable! CACHE ALL THE THINGS, FOREVER! wolololol
-		w.Header().Set("Cache-Control", immutableCacheControl)
+		// w.Header().Set("Cache-Control", immutableCacheControl)
 
 		// Set modtime to 'zero time' to disable Last-Modified header (superseded by Cache-Control)
 		modtime = time.Unix(0, 0)
@@ -158,4 +162,11 @@ func addContentDispositionHeader(w http.ResponseWriter, r *http.Request, content
 		name = urlFilename
 	}
 	return name
+}
+
+func setAccessControlAllowForHeader(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+	w.Header().Set("Access-Control-Expose-Headers", "Authorization")
 }

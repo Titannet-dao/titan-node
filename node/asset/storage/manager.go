@@ -6,6 +6,8 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/blocks"
 	logging "github.com/ipfs/go-log/v2"
@@ -27,22 +29,30 @@ const (
 
 // Manager handles storage operations
 type Manager struct {
-	opts       *ManagerOptions
-	asset      *asset
-	wl         *waitList
-	puller     *puller
-	blockCount *blockCount
-	assetsView *assetsView
+	opts         *ManagerOptions
+	asset        *asset
+	wl           *waitList
+	puller       *puller
+	blockCount   *blockCount
+	assetsView   *assetsView
+	minioService IMinioService
 }
 
 // ManagerOptions contains configuration options for the Manager
 type ManagerOptions struct {
 	MetaDataPath string
 	AssetsPaths  []string
+	MinioConfig  *config.MinioConfig
+	SchedulerAPI api.Scheduler
 }
 
 // NewManager creates a new Manager instance
 func NewManager(opts *ManagerOptions) (*Manager, error) {
+	var minio IMinioService = nil
+	if iminio, err := newMinioService(opts.MinioConfig, opts.SchedulerAPI); err == nil {
+		minio = iminio
+	}
+
 	assetsPaths, err := newAssetsPaths(opts.AssetsPaths, assetsDir)
 	if err != nil {
 		return nil, err
@@ -70,12 +80,13 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 
 	waitList := newWaitList(filepath.Join(opts.MetaDataPath, waitListFile))
 	return &Manager{
-		asset:      asset,
-		assetsView: assetsView,
-		wl:         waitList,
-		puller:     puller,
-		blockCount: blockCount,
-		opts:       opts,
+		asset:        asset,
+		assetsView:   assetsView,
+		wl:           waitList,
+		puller:       puller,
+		blockCount:   blockCount,
+		opts:         opts,
+		minioService: minio,
 	}, nil
 }
 
@@ -200,6 +211,10 @@ func (m *Manager) GetWaitList() ([]byte, error) {
 
 // GetDiskUsageStat retrieves the disk usage statistics
 func (m *Manager) GetDiskUsageStat() (totalSpace, usage float64) {
+	if m.minioService != nil {
+		return m.minioService.GetMinioStat(context.Background())
+	}
+
 	usageStat, err := disk.Usage(m.opts.MetaDataPath)
 	if err != nil {
 		log.Errorf("get disk usage stat error: %s", err)

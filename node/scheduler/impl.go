@@ -120,6 +120,13 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 			// init node info
 			nodeInfo.PortMapping = oldInfo.PortMapping
 			nodeInfo.OnlineDuration = oldInfo.OnlineDuration
+			nodeInfo.BandwidthDown = oldInfo.BandwidthDown
+			nodeInfo.BandwidthUp = oldInfo.BandwidthUp
+			nodeInfo.DeactivateTime = oldInfo.DeactivateTime
+
+			if oldInfo.DeactivateTime > 0 && oldInfo.DeactivateTime < time.Now().Unix() {
+				return xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
+			}
 		}
 		nodeInfo.ExternalIP, _, err = net.SplitHostPort(remoteAddr)
 		if err != nil {
@@ -130,6 +137,7 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		cNode.PublicKey = publicKey
 		cNode.TCPPort = opts.TcpServerPort
 		cNode.RemoteAddr = remoteAddr
+		cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
 		err = s.NodeManager.NodeOnline(cNode, &nodeInfo)
 		if err != nil {
@@ -193,8 +201,8 @@ func (s *Scheduler) TriggerElection(ctx context.Context) error {
 
 // GetValidationResults retrieves a list of validation results.
 func (s *Scheduler) GetValidationResults(ctx context.Context, nodeID string, limit, offset int) (*types.ListValidationResultRsp, error) {
-	log.Debugf("GetValidationResults start time %s", time.Now().Format("2006-01-02 15:04:05"))
-	defer log.Debugf("GetValidationResults end time %s", time.Now().Format("2006-01-02 15:04:05"))
+	startTime := time.Now()
+	defer log.Debugf("GetValidationResults [%s] request time:%s", nodeID, time.Since(startTime))
 
 	svm, err := s.NodeManager.LoadValidationResultInfos(nodeID, limit, offset)
 	if err != nil {
@@ -273,10 +281,18 @@ func (s *Scheduler) SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) e
 
 // GetWorkloadRecords retrieves a list of workload results.
 func (s *Scheduler) GetWorkloadRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListWorkloadRecordRsp, error) {
-	log.Debugf("GetWorkloadRecords start time %s", time.Now().Format("2006-01-02 15:04:05"))
-	defer log.Debugf("GetWorkloadRecords end time %s", time.Now().Format("2006-01-02 15:04:05"))
+	startTime := time.Now()
+	defer log.Debugf("GetWorkloadRecords [%s] request time:%s", nodeID, time.Since(startTime))
 
 	return s.NodeManager.LoadWorkloadRecords(nodeID, limit, offset)
+}
+
+// GetRetrieveEventRecords retrieves a list of retrieve events
+func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListRetrieveEventRsp, error) {
+	startTime := time.Now()
+	defer log.Debugf("GetRetrieveEventRecords [%s] request time:%s", nodeID, time.Since(startTime))
+
+	return s.NodeManager.LoadRetrieveEventRecords(nodeID, limit, offset)
 }
 
 // GetWorkloadRecord retrieves workload result.

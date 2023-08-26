@@ -16,6 +16,11 @@ import (
 const (
 	duration           = 10              // Validation duration per node (Unit:Second)
 	validationInterval = 5 * time.Minute // validation start-up time interval (Unit:minute)
+
+	// Processing validation result data from 5 days ago
+	vResultDay = 5 * oneDay
+	// Process 1000 pieces of validation result data at a time
+	vResultLimit = 1000
 )
 
 // startValidationTicker starts the validation process.
@@ -187,11 +192,16 @@ func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.Valida
 		TokenID:     vr.Token,
 	}
 
+	if status == types.ValidationStatusSuccess {
+		m.nodeMgr.UpdateNodeBandwidths(vr.NodeID, 0, int64(vr.Bandwidth))
+	}
+
 	return m.nodeMgr.UpdateValidationResultInfo(resultInfo)
 }
 
 // PushResult push validation result info to queue
 func (m *Manager) PushResult(vr *api.ValidationResult) {
+	// TODO If the server is down, the data will be lost
 	m.resultQueue <- vr
 }
 
@@ -331,4 +341,105 @@ func (m *Manager) compareCid(cidStr1, cidStr2 string) bool {
 	}
 
 	return hash1 == hash2
+}
+
+func (m *Manager) startHandleResultsTimer() {
+	now := time.Now()
+
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+	if now.After(nextTime) {
+		nextTime = nextTime.Add(oneDay)
+	}
+
+	duration := nextTime.Sub(now)
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	for {
+		<-timer.C
+
+		log.Debugln("start node timer...")
+		m.handleValidationResults()
+
+		timer.Reset(oneDay)
+	}
+}
+
+func (m *Manager) handleValidationResults() {
+	if !m.leadershipMgr.RequestAndBecomeMaster() {
+		return
+	}
+
+	defer log.Infoln("handleValidationResults end")
+	log.Infoln("handleValidationResults start")
+
+	maxTime := time.Now().Add(-vResultDay)
+
+	// do handle validation result
+	for {
+		infos, nodeProfits, err := m.loadResults(maxTime)
+		if err != nil {
+			log.Errorf("loadResults err:%s", err.Error())
+			return
+		}
+
+		if len(infos) == 0 {
+			return
+		}
+
+		err = m.nodeMgr.UpdateNodeInfosByValidationResult(infos, nodeProfits)
+		if err != nil {
+			log.Errorf("UpdateNodeProfitsByValidationResult err:%s", err.Error())
+			return
+		}
+
+	}
+}
+
+func (m *Manager) loadResults(maxTime time.Time) ([]*types.ValidationResultInfo, map[string]float64, error) {
+	rows, err := m.nodeMgr.LoadUnCalculatedValidationResults(maxTime, vResultLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	infos := make([]*types.ValidationResultInfo, 0)
+	nodeProfits := make(map[string]float64)
+
+	for rows.Next() {
+		vInfo := &types.ValidationResultInfo{}
+		err = rows.StructScan(vInfo)
+		if err != nil {
+			log.Errorf("loadResults StructScan err: %s", err.Error())
+			continue
+		}
+
+		if vInfo.Status == types.ValidationStatusCancel {
+			tokenID := vInfo.TokenID
+			record, err := m.nodeMgr.LoadRetrieveEvent(tokenID)
+			if err != nil {
+				vInfo.Profit = 0
+			}
+
+			// check time
+			if record.CreatedTime > vInfo.EndTime.Unix() {
+				vInfo.Profit = 0
+			}
+
+			if record.EndTime < vInfo.StartTime.Unix() {
+				vInfo.Profit = 0
+			}
+		}
+
+		infos = append(infos, vInfo)
+
+		if vInfo.Profit == 0 {
+			continue
+		}
+
+		nodeProfits[vInfo.NodeID] += vInfo.Profit
+	}
+
+	return infos, nodeProfits, nil
 }

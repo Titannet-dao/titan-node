@@ -30,20 +30,21 @@ type NodeInfo struct {
 	ExternalIP string
 	InternalIP string
 
-	FirstTime     time.Time       `db:"first_login_time"`
-	BandwidthUp   int64           `json:"bandwidth_up" db:"bandwidth_up"`
-	BandwidthDown int64           `json:"bandwidth_down" db:"bandwidth_down"`
-	DiskSpace     float64         `json:"disk_space" form:"diskSpace" gorm:"column:disk_space;comment:;" db:"disk_space"`
-	SystemVersion string          `json:"system_version" form:"systemVersion" gorm:"column:system_version;comment:;" db:"system_version"`
-	DiskType      string          `json:"disk_type" form:"diskType" gorm:"column:disk_type;comment:;" db:"disk_type"`
-	IoSystem      string          `json:"io_system" form:"ioSystem" gorm:"column:io_system;comment:;" db:"io_system"`
-	NodeName      string          `json:"node_name" form:"nodeName" gorm:"column:node_name;comment:;" db:"node_name"`
-	Memory        float64         `json:"memory" form:"memory" gorm:"column:memory;comment:;" db:"memory"`
-	CPUCores      int             `json:"cpu_cores" form:"cpuCores" gorm:"column:cpu_cores;comment:;" db:"cpu_cores"`
-	MacLocation   string          `json:"mac_location" form:"macLocation" gorm:"column:mac_location;comment:;" db:"mac_location"`
-	NATType       string          `db:"nat_type"`
-	PortMapping   string          `db:"port_mapping"`
-	SchedulerID   dtypes.ServerID `db:"scheduler_sid"`
+	FirstTime      time.Time       `db:"first_login_time"`
+	BandwidthUp    int64           `json:"bandwidth_up" db:"bandwidth_up"`
+	BandwidthDown  int64           `json:"bandwidth_down" db:"bandwidth_down"`
+	DiskSpace      float64         `json:"disk_space" form:"diskSpace" gorm:"column:disk_space;comment:;" db:"disk_space"`
+	SystemVersion  string          `json:"system_version" form:"systemVersion" gorm:"column:system_version;comment:;" db:"system_version"`
+	DiskType       string          `json:"disk_type" form:"diskType" gorm:"column:disk_type;comment:;" db:"disk_type"`
+	IoSystem       string          `json:"io_system" form:"ioSystem" gorm:"column:io_system;comment:;" db:"io_system"`
+	NodeName       string          `json:"node_name" form:"nodeName" gorm:"column:node_name;comment:;" db:"node_name"`
+	Memory         float64         `json:"memory" form:"memory" gorm:"column:memory;comment:;" db:"memory"`
+	CPUCores       int             `json:"cpu_cores" form:"cpuCores" gorm:"column:cpu_cores;comment:;" db:"cpu_cores"`
+	MacLocation    string          `json:"mac_location" form:"macLocation" gorm:"column:mac_location;comment:;" db:"mac_location"`
+	NATType        string          `db:"nat_type"`
+	PortMapping    string          `db:"port_mapping"`
+	SchedulerID    dtypes.ServerID `db:"scheduler_sid"`
+	DeactivateTime int64           `db:"deactivate_time"`
 
 	NodeDynamicInfo
 }
@@ -52,7 +53,7 @@ type NodeInfo struct {
 type NodeStatus int
 
 const (
-	NodeOffine NodeStatus = iota
+	NodeOffline NodeStatus = iota
 
 	NodeServicing
 
@@ -63,7 +64,7 @@ const (
 
 func (n NodeStatus) String() string {
 	switch n {
-	case NodeOffine:
+	case NodeOffline:
 		return "offline"
 	case NodeServicing:
 		return "servicing"
@@ -147,6 +148,12 @@ type CandidateDownloadInfo struct {
 	NodeID  string
 	Address string
 	Tk      *Token
+}
+
+// NodeIPInfo
+type NodeIPInfo struct {
+	NodeID string
+	IP     string
 }
 
 // NodeReplicaStatus represents the status of a node cache
@@ -343,6 +350,7 @@ type WorkloadReport struct {
 type WorkloadRecord struct {
 	TokenPayload
 	Status         WorkloadStatus `db:"status"`
+	ClientEndTime  int64          `db:"client_end_time"`
 	ClientWorkload []byte         `db:"client_workload"`
 	NodeWorkload   []byte         `db:"node_workload"`
 }
@@ -363,6 +371,8 @@ type NatPunchReq struct {
 type ConnectOptions struct {
 	Token         string
 	TcpServerPort int
+	// private minio storage only, not public storage
+	IsPrivateMinioOnly bool
 }
 
 type GeneratedCarInfo struct {
@@ -405,4 +415,22 @@ func (d *ActivationDetail) Unmarshal(code string) error {
 	}
 
 	return nil
+}
+
+// RetrieveEvent retrieve event
+type RetrieveEvent struct {
+	TokenID     string  `db:"token_id"`
+	NodeID      string  `db:"node_id"`
+	ClientID    string  `db:"client_id"`
+	CID         string  `db:"cid"`
+	Size        int64   `db:"size"`
+	CreatedTime int64   `db:"created_time"`
+	EndTime     int64   `db:"end_time"`
+	Profit      float64 `db:"profit"`
+}
+
+// ListRetrieveEventRsp list retrieve event
+type ListRetrieveEventRsp struct {
+	Total              int              `json:"total"`
+	RetrieveEventInfos []*RetrieveEvent `json:"retrieve_event_infos"`
 }

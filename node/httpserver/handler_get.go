@@ -2,15 +2,19 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"golang.org/x/xerrors"
@@ -26,12 +30,30 @@ const (
 	formatCbor    = "application/cbor"
 )
 
+func (hs *HttpServer) isNeedRedirect(r *http.Request) bool {
+	return r.Header.Get("Jwtauthorization") == "" && len(r.UserAgent()) > 0 && len(hs.webRedirect) > 0
+}
+
 // getHandler dispatches incoming requests to the appropriate handler based on the format requested in the Accept header or 'format' query parameter
 func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 	tkPayload, err := hs.verifyToken(w, r)
 	if err != nil {
-		log.Warnf("verify token error:%s", err.Error())
-		http.Error(w, fmt.Sprintf("verify token error : %s", err.Error()), http.StatusUnauthorized)
+		log.Warnf("verify token error: %s, url: %s", err.Error(), r.URL.String())
+
+		errWeb := err.(*api.ErrWeb)
+		// check if titan storage web
+		if errWeb != nil && hs.isNeedRedirect(r) {
+			url := fmt.Sprintf("%s?errCode=%d", hs.webRedirect, errWeb.Code)
+			http.Redirect(w, r, url, http.StatusMovedPermanently)
+			return
+		}
+
+		errCode := -1
+		if errWeb != nil {
+			errCode = errWeb.Code
+		}
+
+		authResult(w, errCode, fmt.Errorf("verify token error: %s", err.Error()))
 		return
 	}
 
@@ -48,20 +70,45 @@ func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	assetCID := tkPayload.AssetCID
+	speedCountWriter := &SpeedCountWriter{w: w, startTime: time.Now()}
+	var statusCode int
+	var isDirectory bool
+
 	switch respFormat {
 	case "", formatJSON, formatCbor: // The implicit response format is UnixFS
-		hs.serveUnixFS(w, r, tkPayload)
+		if isDirectory, statusCode, err = hs.serveUnixFS(speedCountWriter, r, assetCID); isDirectory {
+			log.Debugf("serveUnixDir size %d, speed %dB/s, cost time %fms", speedCountWriter.dataSize, speedCountWriter.speed(), speedCountWriter.CostTime())
+			return
+		}
 	case formatRaw:
-		hs.serveRawBlock(w, r, tkPayload)
+		statusCode, err = hs.serveRawBlock(speedCountWriter, r, assetCID)
 	case formatCar:
-		hs.serveCar(w, r, tkPayload, formatParams["version"])
+		statusCode, err = hs.serveCar(speedCountWriter, r, assetCID, formatParams["version"])
 	case formatTar:
-		hs.serveTAR(w, r, tkPayload)
+		statusCode, err = hs.serveTAR(speedCountWriter, r, assetCID)
 	case formatDagJSON, formatDagCbor:
-		hs.serveCodec(w, r, tkPayload)
+		statusCode, err = hs.serveCodec(speedCountWriter, r, assetCID)
 	default: // catch-all for unsuported application/vnd.*
-		http.Error(w, fmt.Sprintf("unsupported format %s", respFormat), http.StatusBadRequest)
+		statusCode = http.StatusBadRequest
+		err = fmt.Errorf("unsupported format %s", respFormat)
+	}
+
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		log.Errorf("get handler error %s", err.Error())
 		return
+	}
+
+	log.Debugf("tokenID:%s, clientID:%s, download size %d, speed %d, cost time %fms", tkPayload.ID, tkPayload.ClientID, speedCountWriter.dataSize, speedCountWriter.speed(), speedCountWriter.CostTime())
+	// stat upload speed
+	report := speedCountWriter.generateReport(tkPayload)
+	if report != nil {
+		hs.reporter.addReport(report)
+	}
+
+	if len(tkPayload.ID) == 0 && len(tkPayload.ClientID) != 0 && speedCountWriter.speed() > 0 {
+		hs.scheduler.UserAssetDownloadResult(context.Background(), tkPayload.ClientID, tkPayload.AssetCID, speedCountWriter.dataSize, speedCountWriter.speed())
 	}
 }
 
@@ -69,6 +116,11 @@ func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 func (hs *HttpServer) verifyToken(w http.ResponseWriter, r *http.Request) (*types.TokenPayload, error) {
 	if hs.schedulerPublicKey == nil {
 		return nil, fmt.Errorf("scheduler public key not exist, can not verify sign")
+	}
+
+	token := r.URL.Query().Get("token")
+	if len(token) > 0 {
+		return hs.parseJWTToken(token, r)
 	}
 
 	data, err := ioutil.ReadAll(r.Body)
@@ -126,6 +178,29 @@ func (hs *HttpServer) verifyToken(w http.ResponseWriter, r *http.Request) (*type
 	return tkPayload, nil
 }
 
+func (hs *HttpServer) parseJWTToken(token string, r *http.Request) (*types.TokenPayload, error) {
+	jwtPayload, err := hs.scheduler.VerifyTokenWithLimitCount(context.Background(), token)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := &types.AuthUserUploadDownloadAsset{}
+	if err = json.Unmarshal([]byte(jwtPayload.Extend), payload); err != nil {
+		return nil, err
+	}
+
+	root, err := getCIDFromURLPath(r.URL.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	if root.String() != payload.AssetCID {
+		return nil, fmt.Errorf("request asset cid %s, parse token cid %s", root.String(), payload.AssetCID)
+	}
+
+	return &types.TokenPayload{AssetCID: payload.AssetCID, ClientID: payload.UserID, Expiration: payload.Expiration}, nil
+}
+
 // customResponseFormat checks the request's Accept header and query parameters to determine the desired response format
 func customResponseFormat(r *http.Request) (mediaType string, params map[string]string, err error) {
 	if formatParam := r.URL.Query().Get("format"); formatParam != "" {
@@ -151,10 +226,13 @@ func customResponseFormat(r *http.Request) (mediaType string, params map[string]
 	// Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8
 	// We only care about explciit, vendor-specific content-types.
 	for _, accept := range r.Header.Values("Accept") {
+		if strings.HasPrefix(accept, "application/json") {
+			return formatJSON, nil, nil
+		}
+
 		// respond to the very first ipld content type
 		if strings.HasPrefix(accept, "application/vnd.ipld") ||
 			strings.HasPrefix(accept, "application/x-tar") ||
-			strings.HasPrefix(accept, "application/json") ||
 			strings.HasPrefix(accept, "application/cbor") ||
 			strings.HasPrefix(accept, "application/vnd.ipfs") {
 			mediatype, params, err := mime.ParseMediaType(accept)
@@ -165,4 +243,20 @@ func customResponseFormat(r *http.Request) (mediaType string, params map[string]
 		}
 	}
 	return "", nil, nil
+}
+
+func authResult(w http.ResponseWriter, code int, err error) {
+	type AuthResult struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+
+	ret := AuthResult{Code: code, Msg: err.Error()}
+	buf, err := json.Marshal(ret)
+	if err != nil {
+		log.Errorf("marshal error %s", err.Error())
+		return
+	}
+
+	w.Write(buf)
 }

@@ -43,23 +43,54 @@ func (s *Scheduler) UpdateAssetExpiration(ctx context.Context, cid string, t tim
 
 // GetAssetRecord retrieves an asset record by its CID.
 func (s *Scheduler) GetAssetRecord(ctx context.Context, cid string) (*types.AssetRecord, error) {
-	info, err := s.AssetManager.GetAssetRecordInfo(cid)
+	startTime := time.Now()
+	defer log.Debugf("GetAssetRecord [%s] request time:%s", cid, time.Since(startTime))
+
+	hash, err := cidutil.CIDToHash(cid)
 	if err != nil {
 		return nil, err
 	}
 
-	return info, nil
+	dInfo, err := s.db.LoadAssetRecord(hash)
+	if err != nil {
+		return nil, err
+	}
+
+	dInfo.ReplicaInfos, err = s.db.LoadReplicasByStatus(hash, types.ReplicaStatusAll)
+	if err != nil {
+		log.Errorf("GetAssetRecordInfo hash:%s, LoadAssetReplicas err:%s", hash, err.Error())
+	}
+
+	return dInfo, nil
+}
+
+// GetReplicas list asset replicas by CID.
+func (s *Scheduler) GetReplicas(ctx context.Context, cid string, limit, offset int) (*types.ListReplicaRsp, error) {
+	hash, err := cidutil.CIDToHash(cid)
+	if err != nil {
+		return nil, err
+	}
+
+	dInfo, err := s.db.LoadReplicasByHash(hash, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return dInfo, nil
 }
 
 // GetAssetRecords lists asset records with optional filtering by status, limit, and offset.
 func (s *Scheduler) GetAssetRecords(ctx context.Context, limit, offset int, statuses []string, serverID dtypes.ServerID) ([]*types.AssetRecord, error) {
+	startTime := time.Now()
+	defer log.Debugf("GetAssetRecords request time:%s", time.Since(startTime))
+
 	if serverID == "" {
 		serverID = s.ServerID
 	}
 
 	rows, err := s.db.LoadAssetRecords(statuses, limit, offset, serverID)
 	if err != nil {
-		return nil, err
+		return nil, xerrors.Errorf("LoadAssetRecords err:%s", err.Error())
 	}
 	defer rows.Close()
 
@@ -74,11 +105,11 @@ func (s *Scheduler) GetAssetRecords(ctx context.Context, limit, offset int, stat
 			continue
 		}
 
-		cInfo.ReplicaInfos, err = s.db.LoadReplicasByStatus(cInfo.Hash, types.ReplicaStatusAll)
-		if err != nil {
-			log.Errorf("asset %s load replicas err: %s", cInfo.CID, err.Error())
-			continue
-		}
+		// cInfo.ReplicaInfos, err = s.db.LoadReplicasByStatus(cInfo.Hash, types.ReplicaStatusAll)
+		// if err != nil {
+		// 	log.Errorf("asset %s load replicas err: %s", cInfo.CID, err.Error())
+		// 	continue
+		// }
 
 		list = append(list, cInfo)
 	}
@@ -97,7 +128,7 @@ func (s *Scheduler) RemoveAssetRecord(ctx context.Context, cid string) error {
 		return err
 	}
 
-	return s.AssetManager.RemoveAsset(hash) // TODO UserID
+	return s.AssetManager.RemoveAsset(hash, true) // TODO UserID
 }
 
 // RemoveAssetReplica removes an asset replica from the system by its CID and nodeID.
@@ -159,39 +190,56 @@ func (s *Scheduler) GetAssetListForBucket(ctx context.Context, bucketID uint32) 
 
 // GetAssetCount retrieves a count of asset
 func (s *Scheduler) GetAssetCount(ctx context.Context) (int, error) {
-	return s.AssetManager.GetAssetCount()
+	count, err := s.AssetManager.GetAssetCount()
+	if err != nil {
+		return 0, xerrors.Errorf("GetAssetCount err:%s", err.Error())
+	}
+
+	return count, nil
 }
 
 // GetAssetsForNode retrieves a asset list of node
 func (s *Scheduler) GetAssetsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) {
-	log.Debugf("GetAssetsForNode start time %s", time.Now().Format("2006-01-02 15:04:05"))
-	defer log.Debugf("GetAssetsForNode end time %s", time.Now().Format("2006-01-02 15:04:05"))
+	startTime := time.Now()
+	defer log.Debugf("GetAssetsForNode [%s] request time:%s", nodeID, time.Since(startTime))
 
-	return s.db.LoadReplicas(nodeID, limit, offset)
+	info, err := s.db.LoadReplicasByNodeID(nodeID, limit, offset)
+	if err != nil {
+		return nil, xerrors.Errorf("LoadReplicasByNodeID err:%s", err.Error())
+	}
+
+	return info, nil
 }
 
 // GetReplicaEventsForNode retrieves a replica event list of node
 func (s *Scheduler) GetReplicaEventsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListReplicaEventRsp, error) {
-	log.Debugf("GetReplicaEventsForNode start time %s", time.Now().Format("2006-01-02 15:04:05"))
-	defer log.Debugf("GetReplicaEventsForNode end time %s", time.Now().Format("2006-01-02 15:04:05"))
+	startTime := time.Now()
+	defer log.Debugf("GetReplicaEventsForNode [%s] request time:%s", nodeID, time.Since(startTime))
 
-	return s.db.LoadReplicaEvents(nodeID, limit, offset)
+	info, err := s.db.LoadReplicaEvents(nodeID, limit, offset)
+	if err != nil {
+		return nil, xerrors.Errorf("LoadReplicaEvents err:%s", err.Error())
+	}
+
+	return info, nil
 }
 
 // CreateUserAsset creates an user asset with car CID, car name, and car size.
-func (s *Scheduler) CreateUserAsset(ctx context.Context, assetCID, assetName string, assetSize int64) (*types.CreateAssetRsp, error) {
+func (s *Scheduler) CreateUserAsset(ctx context.Context, nodeID, assetCID, assetName, assetType string, assetSize int64) (*types.CreateAssetRsp, error) {
 	userID := handler.GetUserID(ctx)
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("CreateUserAsset failed, can not get user id")
 	}
-	return s.CreateAsset(ctx, &types.CreateAssetReq{UserID: userID, AssetCID: assetCID, AssetName: assetName, AssetSize: assetSize})
+
+	return s.CreateAsset(ctx, &types.CreateAssetReq{UserID: userID, AssetCID: assetCID, AssetName: assetName, AssetSize: assetSize, AssetType: assetType, NodeID: nodeID})
 }
 
-func (s *Scheduler) ListUserAssets(ctx context.Context, limit, offset int) ([]*types.AssetRecord, error) {
+func (s *Scheduler) ListUserAssets(ctx context.Context, limit, offset int) (*types.ListAssetRecordRsp, error) {
 	userID := handler.GetUserID(ctx)
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("ListUserAssets failed, can not get user id")
 	}
+
 	return s.ListAssets(ctx, userID, limit, offset)
 }
 
@@ -210,6 +258,7 @@ func (s *Scheduler) ShareUserAssets(ctx context.Context, assetCID []string) (map
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("ShareUserAssets failed, can not get user id")
 	}
+
 	return s.ShareAssets(ctx, userID, assetCID)
 }
 
@@ -220,9 +269,17 @@ func (s *Scheduler) CreateAsset(ctx context.Context, req *types.CreateAssetReq) 
 }
 
 // ListAssets lists the assets of the user.
-func (s *Scheduler) ListAssets(ctx context.Context, userID string, limit, offset int) ([]*types.AssetRecord, error) {
+func (s *Scheduler) ListAssets(ctx context.Context, userID string, limit, offset int) (*types.ListAssetRecordRsp, error) {
+	startTime := time.Now()
+	defer log.Debugf("ListAssets [%s] request time:%s", userID, time.Since(startTime))
+
 	u := s.newUser(userID)
-	return u.ListAssets(ctx, limit, offset)
+	info, err := u.ListAssets(ctx, limit, offset, s.SchedulerCfg.MaxCountOfVisitShareLink)
+	if err != nil {
+		return nil, xerrors.Errorf("ListAssets err:%s", err.Error())
+	}
+
+	return info, nil
 }
 
 // DeleteAsset deletes the assets of the user.
@@ -234,5 +291,39 @@ func (s *Scheduler) DeleteAsset(ctx context.Context, userID, assetCID string) er
 // ShareAssets shares the assets of the user.
 func (s *Scheduler) ShareAssets(ctx context.Context, userID string, assetCIDs []string) (map[string]string, error) {
 	u := s.newUser(userID)
-	return u.ShareAssets(ctx, assetCIDs, s, s.SchedulerCfg.AssetDomain)
+	info, err := u.ShareAssets(ctx, assetCIDs, s, s.SchedulerCfg.CandidateDomainAddr)
+	if err != nil {
+		return nil, xerrors.Errorf("ShareAssets err:%s", err.Error())
+	}
+
+	return info, nil
+}
+
+// GetAssetStatus retrieves a asset status
+func (s *Scheduler) GetAssetStatus(ctx context.Context, userID, assetCID string) (*types.AssetStatus, error) {
+	u := s.newUser(userID)
+	status, err := u.GetAssetStatus(ctx, assetCID, s.SchedulerCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
+}
+
+func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.MinioUploadFileEvent) error {
+	// TODO limit rate or verify valid data
+	if len(event.AssetCID) == 0 {
+		return fmt.Errorf("AssetCID can not empty")
+	}
+
+	hash, err := cidutil.CIDToHash(event.AssetCID)
+	if err != nil {
+		return err
+	}
+
+	nodeID := handler.GetNodeID(ctx)
+
+	log.Debugf("MinioUploadFileEvent nodeID:%s, assetCID:", nodeID, event.AssetCID)
+
+	return s.db.SaveReplicaEvent(hash, event.AssetCID, nodeID, event.Size, event.Expiration)
 }

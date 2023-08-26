@@ -46,11 +46,35 @@ type AssetRecord struct {
 	State                 string          `db:"state"`
 	NeedBandwidth         int64           `db:"bandwidth"` // unit:MiB/s
 
-	AssetName string `db:"asset_name"`
-
 	RetryCount        int64 `db:"retry_count"`
 	ReplenishReplicas int64 `db:"replenish_replicas"`
 	ReplicaInfos      []*ReplicaInfo
+
+	SPCount int64
+}
+
+type UserAssetDetail struct {
+	UserID      string    `db:"user_id"`
+	Hash        string    `db:"hash"`
+	AssetName   string    `db:"asset_name"`
+	AssetType   string    `db:"asset_type"`
+	ShareStatus int64     `db:"share_status"`
+	Expiration  time.Time `db:"expiration"`
+	CreatedTime time.Time `db:"created_time"`
+	TotalSize   int64     `db:"total_size"`
+}
+
+type AssetOverview struct {
+	AssetRecord      *AssetRecord
+	UserAssetDetail  *UserAssetDetail
+	VisitCount       int
+	RemainVisitCount int
+}
+
+// ListAssetRecordRsp list asset records
+type ListAssetRecordRsp struct {
+	Total          int              `json:"total"`
+	AssetOverviews []*AssetOverview `json:"asset_infos"`
 }
 
 // AssetStateInfo represents information about an asset state
@@ -198,4 +222,23 @@ type ReplicaEventInfo struct {
 type ListReplicaEventRsp struct {
 	Total         int                 `json:"total"`
 	ReplicaEvents []*ReplicaEventInfo `json:"replica_events"`
+}
+
+// ListReplicaRsp list asset replicas
+type ListReplicaRsp struct {
+	Total        int            `json:"total"`
+	ReplicaInfos []*ReplicaInfo `json:"replica_infos"`
+}
+
+type AssetStatus struct {
+	IsExist           bool
+	IsExpiration      bool
+	IsVisitOutOfLimit bool
+}
+
+type MinioUploadFileEvent struct {
+	AssetCID   string
+	Size       int64
+	CreateTime time.Time
+	Expiration time.Time
 }

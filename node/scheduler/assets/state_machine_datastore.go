@@ -48,7 +48,7 @@ func (d *Datastore) Get(ctx context.Context, key datastore.Key) (value []byte, e
 		return nil, err
 	}
 
-	asset := assetPullingInfoFrom(cInfo)
+	asset := assetPullingInfoFrom(cInfo, d.assetDB)
 
 	valueBuf := new(bytes.Buffer)
 	if err := asset.MarshalCBOR(valueBuf); err != nil {
@@ -70,8 +70,6 @@ func (d *Datastore) GetSize(ctx context.Context, key datastore.Key) (size int, e
 
 // Query queries asset records from the datastore
 func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, error) {
-	log.Debugln("------------Datastore Query-------------")
-
 	var rows *sqlx.Rows
 	var err error
 
@@ -98,7 +96,7 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 			continue
 		}
 
-		asset := assetPullingInfoFrom(cInfo)
+		asset := assetPullingInfoFrom(cInfo, d.assetDB)
 		valueBuf := new(bytes.Buffer)
 		if err = asset.MarshalCBOR(valueBuf); err != nil {
 			log.Errorf("asset marshal cbor: %s", err.Error())

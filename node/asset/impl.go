@@ -158,7 +158,7 @@ func (a *Asset) BlockCountOfAsset(assetCID string) (int, error) {
 }
 
 // CreateAsset notify candidate that user upload asset, return auth token of candidate
-func (a *Asset) CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadAsset) (string, error) {
+func (a *Asset) CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadDownloadAsset) (string, error) {
 	c, err := cid.Decode(tokenPayload.AssetCID)
 	if err != nil {
 		return "", err

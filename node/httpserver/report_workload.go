@@ -24,9 +24,10 @@ type report struct {
 }
 
 type reporter struct {
-	reports []*report
-	lock    *sync.Mutex
-	server  *HttpServer
+	reports     []*report
+	lock        *sync.Mutex
+	server      *HttpServer
+	bandwidthUp int64
 }
 
 func newReporter(server *HttpServer) *reporter {
@@ -47,14 +48,24 @@ func (r *reporter) startTicker() {
 		if err := r.handleReports(); err != nil {
 			log.Errorf("sendReports error:%s", err.Error())
 		}
+
+		if r.bandwidthUp > 0 {
+			r.server.scheduler.UpdateBandwidths(context.Background(), 0, r.bandwidthUp)
+			r.bandwidthUp = 0
+		}
 	}
 
 }
 
 func (r *reporter) addReport(report *report) {
+	if report == nil {
+		return
+	}
+
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
+	r.bandwidthUp = report.DownloadSpeed
 	r.reports = append(r.reports, report)
 }
 
