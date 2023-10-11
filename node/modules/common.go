@@ -2,13 +2,17 @@ package modules
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 
 	"github.com/Filecoin-Titan/titan/build"
 	"github.com/Filecoin-Titan/titan/lib/ulimit"
+	"github.com/docker/go-units"
 
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
+	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/Filecoin-Titan/titan/node/types"
@@ -22,6 +26,8 @@ const (
 	ServerIDName = "server-id" //nolint:gosec
 	// KTServerIDSecret Key type for server ID secret
 	KTServerIDSecret = "server-id-secret" //nolint:gosec
+	// PrivateKeyName privateKey key name in the keystore
+	PrivateKeyName = "private-key" //nolint:gosec
 )
 
 // LockedRepo returns a function that returns the locked repository with an added lifecycle hook to close the repository
@@ -68,6 +74,38 @@ func NewServerID(lr repo.LockedRepo) (dtypes.ServerID, error) {
 	}
 
 	return dtypes.ServerID(key.PrivateKey), nil
+}
+
+// NewPrivateKey generates and returns the private key
+func NewPrivateKey(lr repo.LockedRepo) (*rsa.PrivateKey, error) {
+	keystore, err := lr.KeyStore()
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := keystore.Get(PrivateKeyName)
+
+	if errors.Is(err, types.ErrKeyInfoNotFound) {
+		log.Warn("Generating new private key")
+
+		privateKey, err := rsa.GenerateKey(rand.Reader, units.KiB)
+		if err != nil {
+			return nil, xerrors.Errorf("GenerateKey: %w", err)
+		}
+
+		key = types.KeyInfo{
+			Type:       PrivateKeyName,
+			PrivateKey: titanrsa.PrivateKey2Pem(privateKey),
+		}
+
+		if err := keystore.Put(PrivateKeyName, key); err != nil {
+			return nil, xerrors.Errorf("writing private key: %w", err)
+		}
+	} else if err != nil {
+		return nil, xerrors.Errorf("could not get private key: %w", err)
+	}
+
+	return titanrsa.Pem2PrivateKey(key.PrivateKey)
 }
 
 // Datastore returns a new metadata datastore

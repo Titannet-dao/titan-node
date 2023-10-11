@@ -12,13 +12,13 @@ import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
+	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
-	"github.com/Filecoin-Titan/titan/cli/util"
 )
 
 var EdgeCmds = []*cli.Command{

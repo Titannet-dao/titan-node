@@ -11,7 +11,7 @@ import (
 	"github.com/Filecoin-Titan/titan/journal/alerting"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/google/uuid"
-	"golang.org/x/xerrors"
+	xerrors "golang.org/x/xerrors"
 )
 
 var ErrNotSupported = xerrors.New("method not supported")
@@ -39,7 +39,7 @@ type AssetAPIStruct struct {
 	Internal struct {
 		CreateAsset func(p0 context.Context, p1 *types.CreateAssetReq) (*types.CreateAssetRsp, error) `perm:"web"`
 
-		CreateUserAsset func(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 int64) (*types.CreateAssetRsp, error) `perm:"user"`
+		CreateUserAsset func(p0 context.Context, p1 *types.AssetProperty) (*types.CreateAssetRsp, error) `perm:"user"`
 
 		DeleteAsset func(p0 context.Context, p1 string, p2 string) error `perm:"web,admin"`
 
@@ -57,6 +57,8 @@ type AssetAPIStruct struct {
 
 		GetAssetsForNode func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListNodeAssetRsp, error) `perm:"web,admin"`
 
+		GetReplicaEvents func(p0 context.Context, p1 time.Time, p2 time.Time, p3 int, p4 int) (*types.ListReplicaEventRsp, error) `perm:"web,admin"`
+
 		GetReplicaEventsForNode func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListReplicaEventRsp, error) `perm:"web,admin"`
 
 		GetReplicas func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListReplicaRsp, error) `perm:"web,admin"`
@@ -69,7 +71,7 @@ type AssetAPIStruct struct {
 
 		NodeRemoveAssetResult func(p0 context.Context, p1 types.RemoveAssetResult) error `perm:"edge,candidate"`
 
-		PullAsset func(p0 context.Context, p1 *types.PullAssetReq) error `perm:"admin"`
+		PullAsset func(p0 context.Context, p1 *types.PullAssetReq) error `perm:"web,admin"`
 
 		RePullFailedAssets func(p0 context.Context, p1 []types.AssetHash) error `perm:"admin"`
 
@@ -219,6 +221,8 @@ type LocatorStruct struct {
 
 		GetCandidateIP func(p0 context.Context, p1 string) (string, error) `perm:"admin"`
 
+		GetSchedulerWithAPIKey func(p0 context.Context, p1 string) (string, error) `perm:"default"`
+
 		GetSchedulerWithNode func(p0 context.Context, p1 string) (string, error) `perm:"default"`
 
 		GetUserAccessPoint func(p0 context.Context, p1 string) (*AccessPoint, error) `perm:"default"`
@@ -342,6 +346,8 @@ type UserAPIStruct struct {
 
 		GetAPIKeys func(p0 context.Context, p1 string) (map[string]types.UserAPIKeysInfo, error) `perm:"web,admin"`
 
+		GetUserAccessToken func(p0 context.Context, p1 string) (string, error) `perm:"web,admin"`
+
 		GetUserInfo func(p0 context.Context, p1 string) (*types.UserInfo, error) `perm:"web,admin"`
 
 		SetUserVIP func(p0 context.Context, p1 string, p2 bool) error `perm:"admin"`
@@ -441,14 +447,14 @@ func (s *AssetAPIStub) CreateAsset(p0 context.Context, p1 *types.CreateAssetReq)
 	return nil, ErrNotSupported
 }
 
-func (s *AssetAPIStruct) CreateUserAsset(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 int64) (*types.CreateAssetRsp, error) {
+func (s *AssetAPIStruct) CreateUserAsset(p0 context.Context, p1 *types.AssetProperty) (*types.CreateAssetRsp, error) {
 	if s.Internal.CreateUserAsset == nil {
 		return nil, ErrNotSupported
 	}
-	return s.Internal.CreateUserAsset(p0, p1, p2, p3, p4, p5)
+	return s.Internal.CreateUserAsset(p0, p1)
 }
 
-func (s *AssetAPIStub) CreateUserAsset(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 int64) (*types.CreateAssetRsp, error) {
+func (s *AssetAPIStub) CreateUserAsset(p0 context.Context, p1 *types.AssetProperty) (*types.CreateAssetRsp, error) {
 	return nil, ErrNotSupported
 }
 
@@ -537,6 +543,17 @@ func (s *AssetAPIStruct) GetAssetsForNode(p0 context.Context, p1 string, p2 int,
 }
 
 func (s *AssetAPIStub) GetAssetsForNode(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListNodeAssetRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *AssetAPIStruct) GetReplicaEvents(p0 context.Context, p1 time.Time, p2 time.Time, p3 int, p4 int) (*types.ListReplicaEventRsp, error) {
+	if s.Internal.GetReplicaEvents == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetReplicaEvents(p0, p1, p2, p3, p4)
+}
+
+func (s *AssetAPIStub) GetReplicaEvents(p0 context.Context, p1 time.Time, p2 time.Time, p3 int, p4 int) (*types.ListReplicaEventRsp, error) {
 	return nil, ErrNotSupported
 }
 
@@ -977,6 +994,17 @@ func (s *LocatorStruct) GetCandidateIP(p0 context.Context, p1 string) (string, e
 }
 
 func (s *LocatorStub) GetCandidateIP(p0 context.Context, p1 string) (string, error) {
+	return "", ErrNotSupported
+}
+
+func (s *LocatorStruct) GetSchedulerWithAPIKey(p0 context.Context, p1 string) (string, error) {
+	if s.Internal.GetSchedulerWithAPIKey == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.GetSchedulerWithAPIKey(p0, p1)
+}
+
+func (s *LocatorStub) GetSchedulerWithAPIKey(p0 context.Context, p1 string) (string, error) {
 	return "", ErrNotSupported
 }
 
@@ -1451,6 +1479,17 @@ func (s *UserAPIStruct) GetAPIKeys(p0 context.Context, p1 string) (map[string]ty
 
 func (s *UserAPIStub) GetAPIKeys(p0 context.Context, p1 string) (map[string]types.UserAPIKeysInfo, error) {
 	return *new(map[string]types.UserAPIKeysInfo), ErrNotSupported
+}
+
+func (s *UserAPIStruct) GetUserAccessToken(p0 context.Context, p1 string) (string, error) {
+	if s.Internal.GetUserAccessToken == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.GetUserAccessToken(p0, p1)
+}
+
+func (s *UserAPIStub) GetUserAccessToken(p0 context.Context, p1 string) (string, error) {
+	return "", ErrNotSupported
 }
 
 func (s *UserAPIStruct) GetUserInfo(p0 context.Context, p1 string) (*types.UserInfo, error) {

@@ -108,7 +108,7 @@ func (m *Manager) handleWorkloadResults() {
 				EndTime:     cWorkload.EndTime,
 				Profit:      profit,
 			}); err != nil {
-				log.Errorf("SaveRetrieveEventInfo token:%s ,  error %s", record.ID, err.Error())
+				log.Errorf("SaveRetrieveEventInfo token:%s , %d,  error %s", record.ID, cWorkload.StartTime, err.Error())
 				continue
 			}
 

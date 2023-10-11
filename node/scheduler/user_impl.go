@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/handler"
 	"github.com/Filecoin-Titan/titan/node/scheduler/user"
+	"github.com/filecoin-project/go-jsonrpc/auth"
 	"golang.org/x/xerrors"
 )
 
@@ -39,13 +41,12 @@ func (s *Scheduler) AllocateStorage(ctx context.Context, userID string) (*types.
 
 // GetUserInfo get user info
 func (s *Scheduler) GetUserInfo(ctx context.Context, userID string) (*types.UserInfo, error) {
-	u := s.newUser(userID)
-	info, err := u.GetInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return s.loadUserInfo(userID)
+}
 
-	return info, nil
+func (s *Scheduler) loadUserInfo(userID string) (*types.UserInfo, error) {
+	u := s.newUser(userID)
+	return u.GetInfo()
 }
 
 // CreateAPIKey creates a key for the client API.
@@ -93,14 +94,12 @@ func (s *Scheduler) UserAssetDownloadResult(ctx context.Context, userID, cid str
 		return xerrors.Errorf("UserAssetDownloadResult node not found: %s", nodeID)
 	}
 
-	err := s.db.UpdateUserInfo(userID, totalTraffic, peakBandwidth, 1)
+	err := s.db.UpdateUserInfo(userID, totalTraffic, 1)
 	if err != nil {
 		return err
 	}
 
-	// Retrieve Event
-
-	return nil
+	return s.db.UpdateUserPeakSize(userID, peakBandwidth)
 }
 
 func (s *Scheduler) SetUserVIP(ctx context.Context, userID string, enableVIP bool) error {
@@ -109,4 +108,18 @@ func (s *Scheduler) SetUserVIP(ctx context.Context, userID string, enableVIP boo
 		storageSize = s.SchedulerCfg.UserVipStorageSize
 	}
 	return s.db.UpdateUserVIPAndStorageSize(userID, enableVIP, storageSize)
+}
+
+func (s *Scheduler) GetUserAccessToken(ctx context.Context, userID string) (string, error) {
+	_, err := s.GetUserInfo(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+
+	payload := types.JWTPayload{ID: userID, Allow: []auth.Permission{api.RoleUser}}
+	tk, err := s.AuthNew(ctx, &payload)
+	if err != nil {
+		return "", err
+	}
+	return tk, nil
 }

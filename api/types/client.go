@@ -2,8 +2,7 @@ package types
 
 import "time"
 
-type CreateAssetReq struct {
-	UserID    string
+type AssetProperty struct {
 	AssetCID  string
 	AssetName string
 	AssetSize int64
@@ -11,17 +10,15 @@ type CreateAssetReq struct {
 	NodeID    string
 }
 
+type CreateAssetReq struct {
+	UserID string
+	AssetProperty
+}
+
 type CreateAssetRsp struct {
 	UploadURL     string
 	Token         string
 	AlreadyExists bool
-}
-
-type AssetProperty struct {
-	CID    string
-	Name   string
-	Status int
-	Size   int64
 }
 
 type AuthUserUploadDownloadAsset struct {
@@ -49,6 +46,8 @@ type UserInfo struct {
 	PeakBandwidth int64 `db:"peak_bandwidth"`
 	DownloadCount int64 `db:"download_count"`
 	EnableVIP     bool  `db:"enable_vip"`
+
+	UpdateTime time.Time `db:"update_peak_time"`
 }
 
 type UserAPIKeysInfo struct {

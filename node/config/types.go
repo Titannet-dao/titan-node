@@ -60,6 +60,7 @@ type CandidateCfg struct {
 	EdgeCfg
 	MinioConfig
 	WebRedirect string
+	ExternalURL string
 }
 
 // LocatorCfg locator config
@@ -84,6 +85,7 @@ type LocatorCfg struct {
 	EtcdAddresses    []string
 	DefaultAreaID    string
 	DNSServerAddress string
+	DNSRecords       map[string]string
 }
 
 // SchedulerCfg scheduler config
@@ -144,8 +146,6 @@ type SchedulerCfg struct {
 	AssetPullTaskLimit int
 
 	NatDetectConcurrency int
-	// will remove later, used for old edge
-	CandidateDomainAddr string
 	// Default number of backups for user uploaded files
 	UploadAssetReplicaCount int
 	// Default expiration time for user uploaded files

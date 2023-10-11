@@ -438,6 +438,10 @@ func (l *Locator) GetCandidateIP(ctx context.Context, nodeID string) (string, er
 	}
 	wg.Wait()
 
+	if len(candidateIP) == 0 {
+		return "", fmt.Errorf("can not get candidate %s ip", nodeID)
+	}
+
 	return candidateIP, nil
 }
 
@@ -476,6 +480,61 @@ func (l *Locator) GetSchedulerWithNode(ctx context.Context, nodeID string) (stri
 				cancel()
 			} else {
 				log.Debugf("GetCandidateNodeIP %s", err.Error())
+			}
+		}(ctx, api)
+	}
+	wg.Wait()
+
+	return schedulerURL, nil
+}
+
+func (l *Locator) GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (string, error) {
+	configs := l.GetAllSchedulerConfigs()
+	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	if err != nil {
+		return "", err
+	}
+
+	if len(schedulerAPIs) == 0 {
+		return "", fmt.Errorf("no scheduler exist")
+	}
+
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	defer cancel()
+
+	// TODO limit concurrency
+	var schedulerURL string
+	wg := &sync.WaitGroup{}
+	for _, api := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(ctx context.Context, s *schedulerAPI) {
+			defer s.close()
+			defer wg.Done()
+
+			payload, err := s.AuthVerify(ctx, apiKey)
+			if err != nil {
+				log.Debugf("AuthVerify %s", err.Error())
+				return
+			}
+
+			keys, err := s.GetAPIKeys(context.TODO(), payload.ID)
+			if err != nil {
+				log.Debugf("AuthVerify %s", err.Error())
+				return
+			}
+
+			for _, key := range keys {
+				if key.APIKey == apiKey {
+					schedulerURL = s.config.SchedulerURL
+					cancel()
+					break
+				}
 			}
 		}(ctx, api)
 	}

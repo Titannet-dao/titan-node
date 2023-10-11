@@ -14,7 +14,10 @@ import (
 	"github.com/miekg/dns"
 )
 
-const prefixOfCandidateNodeID = "c_"
+const (
+	prefixOfCandidateNodeID = "c_"
+	lengthOfCandidateNodeID = 32
+)
 
 type DNSServer struct {
 	*config.LocatorCfg
@@ -69,9 +72,20 @@ func (h *dnsHandler) parseQuery(m *dns.Msg, remoteAddr string) {
 		switch q.Qtype {
 		case dns.TypeA:
 			log.Debugf("Query for %s, remote address %s\n", q.Name, remoteAddr)
-			fields := strings.Split(q.Name, ".")
+			name := strings.ToLower(q.Name)
+			ip, ok := h.dnsServer.DNSRecords[strings.TrimSuffix(name, ".")]
+			if ok {
+				if rr, err := dns.NewRR(fmt.Sprintf("%s A %s", name, ip)); err == nil {
+					m.Answer = append(m.Answer, rr)
+				} else {
+					log.Errorf("NewRR error %s", err.Error())
+				}
+				return
+			}
+
+			fields := strings.Split(name, ".")
 			if len(fields) < 4 {
-				log.Errorf("invalid domain %s", q.Name)
+				log.Errorf("invalid domain %s", name)
 				return
 			}
 
@@ -85,7 +99,7 @@ func (h *dnsHandler) parseQuery(m *dns.Msg, remoteAddr string) {
 					return
 				}
 
-				if rr, err := dns.NewRR(fmt.Sprintf("%s A %s", q.Name, ip)); err == nil {
+				if rr, err := dns.NewRR(fmt.Sprintf("%s A %s", name, ip)); err == nil {
 					m.Answer = append(m.Answer, rr)
 				} else {
 					log.Errorf("NewRR error %s", err.Error())
@@ -117,7 +131,7 @@ func (h *dnsHandler) parseQuery(m *dns.Msg, remoteAddr string) {
 			targetIP := getUserNearestIP(userIP, ips, h.dnsServer.reg)
 			rr := &dns.A{
 				Hdr: dns.RR_Header{
-					Name:   q.Name,
+					Name:   name,
 					Rrtype: dns.TypeA,
 					Class:  dns.ClassINET,
 					Ttl:    60, // 60s
@@ -148,8 +162,5 @@ func (h *dnsHandler) getIPs(downloadInfos []*types.CandidateDownloadInfo) []stri
 
 func (h *dnsHandler) isMatchCandidateID(id string) bool {
 	id = strings.TrimSpace(id)
-	if len(id) == 32 {
-		return true
-	}
-	return false
+	return len(id) == lengthOfCandidateNodeID
 }
