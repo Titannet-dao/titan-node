@@ -97,12 +97,13 @@ type ReplicaInfo struct {
 
 // PullAssetReq represents a request to pull an asset to Titan
 type PullAssetReq struct {
-	ID         string
 	CID        string
-	Hash       string
 	Replicas   int64
 	Expiration time.Time
-	Bandwidth  int64 // unit:MiB/s
+
+	UserID    string
+	Hash      string
+	Bandwidth int64 // unit:MiB/s
 }
 
 // AssetType represents the type of a asset
@@ -122,6 +123,8 @@ const (
 	ReplicaEventRemove ReplicaEvent = iota
 	// ReplicaEventAdd event
 	ReplicaEventAdd
+	// MinioEventAdd event
+	MinioEventAdd
 )
 
 // ReplicaStatus represents the status of a replica pull

@@ -175,7 +175,8 @@ var cUserInfoTable = `
 		total_traffic       BIGINT      DEFAULT 0,
 		peak_bandwidth 	    INT         DEFAULT 0,
 		download_count 	    INT         DEFAULT 0,
-		enable_vip  	    BOOLEAN,
+		enable_vip  	    BOOLEAN 	DEFAULT false,
+		update_peak_time    DATETIME    DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (user_id)
     ) ENGINE=InnoDB COMMENT='user infos';`
 

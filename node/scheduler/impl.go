@@ -77,6 +77,8 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		alreadyConnect = false
 	}
 	cNode.SetToken(opts.Token)
+	cNode.RemoteAddr = remoteAddr
+	cNode.ExternalURL = opts.ExternalURL
 
 	log.Infof("node connected %s, address:%s", nodeID, remoteAddr)
 
@@ -136,7 +138,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		// init value
 		cNode.PublicKey = publicKey
 		cNode.TCPPort = opts.TcpServerPort
-		cNode.RemoteAddr = remoteAddr
 		cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
 		err = s.NodeManager.NodeOnline(cNode, &nodeInfo)

@@ -16,6 +16,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
@@ -31,7 +32,7 @@ type User struct {
 
 // AllocateStorage allocates storage space.
 func (u *User) AllocateStorage(ctx context.Context, size int64) (*types.UserInfo, error) {
-	userInfo, err := u.GetInfo(ctx)
+	userInfo, err := u.GetInfo()
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -44,12 +45,25 @@ func (u *User) AllocateStorage(ctx context.Context, size int64) (*types.UserInfo
 	if err := u.SaveUserTotalStorageSize(u.ID, size); err != nil {
 		return nil, err
 	}
-	return u.GetInfo(ctx)
+	return u.GetInfo()
 }
 
 // GetInfo get user info
-func (u *User) GetInfo(ctx context.Context) (*types.UserInfo, error) {
-	return u.LoadUserInfo(u.ID)
+func (u *User) GetInfo() (*types.UserInfo, error) {
+	info, err := u.LoadUserInfo(u.ID)
+	if err != nil {
+		return nil, xerrors.Errorf("%s , %s", u.ID, err.Error())
+	}
+
+	if info.UpdateTime.Add(time.Minute * 30).After(time.Now()) {
+		return info, nil
+	}
+
+	// clean
+	info.PeakBandwidth = 0
+	u.UpdateUserPeakSize(u.ID, 0)
+
+	return info, nil
 }
 
 // CreateAPIKey creates a key for the client API.
@@ -68,7 +82,7 @@ func (u *User) CreateAPIKey(ctx context.Context, keyName string, commonAPI api.C
 	}
 
 	if len(apiKeys) > 0 {
-		return "", fmt.Errorf("only support create one api key now")
+		return "", fmt.Errorf("api key already exist, only support create one now")
 	}
 
 	keyValue, err := generateAPIKey(u.ID, commonAPI)
@@ -148,16 +162,16 @@ func (u *User) DeleteAPIKey(ctx context.Context, name string) error {
 func (u *User) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
 	hash, err := cidutil.CIDToHash(req.AssetCID)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.CidToHashFiled, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.CidToHashFiled.Int(), Message: err.Error()}
 	}
 
-	storageSize, err := u.LoadUserInfo(req.UserID)
+	storageSize, err := u.GetInfo()
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
 	if storageSize.TotalSize-storageSize.UsedSize < req.AssetSize {
-		return nil, &api.ErrWeb{Code: terrors.UserStorageSizeNotEnough}
+		return nil, &api.ErrWeb{Code: terrors.UserStorageSizeNotEnough.Int(), Message: terrors.UserStorageSizeNotEnough.String()}
 	}
 
 	return u.Manager.CreateAssetUploadTask(hash, req)
@@ -171,7 +185,11 @@ func (u *User) ListAssets(ctx context.Context, limit, offset int, maxCountOfVisi
 		return nil, err
 	}
 
-	userInfo, err := u.LoadUserInfo(u.ID)
+	userInfo, err := u.GetInfo()
+	if err != nil {
+		log.Errorf("GetInfo err:%s", err.Error())
+		return nil, err
+	}
 
 	userAssets, err := u.ListAssetsForUser(u.ID, limit, offset)
 	if err != nil {
@@ -236,8 +254,7 @@ func (u *User) DeleteAsset(ctx context.Context, cid string) error {
 }
 
 // ShareAssets shares the assets of the user.
-func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI api.Scheduler, domain string) (map[string]string, error) {
-	// TODO　check asset if belong to user
+func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI api.Scheduler, nodeManager *node.Manager) (map[string]string, error) {
 	urls := make(map[string]string)
 	for _, assetCID := range assetCIDs {
 		downloadInfos, err := schedulerAPI.GetCandidateDownloadInfos(context.Background(), assetCID)
@@ -263,11 +280,12 @@ func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI
 			return nil, err
 		}
 
+		nodeID := downloadInfos[0].NodeID
+		node := nodeManager.GetCandidateNode(nodeID)
+
 		url := fmt.Sprintf("http://%s/ipfs/%s?token=%s&filename=%s", downloadInfos[0].Address, assetCID, tk, assetName)
-		if len(domain) > 0 {
-			// remove prefix 'c_'
-			// nodeID := downloadInfos[0].NodeID[2:]
-			url = fmt.Sprintf("https://%s.%s/ipfs/%s?token=%s&filename=%s", assetCID, domain, assetCID, tk, assetName)
+		if node != nil && len(node.ExternalURL) > 0 {
+			url = fmt.Sprintf("%s/ipfs/%s?token=%s&filename=%s", node.ExternalURL, assetCID, tk, assetName)
 		}
 		urls[assetCID] = url
 	}
@@ -297,7 +315,7 @@ func (u *User) GetAssetStatus(ctx context.Context, assetCID string, config *conf
 		return ret, nil
 	}
 
-	userInfo, err := u.LoadUserInfo(u.ID)
+	userInfo, err := u.GetInfo()
 	if err != nil {
 		return nil, err
 	}

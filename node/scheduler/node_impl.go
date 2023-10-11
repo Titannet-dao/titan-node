@@ -558,7 +558,7 @@ func (s *Scheduler) NodeKeepalive(ctx context.Context) (uuid.UUID, error) {
 		node := s.NodeManager.GetNode(nodeID)
 		if node != nil {
 			if remoteAddr != node.RemoteAddr {
-				return uuid, xerrors.Errorf("node %s remoteAddr inconsistent, new addr %s ,old addr %s", nodeID, remoteAddr, node.RemoteAddr)
+				log.Debugf("node %s remoteAddr inconsistent, new addr %s ,old addr %s", nodeID, remoteAddr, node.RemoteAddr)
 			}
 
 			if node.DeactivateTime > 0 && node.DeactivateTime < time.Now().Unix() {
@@ -616,7 +616,7 @@ func nodeStatus(node *node.Node) types.NodeStatus {
 func (s *Scheduler) VerifyTokenWithLimitCount(ctx context.Context, token string) (*types.JWTPayload, error) {
 	jwtPayload, err := s.AuthVerify(ctx, token)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.VerifyTokenError, Message: fmt.Sprintf("verify token error %s", err.Error())}
+		return nil, &api.ErrWeb{Code: terrors.VerifyTokenError.Int(), Message: fmt.Sprintf("verify token error %s", err.Error())}
 	}
 
 	if len(jwtPayload.Extend) == 0 {
@@ -641,7 +641,7 @@ func (s *Scheduler) VerifyTokenWithLimitCount(ctx context.Context, token string)
 		return nil, fmt.Errorf("asset %s does not exist", payload.AssetCID)
 	}
 
-	userInfo, err := s.db.LoadUserInfo(payload.UserID)
+	userInfo, err := s.loadUserInfo(payload.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +656,7 @@ func (s *Scheduler) VerifyTokenWithLimitCount(ctx context.Context, token string)
 	}
 
 	if count >= s.SchedulerCfg.MaxCountOfVisitShareLink {
-		return nil, &api.ErrWeb{Code: terrors.VisitShareLinkOutOfMaxCount, Message: fmt.Sprintf("visit share link is out of max count %d", s.SchedulerCfg.MaxCountOfVisitShareLink)}
+		return nil, &api.ErrWeb{Code: terrors.VisitShareLinkOutOfMaxCount.Int(), Message: fmt.Sprintf("visit share link is out of max count %d", s.SchedulerCfg.MaxCountOfVisitShareLink)}
 	}
 
 	if err = s.db.UpdateAssetVisitCount(assetHash); err != nil {
@@ -712,7 +712,7 @@ func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, e
 
 	_, cNodes := s.NodeManager.GetAllCandidateNodes()
 	if len(cNodes) == 0 {
-		return list, &api.ErrWeb{Code: terrors.NotFoundNode, Message: fmt.Sprintf("not found node")}
+		return list, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: terrors.NotFoundNode.String()}
 	}
 
 	for _, n := range cNodes {

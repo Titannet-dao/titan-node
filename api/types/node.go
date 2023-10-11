@@ -373,6 +373,7 @@ type ConnectOptions struct {
 	TcpServerPort int
 	// private minio storage only, not public storage
 	IsPrivateMinioOnly bool
+	ExternalURL        string
 }
 
 type GeneratedCarInfo struct {

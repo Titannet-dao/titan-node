@@ -219,17 +219,25 @@ func (n *SQLDB) SaveUserTotalStorageSize(userID string, totalSize int64) error {
 
 // LoadUserInfo load user storage size
 func (n *SQLDB) LoadUserInfo(userID string) (*types.UserInfo, error) {
-	query := fmt.Sprintf("SELECT total_storage_size, used_storage_size, total_traffic, peak_bandwidth, download_count, enable_vip FROM %s WHERE user_id=?", userInfoTable)
+	query := fmt.Sprintf("SELECT total_storage_size, used_storage_size, total_traffic, peak_bandwidth, download_count, enable_vip, update_peak_time FROM %s WHERE user_id=?", userInfoTable)
 	info := types.UserInfo{}
 	err := n.db.Get(&info, query, userID)
 	return &info, err
 }
 
 // UpdateUserInfo update user info
-func (n *SQLDB) UpdateUserInfo(userID string, incSize, peakSize, incCount int64) error {
+func (n *SQLDB) UpdateUserInfo(userID string, incSize, incCount int64) error {
 	query := fmt.Sprintf(
-		`UPDATE %s SET total_traffic=total_traffic+?,peak_bandwidth=?,download_count=download_count+? WHERE user_id=?`, userInfoTable)
-	_, err := n.db.Exec(query, incSize, peakSize, incCount, userID)
+		`UPDATE %s SET total_traffic=total_traffic+?,download_count=download_count+? WHERE user_id=?`, userInfoTable)
+	_, err := n.db.Exec(query, incSize, incCount, userID)
+	return err
+}
+
+// UpdateUserPeakSize update user peakSize
+func (n *SQLDB) UpdateUserPeakSize(userID string, peakSize int64) error {
+	query := fmt.Sprintf(
+		`UPDATE %s SET peak_bandwidth=?,update_peak_time=NOW() WHERE user_id=? AND peak_bandwidth<?`, userInfoTable)
+	_, err := n.db.Exec(query, peakSize, userID, peakSize)
 	return err
 }
 

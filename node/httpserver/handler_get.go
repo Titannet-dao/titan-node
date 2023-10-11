@@ -40,9 +40,9 @@ func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Warnf("verify token error: %s, url: %s", err.Error(), r.URL.String())
 
-		errWeb := err.(*api.ErrWeb)
+		errWeb, ok := err.(*api.ErrWeb)
 		// check if titan storage web
-		if errWeb != nil && hs.isNeedRedirect(r) {
+		if ok && hs.isNeedRedirect(r) {
 			url := fmt.Sprintf("%s?errCode=%d", hs.webRedirect, errWeb.Code)
 			http.Redirect(w, r, url, http.StatusMovedPermanently)
 			return
@@ -118,8 +118,20 @@ func (hs *HttpServer) verifyToken(w http.ResponseWriter, r *http.Request) (*type
 		return nil, fmt.Errorf("scheduler public key not exist, can not verify sign")
 	}
 
-	token := r.URL.Query().Get("token")
-	if len(token) > 0 {
+	if token := r.Header.Get("User-Token"); len(token) > 0 {
+		_, err := hs.scheduler.AuthVerify(context.TODO(), token)
+		if err != nil {
+			return nil, err
+		}
+
+		rootCID, err := getCIDFromURLPath(r.URL.Path)
+		if err != nil {
+			return nil, err
+		}
+		return &types.TokenPayload{AssetCID: rootCID.String()}, nil
+	}
+
+	if token := r.URL.Query().Get("token"); len(token) > 0 {
 		return hs.parseJWTToken(token, r)
 	}
 

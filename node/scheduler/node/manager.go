@@ -200,7 +200,9 @@ func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) bool {
 		} else if node.Type == types.NodeEdge {
 			m.deleteEdgeNode(node)
 		}
-		node = nil
+
+		log.Infof("node offline %s", node.NodeID)
+
 		return false
 	}
 

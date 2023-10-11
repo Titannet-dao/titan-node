@@ -263,15 +263,15 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 	log.Infof("asset event: %s, add asset ", req.AssetCID)
 	exist, err := m.AssetExistsOfUser(hash, req.UserID)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
 	if exist {
-		return nil, &api.ErrWeb{Code: terrors.NoDuplicateUploads, Message: fmt.Sprintf("Asset is exist, no duplicate uploads")}
+		return nil, &api.ErrWeb{Code: terrors.NoDuplicateUploads.Int(), Message: fmt.Sprintf("Asset is exist, no duplicate uploads")}
 	}
 
 	if m.getPullingAssetLen() >= m.getAssetPullTaskLimit() {
-		return nil, &api.ErrWeb{Code: terrors.BusyServer, Message: fmt.Sprintf("The task has reached its limit. Please try again later.")}
+		return nil, &api.ErrWeb{Code: terrors.BusyServer.Int(), Message: fmt.Sprintf("The task has reached its limit. Please try again later.")}
 	}
 
 	replicaCount := int64(10)
@@ -286,12 +286,12 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 
 	assetRecord, err := m.LoadAssetRecord(hash)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
 	err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
 	if assetRecord != nil && assetRecord.State != "" && assetRecord.State != Remove.String() && assetRecord.State != UploadFailed.String() {
@@ -317,14 +317,14 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 
 	err = m.SaveAssetRecord(record)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
 	cNode := m.nodeMgr.GetCandidateNode(req.NodeID)
 	if cNode == nil {
 		cNodes, str := m.chooseCandidateNodes(1, nil)
 		if len(cNodes) == 0 {
-			return nil, &api.ErrWeb{Code: terrors.NotFoundNode, Message: fmt.Sprintf("not found node :%s", str)}
+			return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: fmt.Sprintf("not found node :%s", str)}
 		}
 
 		for _, n := range cNodes {
@@ -342,7 +342,7 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 
 	token, err := cNode.API.CreateAsset(context.Background(), payload)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.RequestNodeErr, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.RequestNodeErr.Int(), Message: err.Error()}
 	}
 
 	rInfo := AssetForceState{
@@ -354,16 +354,12 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 	// create asset task
 	err = m.assetStateMachines.Send(AssetHash(hash), rInfo)
 	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.NotFound, Message: err.Error()}
+		return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
 	}
 
 	uploadURL := fmt.Sprintf("http://%s/upload", cNode.RemoteAddr)
-	if config, err := m.config(); err == nil {
-		if len(config.CandidateDomainAddr) > 0 {
-			// remove prefix c_, domain not support '_'
-			nodeID := cNode.NodeID[2:]
-			uploadURL = fmt.Sprintf("https://%s.%s/upload", nodeID, config.CandidateDomainAddr)
-		}
+	if len(cNode.ExternalURL) > 0 {
+		uploadURL = fmt.Sprintf("%s/upload", cNode.ExternalURL)
 	}
 
 	return &types.CreateAssetRsp{UploadURL: uploadURL, Token: token}, nil
@@ -636,7 +632,7 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 				continue
 			}
 
-			err = m.SaveReplicaEvent(cInfo.Hash, record.CID, cInfo.NodeID, cInfo.DoneSize, record.Expiration)
+			err = m.SaveReplicaEvent(cInfo.Hash, record.CID, cInfo.NodeID, cInfo.DoneSize, record.Expiration, types.ReplicaEventAdd)
 			if err != nil {
 				log.Errorf("updateAssetPullResults %s SaveReplicaEvent err:%s", nodeID, err.Error())
 				continue
@@ -968,7 +964,6 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 	// If count is greater or equal to the difference between total edge nodes and the filterNodes length,
 	// choose all unfiltered nodes
 	if count >= m.nodeMgr.Edges-len(filterNodes) {
-		log.Debugln("choose all -----------")
 		// choose all
 		nodes := m.nodeMgr.GetAllEdgeNode()
 
@@ -978,7 +973,6 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 			}
 		}
 	} else {
-		log.Debugln("choose random -----------")
 		// choose random
 		for i := 0; i < count*selectNodeRetryLimit; i++ {
 			node, rNum := m.nodeMgr.GetRandomEdge()
@@ -1002,9 +996,13 @@ func (m *Manager) generateTokenForDownloadSources(sources []*types.CandidateDown
 
 	for _, source := range sources {
 		node := m.nodeMgr.GetNode(source.NodeID)
+		if node == nil {
+			continue
+		}
+
 		tk, payload, err := node.Token(assetCID, clientID, titanRsa, m.nodeMgr.PrivateKey)
 		if err != nil {
-			return nil, nil, err
+			continue
 		}
 
 		downloadSource := *source

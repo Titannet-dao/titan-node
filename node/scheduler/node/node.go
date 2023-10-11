@@ -35,9 +35,10 @@ type Node struct {
 	selectWeights []int // The select weights assigned by the scheduler to each online node
 
 	// node info
-	PublicKey  *rsa.PublicKey
-	RemoteAddr string
-	TCPPort    int
+	PublicKey   *rsa.PublicKey
+	RemoteAddr  string
+	TCPPort     int
+	ExternalURL string
 
 	NATType     types.NatType
 	CPUUsage    float64

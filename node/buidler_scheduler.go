@@ -1,7 +1,6 @@
 package node
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"errors"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/sync"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
 	"github.com/Filecoin-Titan/titan/node/scheduler/workload"
-	"github.com/docker/go-units"
 	"github.com/filecoin-project/pubsub"
 	"github.com/jmoiron/sqlx"
 
@@ -76,8 +74,9 @@ func ConfigScheduler(c interface{}) Option {
 		Override(new(*scheduler.EdgeUpdateManager), scheduler.NewEdgeUpdateManager),
 		Override(new(dtypes.SetSchedulerConfigFunc), modules.NewSetSchedulerConfigFunc),
 		Override(new(dtypes.GetSchedulerConfigFunc), modules.NewGetSchedulerConfigFunc),
-		Override(new(*rsa.PrivateKey), func() (*rsa.PrivateKey, error) {
-			return rsa.GenerateKey(rand.Reader, units.KiB) //nolint:gosec   // need smaller key
-		}),
+		Override(new(*rsa.PrivateKey), modules.NewPrivateKey),
+		// func() (*rsa.PrivateKey, error) {
+			// return rsa.GenerateKey(rand.Reader, units.KiB) //nolint:gosec   // need smaller key
+		// }),
 	)
 }

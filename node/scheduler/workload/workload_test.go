@@ -135,3 +135,42 @@ func TestLoadWorkloadRecord(t *testing.T) {
 
 	}
 }
+
+func TestWorkloadCheck(t *testing.T) {
+	sqldb, err := sqldb.NewDB("scheduler:scheduler_password@tcp(127.0.0.1:3303)/titan_scheduler")
+	if err != nil {
+		t.Errorf("NewDB error:%s", err.Error())
+		return
+	}
+
+	db, err := db.NewSQLDB(sqldb)
+	if err != nil {
+		t.Errorf("NewSQLDB error:%s", err.Error())
+		return
+	}
+
+	rows, err := db.LoadUnprocessedWorkloadResults(100, time.Now().Unix())
+	if err != nil {
+		t.Errorf("LoadWorkloadResults err:%s", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	m := Manager{}
+
+	// t.Logf("rows.Rows %d", len(rows.Values))
+	for rows.Next() {
+		record := &types.WorkloadRecord{}
+		err = rows.StructScan(record)
+		if err != nil {
+			t.Errorf("ValidationResultInfo StructScan err: %s", err.Error())
+			continue
+		}
+
+		// check workload ...
+		status, cWorkload := m.checkWorkload(record)
+		t.Logf("status %d, startTime:%d", status, cWorkload.StartTime)
+
+	}
+
+}

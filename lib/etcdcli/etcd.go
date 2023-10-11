@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	clientv3 "go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"golang.org/x/xerrors"
 )
 

@@ -162,7 +162,7 @@ func (s *Scheduler) PullAsset(ctx context.Context, info *types.PullAssetReq) err
 		return xerrors.Errorf("expiration %s less than now(%v)", info.Expiration.String(), time.Now())
 	}
 
-	return s.AssetManager.CreateAssetPullTask(info, "") // TODO UserID
+	return s.AssetManager.CreateAssetPullTask(info, info.UserID) // TODO UserID
 }
 
 // GetAssetListForBucket retrieves a list of asset hashes for the specified node's bucket.
@@ -216,7 +216,20 @@ func (s *Scheduler) GetReplicaEventsForNode(ctx context.Context, nodeID string, 
 	startTime := time.Now()
 	defer log.Debugf("GetReplicaEventsForNode [%s] request time:%s", nodeID, time.Since(startTime))
 
-	info, err := s.db.LoadReplicaEvents(nodeID, limit, offset)
+	info, err := s.db.LoadReplicaEventsOfNode(nodeID, limit, offset)
+	if err != nil {
+		return nil, xerrors.Errorf("LoadReplicaEvents err:%s", err.Error())
+	}
+
+	return info, nil
+}
+
+// GetReplicaEvents retrieves a replica event list
+func (s *Scheduler) GetReplicaEvents(ctx context.Context, start, end time.Time, limit, offset int) (*types.ListReplicaEventRsp, error) {
+	startTime := time.Now()
+	defer log.Debugf("GetReplicaEvents request time:%s", time.Since(startTime))
+
+	info, err := s.db.LoadReplicaEvents(start, end, limit, offset)
 	if err != nil {
 		return nil, xerrors.Errorf("LoadReplicaEvents err:%s", err.Error())
 	}
@@ -225,13 +238,13 @@ func (s *Scheduler) GetReplicaEventsForNode(ctx context.Context, nodeID string, 
 }
 
 // CreateUserAsset creates an user asset with car CID, car name, and car size.
-func (s *Scheduler) CreateUserAsset(ctx context.Context, nodeID, assetCID, assetName, assetType string, assetSize int64) (*types.CreateAssetRsp, error) {
+func (s *Scheduler) CreateUserAsset(ctx context.Context, assetProperty *types.AssetProperty) (*types.CreateAssetRsp, error) {
 	userID := handler.GetUserID(ctx)
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("CreateUserAsset failed, can not get user id")
 	}
 
-	return s.CreateAsset(ctx, &types.CreateAssetReq{UserID: userID, AssetCID: assetCID, AssetName: assetName, AssetSize: assetSize, AssetType: assetType, NodeID: nodeID})
+	return s.CreateAsset(ctx, &types.CreateAssetReq{UserID: userID, AssetProperty: *assetProperty})
 }
 
 func (s *Scheduler) ListUserAssets(ctx context.Context, limit, offset int) (*types.ListAssetRecordRsp, error) {
@@ -291,7 +304,7 @@ func (s *Scheduler) DeleteAsset(ctx context.Context, userID, assetCID string) er
 // ShareAssets shares the assets of the user.
 func (s *Scheduler) ShareAssets(ctx context.Context, userID string, assetCIDs []string) (map[string]string, error) {
 	u := s.newUser(userID)
-	info, err := u.ShareAssets(ctx, assetCIDs, s, s.SchedulerCfg.CandidateDomainAddr)
+	info, err := u.ShareAssets(ctx, assetCIDs, s, s.NodeManager)
 	if err != nil {
 		return nil, xerrors.Errorf("ShareAssets err:%s", err.Error())
 	}
@@ -325,5 +338,5 @@ func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.Minio
 
 	log.Debugf("MinioUploadFileEvent nodeID:%s, assetCID:", nodeID, event.AssetCID)
 
-	return s.db.SaveReplicaEvent(hash, event.AssetCID, nodeID, event.Size, event.Expiration)
+	return s.db.SaveReplicaEvent(hash, event.AssetCID, nodeID, event.Size, event.Expiration, types.MinioEventAdd)
 }

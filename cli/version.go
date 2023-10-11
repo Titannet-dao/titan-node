@@ -21,6 +21,7 @@ var VersionCmd = &cli.Command{
 
 		v, err := api.Version(ctx)
 		if err != nil {
+			fmt.Println("err:", err.Error())
 			return err
 		}
 		fmt.Println("Daemon: ", v)

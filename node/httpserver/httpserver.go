@@ -72,11 +72,16 @@ func NewHttpServer(opts *HttpServerOptions) *HttpServer {
 		hs.validation.SetFunc(hs.FirstToken)
 	}
 
+	if err := hs.updateSchedulerPublicKey(); err != nil {
+		log.Errorf("updateSchedulerPublicKey error %s", err.Error())
+	}
+
 	return hs
 }
 
-// SetSchedulerPublicKey sets the public key of the scheduler.
-func (hs *HttpServer) UpdateSchedulerPublicKey() error {
+// TODO: need to update public key on reconnect
+// updateSchedulerPublicKey update the public key of the scheduler.
+func (hs *HttpServer) updateSchedulerPublicKey() error {
 	pem, err := hs.scheduler.GetSchedulerPublicKey(context.Background())
 	if err != nil {
 		return err

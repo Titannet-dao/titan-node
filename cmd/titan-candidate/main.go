@@ -166,8 +166,8 @@ var runCmd = &cli.Command{
 
 		privateKey, err := loadPrivateKey(r)
 		if err != nil {
-			return fmt.Errorf(`please import private key, example: 
-			titan-candidate key import --path /path/to/private.key`)
+			return fmt.Errorf(`please register your private key, example: 
+			titan-candidate register --key your_private_key`)
 		}
 
 		if len(candidateCfg.NodeID) == 0 || len(candidateCfg.AreaID) == 0 {
@@ -319,7 +319,7 @@ var runCmd = &cli.Command{
 
 		log.Infof("Candidate listen on %s", candidateCfg.ListenAddress)
 
-		schedulerSession, err := getSchedulerSession(schedulerAPI, connectTimeout)
+		schedulerSession, err := schedulerAPI.Session(ctx)
 		if err != nil {
 			return xerrors.Errorf("getting scheduler session: %w", err)
 		}
@@ -332,6 +332,11 @@ var runCmd = &cli.Command{
 		tcpServerPort, err := strconv.Atoi(port)
 		if err != nil {
 			return xerrors.Errorf("convert tcp server port from string: %w", err)
+		}
+
+		token, err := candidateAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: candidateCfg.NodeID})
+		if err != nil {
+			return xerrors.Errorf("generate token for scheduler error: %w", err)
 		}
 
 		waitQuietCh := func() chan struct{} {
@@ -359,15 +364,9 @@ var runCmd = &cli.Command{
 					readyCh = waitQuietCh()
 				}
 
-				token, err := candidateAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: candidateCfg.NodeID})
-				if err != nil {
-					log.Errorf("auth new error %s", err.Error())
-					return
-				}
-
 				errCount := 0
 				for {
-					curSession, err := getSchedulerSession(schedulerAPI, connectTimeout)
+					curSession, err := keepalive(schedulerAPI, connectTimeout)
 					if err != nil {
 						errCount++
 						log.Errorf("heartbeat: checking remote session failed: %+v", err)
@@ -384,16 +383,10 @@ var runCmd = &cli.Command{
 
 					select {
 					case <-readyCh:
-						opts := &types.ConnectOptions{Token: token, TcpServerPort: tcpServerPort, IsPrivateMinioOnly: isPrivateMinioOnly(candidateCfg)}
+						opts := &types.ConnectOptions{ExternalURL: candidateCfg.ExternalURL, Token: token, TcpServerPort: tcpServerPort, IsPrivateMinioOnly: isPrivateMinioOnly(candidateCfg)}
 						err := schedulerAPI.CandidateConnect(ctx, opts)
 						if err != nil {
 							log.Errorf("Registering candidate failed: %s", err.Error())
-							cancel()
-							return
-						}
-
-						if err := httpServer.UpdateSchedulerPublicKey(); err != nil {
-							log.Errorf("update scheduler public key error %s", err.Error())
 							cancel()
 							return
 						}
@@ -426,7 +419,7 @@ func isPrivateMinioOnly(config *config.CandidateCfg) bool {
 	return false
 }
 
-func getSchedulerSession(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
+func keepalive(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

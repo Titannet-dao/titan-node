@@ -159,8 +159,8 @@ var runCmd = &cli.Command{
 
 		privateKey, err := loadPrivateKey(r)
 		if err != nil {
-			return fmt.Errorf(`please import private key, example: 
-			titan-edge key import --path /path/to/private.key`)
+			return fmt.Errorf(`please register your private key, example: 
+			titan-edge register --key your_private_key`)
 		}
 
 		if len(edgeCfg.NodeID) == 0 || len(edgeCfg.AreaID) == 0 {
@@ -309,9 +309,14 @@ var runCmd = &cli.Command{
 
 		log.Infof("Edge listen on tcp %s", edgeCfg.ListenAddress)
 
-		schedulerSession, err := getSchedulerSession(schedulerAPI, connectTimeout)
+		schedulerSession, err := schedulerAPI.Session(ctx)
 		if err != nil {
 			return xerrors.Errorf("getting scheduler session: %w", err)
+		}
+
+		token, err := edgeAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: edgeCfg.NodeID})
+		if err != nil {
+			return xerrors.Errorf("generate token for scheduler error: %w", err)
 		}
 
 		waitQuietCh := func() chan struct{} {
@@ -339,15 +344,9 @@ var runCmd = &cli.Command{
 					readyCh = waitQuietCh()
 				}
 
-				token, err := edgeAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: edgeCfg.NodeID})
-				if err != nil {
-					log.Errorf("auth new error %s", err.Error())
-					return
-				}
-
 				errCount := 0
 				for {
-					curSession, err := getSchedulerSession(schedulerAPI, connectTimeout)
+					curSession, err := keepalive(schedulerAPI, connectTimeout)
 					if err != nil {
 						errCount++
 						log.Errorf("heartbeat: checking remote session failed: %+v", err)
@@ -371,12 +370,6 @@ var runCmd = &cli.Command{
 							return
 						}
 
-						if err := httpServer.UpdateSchedulerPublicKey(); err != nil {
-							log.Errorf("update scheduler public key error %s", err.Error())
-							cancel()
-							return
-						}
-
 						log.Info("Edge registered successfully, waiting for tasks")
 						errCount = 0
 						readyCh = nil
@@ -394,7 +387,7 @@ var runCmd = &cli.Command{
 	},
 }
 
-func getSchedulerSession(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
+func keepalive(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

@@ -45,7 +45,7 @@ func (n *SQLDB) UpdateReplicaInfo(cInfo *types.ReplicaInfo) error {
 	return tx.Commit()
 }
 
-func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiration time.Time) error {
+func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiration time.Time, event types.ReplicaEvent) error {
 	tx, err := n.db.Beginx()
 	if err != nil {
 		return err
@@ -63,7 +63,7 @@ func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiratio
 		`INSERT INTO %s (hash, event, node_id, total_size, cid, expiration) 
 			VALUES (?, ?, ?, ?, ?, ?)`, replicaEventTable)
 
-	_, err = tx.Exec(query, hash, types.ReplicaEventAdd, nodeID, size, cid, expiration)
+	_, err = tx.Exec(query, hash, event, nodeID, size, cid, expiration)
 	if err != nil {
 		return err
 	}
@@ -412,26 +412,55 @@ func (n *SQLDB) SaveAssetRecord(rInfo *types.AssetRecord) error {
 	return tx.Commit()
 }
 
-// LoadReplicaEvents Load replica event
-func (n *SQLDB) LoadReplicaEvents(nodeID string, limit, offset int) (*types.ListReplicaEventRsp, error) {
+// LoadReplicaEventsOfNode Load replica event
+func (n *SQLDB) LoadReplicaEventsOfNode(nodeID string, limit, offset int) (*types.ListReplicaEventRsp, error) {
 	res := new(types.ListReplicaEventRsp)
 
 	var infos []*types.ReplicaEventInfo
-	query := fmt.Sprintf("SELECT * FROM %s WHERE node_id=? AND event=? order by end_time desc LIMIT ? OFFSET ? ", replicaEventTable)
+	query := fmt.Sprintf("SELECT * FROM %s WHERE node_id=? AND event!=? order by end_time desc LIMIT ? OFFSET ? ", replicaEventTable)
 	if limit > loadReplicaEventDefaultLimit {
 		limit = loadReplicaEventDefaultLimit
 	}
 
-	err := n.db.Select(&infos, query, nodeID, types.ReplicaEventAdd, limit, offset)
+	err := n.db.Select(&infos, query, nodeID, types.ReplicaEventRemove, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
 	res.ReplicaEvents = infos
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE node_id=? AND event=?", replicaEventTable)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE node_id=? AND event!=?", replicaEventTable)
 	var count int
-	err = n.db.Get(&count, countQuery, nodeID, types.ReplicaEventAdd)
+	err = n.db.Get(&count, countQuery, nodeID, types.ReplicaEventRemove)
+	if err != nil {
+		return nil, err
+	}
+
+	res.Total = count
+
+	return res, nil
+}
+
+// LoadReplicaEvents Load replica event
+func (n *SQLDB) LoadReplicaEvents(start, end time.Time, limit, offset int) (*types.ListReplicaEventRsp, error) {
+	res := new(types.ListReplicaEventRsp)
+
+	var infos []*types.ReplicaEventInfo
+	query := fmt.Sprintf("SELECT * FROM %s WHERE end_time BETWEEN ? AND ? order by end_time desc LIMIT ? OFFSET ? ", replicaEventTable)
+	if limit > loadReplicaEventDefaultLimit {
+		limit = loadReplicaEventDefaultLimit
+	}
+
+	err := n.db.Select(&infos, query, start, end, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	res.ReplicaEvents = infos
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE end_time BETWEEN ? AND ? ", replicaEventTable)
+	var count int
+	err = n.db.Get(&count, countQuery, start, end)
 	if err != nil {
 		return nil, err
 	}

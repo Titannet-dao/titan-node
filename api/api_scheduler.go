@@ -14,7 +14,7 @@ import (
 type AssetAPI interface {
 	// Asset-related methods
 	// PullAsset Pull an asset based on the provided PullAssetReq structure.
-	PullAsset(ctx context.Context, info *types.PullAssetReq) error //perm:admin
+	PullAsset(ctx context.Context, info *types.PullAssetReq) error //perm:web,admin
 	// RemoveAssetRecord removes the asset record with the specified CID from the scheduler
 	RemoveAssetRecord(ctx context.Context, cid string) error //perm:admin
 	// RemoveAssetReplica deletes an asset replica with the specified CID and node from the scheduler
@@ -39,8 +39,10 @@ type AssetAPI interface {
 	GetAssetsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) //perm:web,admin
 	// GetReplicaEventsForNode retrieves a replica event list of node
 	GetReplicaEventsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListReplicaEventRsp, error) //perm:web,admin
+	// GetReplicaEvents retrieves a replica event list of node
+	GetReplicaEvents(ctx context.Context, start, end time.Time, limit, offset int) (*types.ListReplicaEventRsp, error) //perm:web,admin
 	// CreateUserAsset creates an asset with car CID, car name, and car size.
-	CreateUserAsset(ctx context.Context, nodeID, assetCID, assetName, assetType string, assetSize int64) (*types.CreateAssetRsp, error) //perm:user
+	CreateUserAsset(ctx context.Context, assetProperty *types.AssetProperty) (*types.CreateAssetRsp, error) //perm:user
 	// ListUserAssets lists the assets of the user.
 	ListUserAssets(ctx context.Context, limit, offset int) (*types.ListAssetRecordRsp, error) //perm:user
 	// DeleteUserAsset deletes the asset of the user.
@@ -142,6 +144,8 @@ type UserAPI interface {
 	UserAssetDownloadResult(ctx context.Context, userID, cid string, totalTraffic, peakBandwidth int64) error //perm:candidate
 	// SetUserVIP set user vip state
 	SetUserVIP(ctx context.Context, userID string, enableVIP bool) error //perm:admin
+	// GetUserAccessToken get access token for user
+	GetUserAccessToken(ctx context.Context, userID string) (string, error) //perm:web,admin
 }
 
 // Scheduler is an interface for scheduler
