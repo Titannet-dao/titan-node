@@ -41,3 +41,5 @@ type SetSchedulerConfigFunc func(cfg config.SchedulerCfg) error
 // GetSchedulerConfigFunc is a function which is used to
 // get the sealing config.
 type GetSchedulerConfigFunc func() (config.SchedulerCfg, error)
+
+type ShutdownChan chan struct{}

@@ -56,9 +56,9 @@ func (m *Manager) startElectionTicker() {
 // elect triggers an election and updates the list of validators.
 func (m *Manager) elect() error {
 	log.Debugln("start elect ")
-	validators := m.electValidators()
+	validators, validatables := m.electValidators()
 
-	m.ResetValidatorGroup(validators)
+	m.ResetValidatorGroup(validators, validatables)
 
 	return m.nodeMgr.UpdateValidators(validators, m.nodeMgr.ServerID)
 }
@@ -92,14 +92,14 @@ func (m *Manager) getElectionCycle() time.Duration {
 }
 
 // performs the election process and returns the list of elected validators.
-func (m *Manager) electValidators() []string {
+func (m *Manager) electValidators() ([]string, []string) {
 	ratio := m.getValidatorRatio()
 
-	list, _ := m.nodeMgr.GetAllCandidateNodes()
+	list, _ := m.nodeMgr.GetAllValidCandidateNodes()
 
 	needValidatorCount := int(math.Ceil(float64(len(list)) * ratio))
 	if needValidatorCount <= 0 {
-		return nil
+		return nil, list
 	}
 
 	rand.Seed(time.Now().UnixNano())
@@ -111,7 +111,8 @@ func (m *Manager) electValidators() []string {
 		needValidatorCount = len(list)
 	}
 
-	list = list[:needValidatorCount]
+	validators := list[:needValidatorCount]
+	validatables := list[needValidatorCount:]
 
-	return list
+	return validators, validatables
 }

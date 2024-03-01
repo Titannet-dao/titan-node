@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	bandwidthRatio = 0.7                  // The ratio of the total upstream bandwidth on edge nodes to the downstream bandwidth on validation nodes.
+	bandwidthRatio = 1                    // The ratio of the total upstream bandwidth on edge nodes to the downstream bandwidth on validation nodes.
 	toleranceBwUp  = int64(5 * units.MiB) // The tolerance for uplink bandwidth deviation per group, set to 5M.
 )
 
@@ -106,7 +106,7 @@ func (b *ValidatableGroup) removeNode(nodeID string) {
 }
 
 // ResetValidatorGroup clears and initializes the validator and validatable groups
-func (m *Manager) ResetValidatorGroup(nodeIDs []string) {
+func (m *Manager) ResetValidatorGroup(validators, validatables []string) {
 	m.validationPairLock.Lock()
 	defer m.validationPairLock.Unlock()
 
@@ -115,17 +115,32 @@ func (m *Manager) ResetValidatorGroup(nodeIDs []string) {
 		m.unpairedGroup.addNodes(group.nodes)
 	}
 
+	for _, nodeID := range validatables {
+		node := m.nodeMgr.GetCandidateNode(nodeID)
+		if node == nil {
+			continue
+		}
+		m.unpairedGroup.addNode(nodeID, node.BandwidthUp)
+	}
+
 	// init
 	m.validatableGroups = make([]*ValidatableGroup, 0)
 	m.vWindows = make([]*VWindow, 0)
 
-	for _, nodeID := range nodeIDs {
+	for _, nodeID := range validators {
+		// if validator exist
+		m.unpairedGroup.removeNode(nodeID)
+
 		node := m.nodeMgr.GetCandidateNode(nodeID)
+		if node == nil {
+			continue
+		}
+
 		bwDn := float64(node.BandwidthDown)
 
 		count := int(math.Floor((bwDn * bandwidthRatio) / m.getValidatorBaseBwDn()))
 		if count < 1 {
-			continue
+			count = 1
 		}
 
 		for i := 0; i < count; i++ {
@@ -145,7 +160,7 @@ func (m *Manager) addValidator(nodeID string, bwDn int64) {
 
 	count := int(math.Floor((float64(bwDn) * bandwidthRatio) / m.getValidatorBaseBwDn()))
 	if count < 1 {
-		return
+		count = 1
 	}
 
 	// Do not process if node present

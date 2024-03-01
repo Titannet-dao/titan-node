@@ -38,6 +38,8 @@ const (
 
 	RunGateway
 
+	SetApiEndpointKey
+
 	_nInvokes // keep this last
 )
 

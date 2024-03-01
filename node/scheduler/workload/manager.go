@@ -18,11 +18,11 @@ import (
 var log = logging.Logger("workload")
 
 const (
-	workloadInterval = 2 * time.Minute
+	workloadInterval = 5 * time.Minute
 	confirmationTime = 70 * time.Second
 
-	// Process 100 pieces of workload result data at a time
-	vWorkloadLimit = 100
+	// Process 10000 pieces of workload result data at a time
+	vWorkloadLimit = 10000
 )
 
 // Manager node workload
@@ -65,37 +65,40 @@ func (m *Manager) handleWorkloadResults() {
 		return
 	}
 
-	defer log.Debugf("handleWorkloadResult end  %s", time.Now().Format("2006-01-02 15:04:05"))
-	log.Debugf("handleWorkloadResult start  %s", time.Now().Format("2006-01-02 15:04:05"))
+	resultLen := 0
+	endTime := time.Now().Add(-confirmationTime).Unix()
+
+	startTime := time.Now()
+	defer func() {
+		log.Debugf("handleWorkloadResult time:%s , len:%d , endTime:%d", time.Since(startTime), resultLen, endTime)
+	}()
 
 	profit := m.getValidationProfit()
 
 	// do handle workload result
-	rows, err := m.LoadUnprocessedWorkloadResults(vWorkloadLimit, time.Now().Add(-confirmationTime).Unix())
+	rows, err := m.LoadUnprocessedWorkloadResults(vWorkloadLimit, endTime)
 	if err != nil {
 		log.Errorf("LoadWorkloadResults err:%s", err.Error())
 		return
 	}
 	defer rows.Close()
 
-	updateIDs := make(map[string]types.WorkloadStatus)
 	removeIDs := make([]string, 0)
 
 	for rows.Next() {
+		resultLen++
+
 		record := &types.WorkloadRecord{}
 		err = rows.StructScan(record)
 		if err != nil {
-			log.Errorf("ValidationResultInfo StructScan err: %s", err.Error())
+			log.Errorf("WorkloadResultInfo StructScan err: %s", err.Error())
 			continue
 		}
+
+		removeIDs = append(removeIDs, record.ID)
 
 		// check workload ...
 		status, cWorkload := m.checkWorkload(record)
-		if status == types.WorkloadStatusInvalid {
-			removeIDs = append(removeIDs, record.ID)
-			continue
-		}
-
 		if status == types.WorkloadStatusSucceeded {
 			// Retrieve Event
 			if err := m.SaveRetrieveEventInfo(&types.RetrieveEvent{
@@ -104,26 +107,25 @@ func (m *Manager) handleWorkloadResults() {
 				NodeID:      record.NodeID,
 				ClientID:    record.ClientID,
 				Size:        cWorkload.DownloadSize,
-				CreatedTime: cWorkload.StartTime,
-				EndTime:     cWorkload.EndTime,
+				CreatedTime: cWorkload.StartTime.Unix(),
+				EndTime:     cWorkload.EndTime.Unix(),
 				Profit:      profit,
 			}); err != nil {
 				log.Errorf("SaveRetrieveEventInfo token:%s , %d,  error %s", record.ID, cWorkload.StartTime, err.Error())
 				continue
 			}
 
-			removeIDs = append(removeIDs, record.ID)
+			// update node bandwidths
+			t := cWorkload.EndTime.Sub(cWorkload.StartTime)
+			if t > 1 {
+				speed := cWorkload.DownloadSize / int64(t) * int64(time.Second)
+				m.nodeMgr.UpdateNodeBandwidths(record.NodeID, 0, speed)
+				m.nodeMgr.UpdateNodeBandwidths(record.ClientID, speed, 0)
+			}
+
 			continue
 		}
 
-		updateIDs[record.ID] = status
-	}
-
-	if len(updateIDs) > 0 {
-		err = m.UpdateNodeInfosByWorkloadResult(updateIDs)
-		if err != nil {
-			log.Errorf("UpdateNodeInfosByWorkloadResult err:%s", err.Error())
-		}
 	}
 
 	if len(removeIDs) > 0 {
@@ -287,8 +289,8 @@ func (m *Manager) mergeWorkloads(workloads []*types.Workload) *types.Workload {
 
 	// costTime := int64(0)
 	downloadSize := int64(0)
-	startTime := int64(0)
-	endTime := int64(0)
+	startTime := time.Time{}
+	endTime := time.Time{}
 	speedCount := int64(0)
 	accumulateSpeed := int64(0)
 
@@ -299,11 +301,11 @@ func (m *Manager) mergeWorkloads(workloads []*types.Workload) *types.Workload {
 		}
 		downloadSize += workload.DownloadSize
 
-		if startTime == 0 || workload.StartTime < startTime {
+		if startTime.IsZero() || workload.StartTime.Before(startTime) {
 			startTime = workload.StartTime
 		}
 
-		if workload.EndTime > endTime {
+		if workload.EndTime.After(endTime) {
 			endTime = workload.EndTime
 		}
 	}

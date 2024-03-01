@@ -5,13 +5,16 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/filecoin-project/go-jsonrpc/auth"
-	"golang.org/x/xerrors"
+	xerrors "golang.org/x/xerrors"
 )
 
 type permKey int
+type userAccessControlKey struct{}
 
 var permCtxKey permKey
+var aclCtxKey userAccessControlKey
 
 func split(psStr auth.Permission) []auth.Permission {
 	permissions := strings.Split(string(psStr), ",")
@@ -26,6 +29,10 @@ func split(psStr auth.Permission) []auth.Permission {
 
 func WithPerm(ctx context.Context, perms []auth.Permission) context.Context {
 	return context.WithValue(ctx, permCtxKey, perms)
+}
+
+func WithUserAccessControl(ctx context.Context, acl []types.UserAccessControl) context.Context {
+	return context.WithValue(ctx, aclCtxKey, acl)
 }
 
 func HasPerm(ctx context.Context, defaultPerm auth.Permission, perms auth.Permission) bool {
@@ -79,12 +86,17 @@ func PermissionedProxy(validPerms []auth.Permission, defaultPerms auth.Permissio
 		fn := ra.MethodByName(field.Name)
 
 		rint.Field(f).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
+			err := xerrors.Errorf("missing permission to invoke '%s' (need '%s')", field.Name, requiredPerms)
+
 			ctx := args[0].Interface().(context.Context)
 			if HasPerm(ctx, defaultPerms, requiredPerms) {
-				return fn.Call(args)
+				if AllowUserAccess(ctx, requiredPerms, field.Name) {
+					return fn.Call(args)
+				}
+
+				err = xerrors.Errorf("user missing access control: %s, own: %s", types.FuncAccessControlMap[field.Name], ctx.Value(userAccessControlKey{}).([]types.UserAccessControl))
 			}
 
-			err := xerrors.Errorf("missing permission to invoke '%s' (need '%s')", field.Name, requiredPerms)
 			rerr := reflect.ValueOf(&err).Elem()
 
 			if field.Type.NumOut() == 2 {
@@ -98,4 +110,59 @@ func PermissionedProxy(validPerms []auth.Permission, defaultPerms auth.Permissio
 		}))
 
 	}
+}
+
+func AllowUserAccess(ctx context.Context, perms auth.Permission, funcName string) bool {
+	if !isNeedUserAccessControl(ctx, perms) {
+		return true
+	}
+
+	accessControlList, ok := ctx.Value(userAccessControlKey{}).([]types.UserAccessControl)
+	if !ok {
+		panic("can not get user accessControl from context")
+	}
+
+	needPermission, ok := types.FuncAccessControlMap[funcName]
+	if !ok {
+		return true
+	}
+
+	for _, ac := range accessControlList {
+		if ac == needPermission {
+			return true
+		}
+	}
+	return false
+
+}
+
+func isNeedUserAccessControl(ctx context.Context, perms auth.Permission) bool {
+	callerPerms, ok := ctx.Value(permCtxKey).([]auth.Permission)
+	if !ok {
+		return false
+	}
+
+	isNeedAccessControl := false
+	for _, perm := range callerPerms {
+		if perm == RoleAdmin {
+			return false
+		}
+
+		if perm == RoleUser {
+			isNeedAccessControl = true
+		}
+	}
+
+	if !isNeedAccessControl {
+		return false
+	}
+
+	ps := split(perms)
+	for _, p := range ps {
+		if p == RoleUser {
+			return true
+		}
+	}
+
+	return false
 }

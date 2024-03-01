@@ -8,6 +8,15 @@ import (
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 )
 
+// NodeSnapshot contains the real-time status information of a node,
+// such as the last online time, online duration, CPU usage rate, and score changes.
+type NodeSnapshot struct {
+	NodeID         string    `db:"node_id"`
+	OnlineDuration int       `db:"online_duration"` // unit:Minute
+	DiskUsage      float64   `db:"disk_usage"`
+	LastSeen       time.Time `db:"last_seen"`
+}
+
 // NodeDynamicInfo Dynamic information about the node
 type NodeDynamicInfo struct {
 	NodeID          string  `json:"node_id" form:"nodeId" gorm:"column:node_id;comment:;" db:"node_id"`
@@ -76,6 +85,8 @@ func (n NodeStatus) String() string {
 
 	return ""
 }
+
+const MaxNumberOfSameDayRegistrations = 10
 
 // NodeType node type
 type NodeType int
@@ -152,8 +163,9 @@ type CandidateDownloadInfo struct {
 
 // NodeIPInfo
 type NodeIPInfo struct {
-	NodeID string
-	IP     string
+	NodeID      string
+	IP          string
+	ExternalURL string
 }
 
 // NodeReplicaStatus represents the status of a node cache
@@ -320,8 +332,8 @@ type Token struct {
 type Workload struct {
 	DownloadSpeed int64
 	DownloadSize  int64
-	StartTime     int64
-	EndTime       int64
+	StartTime     time.Time
+	EndTime       time.Time
 	BlockCount    int64
 }
 
@@ -393,6 +405,7 @@ type ActivationDetail struct {
 	AreaID        string   `json:"area_id" `
 	ActivationKey string   `json:"activation_key" db:"activation_key"`
 	NodeType      NodeType `json:"node_type" db:"node_type"`
+	IP            string   `json:"ip" db:"ip"`
 }
 
 func (d *ActivationDetail) Marshal() (string, error) {

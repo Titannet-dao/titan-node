@@ -11,7 +11,7 @@ import (
 )
 
 // SaveAssetUser save asset and user info
-func (n *SQLDB) SaveAssetUser(hash, userID, assetName, assetType string, size int64, expiration time.Time) error {
+func (n *SQLDB) SaveAssetUser(hash, userID, assetName, assetType string, size int64, expiration time.Time, password string, groupID int) error {
 	tx, err := n.db.Beginx()
 	if err != nil {
 		return err
@@ -25,9 +25,9 @@ func (n *SQLDB) SaveAssetUser(hash, userID, assetName, assetType string, size in
 	}()
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (hash, user_id, asset_name, total_size, asset_type, expiration) 
-		        VALUES (?, ?, ?, ?, ?, ?) `, userAssetTable)
-	_, err = tx.Exec(query, hash, userID, assetName, size, assetType, expiration)
+		`INSERT INTO %s (hash, user_id, asset_name, total_size, asset_type, expiration, password, group_id) 
+		        VALUES (?, ?, ?, ?, ?, ?, ?, ?) `, userAssetTable)
+	_, err = tx.Exec(query, hash, userID, assetName, size, assetType, expiration, password, groupID)
 	if err != nil {
 		return err
 	}
@@ -130,14 +130,14 @@ func (n *SQLDB) GetSizeForUserAsset(hash, userID string) (int64, error) {
 }
 
 // ListAssetsForUser Get a list of assets by user
-func (n *SQLDB) ListAssetsForUser(user string, limit, offset int) ([]*types.UserAssetDetail, error) {
+func (n *SQLDB) ListAssetsForUser(user string, limit, offset, groupID int) ([]*types.UserAssetDetail, error) {
 	if limit > loadAssetRecordsDefaultLimit {
 		limit = loadAssetRecordsDefaultLimit
 	}
 
 	var infos []*types.UserAssetDetail
-	query := fmt.Sprintf("SELECT * FROM %s WHERE user_id=? order by created_time desc LIMIT ? OFFSET ?", userAssetTable)
-	err := n.db.Select(&infos, query, user, limit, offset)
+	query := fmt.Sprintf("SELECT * FROM %s WHERE user_id=? AND group_id=? order by created_time desc LIMIT ? OFFSET ?", userAssetTable)
+	err := n.db.Select(&infos, query, user, groupID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -145,11 +145,23 @@ func (n *SQLDB) ListAssetsForUser(user string, limit, offset int) ([]*types.User
 	return infos, nil
 }
 
-// GetAssetCountsForUser Get asset count
-func (n *SQLDB) GetAssetCountsForUser(user string) (int, error) {
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id=? ", userAssetTable)
+// GetUserAssetCountByGroupID Get count by group id
+func (n *SQLDB) GetUserAssetCountByGroupID(user string, groupID int) (int, error) {
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id=? AND group_id=? ", userAssetTable)
 	var count int
-	err := n.db.Get(&count, countQuery, user)
+	err := n.db.Get(&count, countQuery, user, groupID)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
+// GetAssetCountsForUser Get asset count
+func (n *SQLDB) GetAssetCountsForUser(user string, groupID int) (int, error) {
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id=? AND group_id=? ", userAssetTable)
+	var count int
+	err := n.db.Get(&count, countQuery, user, groupID)
 	if err != nil {
 		return 0, err
 	}
@@ -217,12 +229,48 @@ func (n *SQLDB) SaveUserTotalStorageSize(userID string, totalSize int64) error {
 	return err
 }
 
-// LoadUserInfo load user storage size
+// LoadUserInfo load user info
 func (n *SQLDB) LoadUserInfo(userID string) (*types.UserInfo, error) {
 	query := fmt.Sprintf("SELECT total_storage_size, used_storage_size, total_traffic, peak_bandwidth, download_count, enable_vip, update_peak_time FROM %s WHERE user_id=?", userInfoTable)
 	info := types.UserInfo{}
 	err := n.db.Get(&info, query, userID)
 	return &info, err
+}
+
+// LoadStorageStatsOfUser load user storage stats
+func (n *SQLDB) LoadStorageStatsOfUser(userID string) (*types.StorageStats, error) {
+	query := fmt.Sprintf("SELECT a.user_id, a.total_storage_size, a.used_storage_size, a.total_traffic, (SELECT COUNT(*) FROM %s WHERE user_id = a.user_id) AS asset_count FROM %s a WHERE user_id=?", userAssetTable, userInfoTable)
+	info := types.StorageStats{}
+	err := n.db.Get(&info, query, userID)
+	return &info, err
+}
+
+// ListStorageStatsOfUsers load users storage stats
+func (n *SQLDB) ListStorageStatsOfUsers(limit, offset int) (*types.ListStorageStatsRsp, error) {
+	res := new(types.ListStorageStatsRsp)
+	var infos []*types.StorageStats
+	query := fmt.Sprintf("SELECT a.user_id, a.total_storage_size, a.used_storage_size, a.total_traffic, (SELECT COUNT(*) FROM %s WHERE user_id = a.user_id) AS asset_count FROM %s a order by a.user_id desc LIMIT ? OFFSET ?", userAssetTable, userInfoTable)
+	if limit > loadUserDefaultLimit {
+		limit = loadUserDefaultLimit
+	}
+
+	err := n.db.Select(&infos, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	res.Storages = infos
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s ", userInfoTable)
+	var count int
+	err = n.db.Get(&count, countQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	res.Total = count
+
+	return res, nil
 }
 
 // UpdateUserInfo update user info
@@ -278,10 +326,144 @@ func (n *SQLDB) GetAssetVisitCount(assetHash string) (int, error) {
 	return count, err
 }
 
-// UpdateUserInfo update user info
+// UpdateUserVIPAndStorageSize update user info
 func (n *SQLDB) UpdateUserVIPAndStorageSize(userID string, enableVIP bool, storageSize int64) error {
 	query := fmt.Sprintf(
 		`UPDATE %s SET enable_vip=?, total_storage_size=? WHERE user_id=?`, userInfoTable)
 	_, err := n.db.Exec(query, enableVIP, storageSize, userID)
 	return err
+}
+
+// CreateAssetGroup create a group
+func (n *SQLDB) CreateAssetGroup(info *types.AssetGroup) (*types.AssetGroup, error) {
+	query := fmt.Sprintf(
+		`INSERT INTO %s (user_id, name, parent)
+				VALUES (:user_id, :name, :parent)`, userAssetGroupTable)
+
+	result, err := n.db.NamedExec(query, info)
+	if err != nil {
+		return nil, err
+	}
+
+	insertedID, err := result.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	info.ID = int(insertedID)
+
+	return info, err
+}
+
+// AssetGroupExists is group exists
+func (n *SQLDB) AssetGroupExists(userID string, gid int) (bool, error) {
+	var total int64
+	countSQL := fmt.Sprintf(`SELECT count(*) FROM %s WHERE user_id=? AND id=?`, userAssetGroupTable)
+	if err := n.db.Get(&total, countSQL, userID, gid); err != nil {
+		return false, err
+	}
+
+	return total > 0, nil
+}
+
+// GetAssetGroupParent get a group parent
+func (n *SQLDB) GetAssetGroupParent(gid int) (int, error) {
+	var parent int
+
+	query := fmt.Sprintf("SELECT parent FROM %s WHERE id=?", userAssetGroupTable)
+	err := n.db.Get(&parent, query, gid)
+	if err != nil {
+		return 0, err
+	}
+
+	return parent, nil
+}
+
+// GetAssetGroupCount get asset group count of user
+func (n *SQLDB) GetAssetGroupCount(userID string) (int64, error) {
+	var total int64
+	countSQL := fmt.Sprintf(`SELECT count(*) FROM %s WHERE user_id=? `, userAssetGroupTable)
+	if err := n.db.Get(&total, countSQL, userID); err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
+
+// UpdateAssetGroupName update user asset group name
+func (n *SQLDB) UpdateAssetGroupName(userID, rename string, groupID int) error {
+	query := fmt.Sprintf(
+		`UPDATE %s SET name=? WHERE user_id=? AND id=? `, userAssetGroupTable)
+	_, err := n.db.Exec(query, rename, userID, groupID)
+	return err
+}
+
+// UpdateAssetGroupParent update user asset group parent
+func (n *SQLDB) UpdateAssetGroupParent(userID string, groupID, parent int) error {
+	query := fmt.Sprintf(
+		`UPDATE %s SET parent=? WHERE user_id=? AND id=? `, userAssetGroupTable)
+	_, err := n.db.Exec(query, parent, userID, groupID)
+	return err
+}
+
+// UpdateAssetGroup update user asset group
+func (n *SQLDB) UpdateAssetGroup(hash, userID string, groupID int) error {
+	query := fmt.Sprintf(
+		`UPDATE %s SET group_id=? WHERE user_id=? AND hash=?`, userAssetTable)
+	_, err := n.db.Exec(query, groupID, userID, hash)
+	return err
+}
+
+// ListAssetGroupForUser get asset group list
+func (n *SQLDB) ListAssetGroupForUser(user string, parent, limit, offset int) (*types.ListAssetGroupRsp, error) {
+	res := new(types.ListAssetGroupRsp)
+	var infos []*types.AssetGroup
+	var count int
+
+	query := fmt.Sprintf("SELECT a.*, COUNT(ua.user_id) AS asset_count,	COALESCE(SUM(ua.total_size), 0) AS asset_size FROM %s a	LEFT JOIN %s ua ON ua.user_id=a.user_id AND ua.group_id=a.id WHERE a.user_id=? AND a.parent=? GROUP BY a.id	ORDER BY a.created_time DESC LIMIT ? OFFSET ?", userAssetGroupTable, userAssetTable)
+	err := n.db.Select(&infos, query, user, parent, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	res.AssetGroups = infos
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id=? AND parent=?", userAssetGroupTable)
+
+	err = n.db.Get(&count, countQuery, user, parent)
+	if err != nil {
+		return nil, err
+	}
+
+	res.Total = count
+
+	return res, nil
+}
+
+// DeleteAssetGroup delete asset group
+func (n *SQLDB) DeleteAssetGroup(userID string, gid int) error {
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("DeleteFileGroup Rollback err:%s", err.Error())
+		}
+	}()
+
+	query := fmt.Sprintf(`DELETE FROM %s WHERE user_id=? AND parent=?`, userAssetGroupTable)
+	_, err = tx.Exec(query, userID, gid)
+	if err != nil {
+		return err
+	}
+
+	query = fmt.Sprintf(`DELETE FROM %s WHERE user_id=? AND id=?`, userAssetGroupTable)
+	_, err = tx.Exec(query, userID, gid)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

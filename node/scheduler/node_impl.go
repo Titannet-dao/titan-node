@@ -54,35 +54,67 @@ func (s *Scheduler) GetOnlineNodeCount(ctx context.Context, nodeType types.NodeT
 }
 
 // RegisterNode register node
-func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey, key string) error {
+func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey string, nodeType types.NodeType) (*types.ActivationDetail, error) {
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	ip, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// check params
+	if nodeType != types.NodeEdge && nodeType != types.NodeCandidate {
+		return nil, xerrors.New("invalid node type")
+	}
+
+	if nodeType == types.NodeEdge && !strings.HasPrefix(nodeID, "e_") {
+		return nil, xerrors.New("invalid edge node id")
+	}
+
+	if nodeType == types.NodeCandidate && !strings.HasPrefix(nodeID, "c_") {
+		return nil, xerrors.New("invalid candidate node id")
+	}
+
 	if publicKey == "" {
-		return xerrors.New("public key is nil")
+		return nil, xerrors.New("public key is nil")
 	}
 
-	_, err := titanrsa.Pem2PublicKey([]byte(publicKey))
+	_, err = titanrsa.Pem2PublicKey([]byte(publicKey))
 	if err != nil {
-		return xerrors.Errorf("pem to publicKey err : %s", err.Error())
+		return nil, xerrors.Errorf("pem to publicKey err : %s", err.Error())
 	}
 
-	activationKey, err := s.db.LoadNodeActivationKey(nodeID)
-	if err != nil {
-		return xerrors.Errorf("LoadNodeActivationKey err : %s", err.Error())
+	if err = s.db.NodeExists(nodeID, nodeType); err == nil {
+		return nil, xerrors.Errorf("Node %s aready exist", nodeID)
 	}
 
-	if activationKey != key {
-		return xerrors.New("activationKey Mismatch ")
+	if count, err := s.db.TodayRegisterCount(ip); err != nil {
+		return nil, xerrors.Errorf("TodayRegisterCount %w", err)
+	} else if count >= types.MaxNumberOfSameDayRegistrations {
+		return nil, xerrors.New("today's registrations exceeded the number")
 	}
 
-	pKey, err := s.db.LoadNodePublicKey(nodeID)
-	if err != nil {
-		return xerrors.Errorf("LoadNodePublicKey err : %s", err.Error())
+	detail := &types.ActivationDetail{
+		NodeID:        nodeID,
+		AreaID:        s.SchedulerCfg.AreaID,
+		ActivationKey: newNodeKey(),
+		NodeType:      nodeType,
+		IP:            ip,
 	}
 
-	if pKey != "" {
-		return xerrors.New("node public key already exists ")
+	if err = s.db.SaveNodeRegisterInfos([]*types.ActivationDetail{detail}); err != nil {
+		return nil, xerrors.Errorf("SaveNodeRegisterInfos %w", err)
 	}
 
-	return s.db.SaveNodePublicKey(publicKey, nodeID)
+	if err = s.db.SaveNodePublicKey(publicKey, nodeID); err != nil {
+		return nil, xerrors.Errorf("SaveNodePublicKey %w", err)
+	}
+
+	return detail, nil
+}
+
+// RegisterEdgeNode register edge node, return key
+func (s *Scheduler) RegisterEdgeNode(ctx context.Context, nodeID, publicKey string) (*types.ActivationDetail, error) {
+	return s.RegisterNode(ctx, nodeID, publicKey, types.NodeEdge)
 }
 
 // DeactivateNode is used to deactivate a node in the titan server.
@@ -173,6 +205,7 @@ func (s *Scheduler) RequestActivationCodes(ctx context.Context, nodeType types.N
 			AreaID:        areaID,
 			ActivationKey: newNodeKey(),
 			NodeType:      nodeType,
+			IP:            "localhost",
 		}
 
 		code, err := detail.Marshal()
@@ -287,12 +320,14 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		nodeInfo.Status = nodeStatus(node)
 		nodeInfo.NATType = node.NATType.String()
 		nodeInfo.Type = node.Type
-		nodeInfo.ExternalIP = node.ExternalIP
+		nodeInfo.ExternalIP = node.Info.ExternalIP
 		nodeInfo.MemoryUsage = node.MemoryUsage
 		nodeInfo.CPUUsage = node.CPUUsage
 		nodeInfo.DiskUsage = node.DiskUsage
 		nodeInfo.BandwidthDown = node.BandwidthDown
 		nodeInfo.BandwidthUp = node.BandwidthUp
+		nodeInfo.IoSystem = node.Info.IoSystem
+		nodeInfo.DiskType = node.Info.DiskType
 
 		log.Debugf("%s node select codes:%v", nodeID, node.SelectWeights())
 	}
@@ -302,9 +337,6 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 
 // GetNodeList retrieves a list of nodes with pagination.
 func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*types.ListNodesRsp, error) {
-	startTime := time.Now()
-	defer log.Debugf("GetNodeList request time:%s", time.Since(startTime))
-
 	info := &types.ListNodesRsp{Data: make([]types.NodeInfo, 0)}
 
 	rows, total, err := s.NodeManager.LoadNodeInfos(limit, offset)
@@ -331,22 +363,24 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 			continue
 		}
 
-		_, exist := validator[nodeInfo.NodeID]
-		if exist {
-			nodeInfo.Type = types.NodeValidator
-		}
-
 		node := s.NodeManager.GetNode(nodeInfo.NodeID)
 		if node != nil {
 			nodeInfo.Status = nodeStatus(node)
 			nodeInfo.NATType = node.NATType.String()
 			nodeInfo.Type = node.Type
-			nodeInfo.ExternalIP = node.ExternalIP
+			nodeInfo.ExternalIP = node.Info.ExternalIP
 			nodeInfo.MemoryUsage = node.MemoryUsage
 			nodeInfo.CPUUsage = node.CPUUsage
 			nodeInfo.DiskUsage = node.DiskUsage
 			nodeInfo.BandwidthDown = node.BandwidthDown
 			nodeInfo.BandwidthUp = node.BandwidthUp
+			nodeInfo.IoSystem = node.Info.IoSystem
+			nodeInfo.DiskType = node.Info.DiskType
+		}
+
+		_, exist := validator[nodeInfo.NodeID]
+		if exist {
+			nodeInfo.Type = types.NodeValidator
 		}
 
 		nodeInfos = append(nodeInfos, *nodeInfo)
@@ -574,6 +608,37 @@ func (s *Scheduler) NodeKeepalive(ctx context.Context) (uuid.UUID, error) {
 	return uuid, err
 }
 
+// NodeKeepaliveV2 candidate and edge keepalive
+func (s *Scheduler) NodeKeepaliveV2(ctx context.Context) (uuid.UUID, error) {
+	uuid, err := s.CommonAPI.Session(ctx)
+
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	nodeID := handler.GetNodeID(ctx)
+	if nodeID != "" && remoteAddr != "" {
+		lastTime := time.Now()
+
+		node := s.NodeManager.GetNode(nodeID)
+		if node != nil {
+			if remoteAddr != node.RemoteAddr {
+				log.Debugf("node %s remoteAddr inconsistent, new addr %s ,old addr %s", nodeID, remoteAddr, node.RemoteAddr)
+				return uuid, &api.ErrNode{Code: int(terrors.NodeIPInconsistent), Message: fmt.Sprintf("node %s new ip %s, old ip %s", nodeID, remoteAddr, node.RemoteAddr)}
+			}
+
+			if node.DeactivateTime > 0 && node.DeactivateTime < time.Now().Unix() {
+				return uuid, &api.ErrNode{Code: int(terrors.NodeDeactivate), Message: fmt.Sprintf("The node %s has been deactivate and cannot be logged in", nodeID)}
+			}
+
+			node.SetLastRequestTime(lastTime)
+		} else {
+			return uuid, &api.ErrNode{Code: int(terrors.NodeOffline), Message: fmt.Sprintf("node %s offline or not exist", nodeID)}
+		}
+	} else {
+		return uuid, &api.ErrNode{Code: terrors.Unknown, Message: fmt.Sprintf("nodeID %s or remoteAddr %s is nil", nodeID, remoteAddr)}
+	}
+
+	return uuid, err
+}
+
 // create a node id
 func newNodeID(nType types.NodeType) (string, error) {
 	nodeID := ""
@@ -668,8 +733,8 @@ func (s *Scheduler) VerifyTokenWithLimitCount(ctx context.Context, token string)
 
 // UpdateBandwidths update bandwidths
 func (s *Scheduler) UpdateBandwidths(ctx context.Context, bandwidthDown, bandwidthUp int64) error {
-	nodeID := handler.GetNodeID(ctx)
-	s.NodeManager.UpdateNodeBandwidths(nodeID, bandwidthDown, bandwidthUp)
+	// nodeID := handler.GetNodeID(ctx)
+	// s.NodeManager.UpdateNodeBandwidths(nodeID, bandwidthDown, bandwidthUp)
 
 	return nil
 }
@@ -710,7 +775,7 @@ func (s *Scheduler) GetMinioConfigFromCandidate(ctx context.Context, nodeID stri
 func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, error) {
 	list := make([]*types.NodeIPInfo, 0)
 
-	_, cNodes := s.NodeManager.GetAllCandidateNodes()
+	_, cNodes := s.NodeManager.GetAllValidCandidateNodes()
 	if len(cNodes) == 0 {
 		return list, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: terrors.NotFoundNode.String()}
 	}
@@ -720,7 +785,11 @@ func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, e
 			continue
 		}
 
-		list = append(list, &types.NodeIPInfo{NodeID: n.NodeID, IP: n.ExternalIP})
+		externalURL := n.ExternalURL
+		if len(externalURL) == 0 {
+			externalURL = fmt.Sprintf("http://%s", n.RemoteAddr)
+		}
+		list = append(list, &types.NodeIPInfo{NodeID: n.NodeID, IP: n.Info.ExternalIP, ExternalURL: externalURL})
 	}
 
 	return list, nil

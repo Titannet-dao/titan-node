@@ -16,6 +16,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/google/uuid"
+	"github.com/quic-go/quic-go"
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/go-jsonrpc"
@@ -23,6 +24,7 @@ import (
 
 // Node represents an Edge or Candidate node
 type Node struct {
+	Info   *types.NodeInfo
 	NodeID string
 
 	*API
@@ -44,14 +46,12 @@ type Node struct {
 	CPUUsage    float64
 	MemoryUsage float64
 	DiskUsage   float64
-	ExternalIP  string
 
 	OnlineDuration int
 	Type           types.NodeType
 	PortMapping    string
 	BandwidthDown  int64
 	BandwidthUp    int64
-	DiskSpace      float64
 
 	DeactivateTime int64
 
@@ -115,7 +115,12 @@ func APIFromCandidate(api api.Candidate) *API {
 }
 
 // ConnectRPC connects to the node RPC
-func (n *Node) ConnectRPC(addr string, nodeType types.NodeType) error {
+func (n *Node) ConnectRPC(transport *quic.Transport, addr string, nodeType types.NodeType) error {
+	httpClient, err := client.NewHTTP3ClientWithPacketConn(transport)
+	if err != nil {
+		return err
+	}
+
 	rpcURL := fmt.Sprintf("https://%s/rpc/v0", addr)
 
 	headers := http.Header{}
@@ -123,7 +128,7 @@ func (n *Node) ConnectRPC(addr string, nodeType types.NodeType) error {
 
 	if nodeType == types.NodeEdge {
 		// Connect to node
-		edgeAPI, closer, err := client.NewEdge(context.Background(), rpcURL, headers)
+		edgeAPI, closer, err := client.NewEdge(context.Background(), rpcURL, headers, jsonrpc.WithHTTPClient(httpClient))
 		if err != nil {
 			return xerrors.Errorf("NewEdge err:%s,url:%s", err.Error(), rpcURL)
 		}
@@ -135,7 +140,7 @@ func (n *Node) ConnectRPC(addr string, nodeType types.NodeType) error {
 
 	if nodeType == types.NodeCandidate {
 		// Connect to node
-		candidateAPI, closer, err := client.NewCandidate(context.Background(), rpcURL, headers)
+		candidateAPI, closer, err := client.NewCandidate(context.Background(), rpcURL, headers, jsonrpc.WithHTTPClient(httpClient))
 		if err != nil {
 			return xerrors.Errorf("NewCandidate err:%s,url:%s", err.Error(), rpcURL)
 		}
@@ -150,7 +155,13 @@ func (n *Node) ConnectRPC(addr string, nodeType types.NodeType) error {
 
 // IsAbnormal is node abnormal
 func (n *Node) IsAbnormal() bool {
+	// waiting for deactivate
 	if n.DeactivateTime > 0 {
+		return true
+	}
+
+	// is minio node
+	if n.IsPrivateMinioOnly {
 		return true
 	}
 

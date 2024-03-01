@@ -37,13 +37,9 @@ type AssetStub struct {
 
 type AssetAPIStruct struct {
 	Internal struct {
-		CreateAsset func(p0 context.Context, p1 *types.CreateAssetReq) (*types.CreateAssetRsp, error) `perm:"web"`
+		CreateAsset func(p0 context.Context, p1 *types.CreateAssetReq) (*types.CreateAssetRsp, error) `perm:"web,admin,user"`
 
-		CreateUserAsset func(p0 context.Context, p1 *types.AssetProperty) (*types.CreateAssetRsp, error) `perm:"user"`
-
-		DeleteAsset func(p0 context.Context, p1 string, p2 string) error `perm:"web,admin"`
-
-		DeleteUserAsset func(p0 context.Context, p1 string) error `perm:"user"`
+		DeleteAsset func(p0 context.Context, p1 string, p2 string) error `perm:"web,admin,user"`
 
 		GetAssetCount func(p0 context.Context) (int, error) `perm:"web,admin"`
 
@@ -63,9 +59,7 @@ type AssetAPIStruct struct {
 
 		GetReplicas func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListReplicaRsp, error) `perm:"web,admin"`
 
-		ListAssets func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListAssetRecordRsp, error) `perm:"web,admin"`
-
-		ListUserAssets func(p0 context.Context, p1 int, p2 int) (*types.ListAssetRecordRsp, error) `perm:"user"`
+		ListAssets func(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetRecordRsp, error) `perm:"web,admin,user"`
 
 		MinioUploadFileEvent func(p0 context.Context, p1 *types.MinioUploadFileEvent) error `perm:"candidate"`
 
@@ -79,9 +73,7 @@ type AssetAPIStruct struct {
 
 		RemoveAssetReplica func(p0 context.Context, p1 string, p2 string) error `perm:"admin"`
 
-		ShareAssets func(p0 context.Context, p1 string, p2 []string) (map[string]string, error) `perm:"web,admin"`
-
-		ShareUserAssets func(p0 context.Context, p1 []string) (map[string]string, error) `perm:"user"`
+		ShareAssets func(p0 context.Context, p1 string, p2 []string) (map[string]string, error) `perm:"web,admin,user"`
 
 		UpdateAssetExpiration func(p0 context.Context, p1 string, p2 time.Time) error `perm:"admin"`
 
@@ -243,7 +235,7 @@ type NodeAPIStruct struct {
 
 		GetCandidateDownloadInfos func(p0 context.Context, p1 string) ([]*types.CandidateDownloadInfo, error) `perm:"edge,candidate,web,locator"`
 
-		GetCandidateIPs func(p0 context.Context) ([]*types.NodeIPInfo, error) `perm:"web,admin"`
+		GetCandidateIPs func(p0 context.Context) ([]*types.NodeIPInfo, error) `perm:"web,user,admin"`
 
 		GetCandidateNodeIP func(p0 context.Context, p1 string) (string, error) `perm:"web,admin"`
 
@@ -269,9 +261,13 @@ type NodeAPIStruct struct {
 
 		NodeKeepalive func(p0 context.Context) (uuid.UUID, error) `perm:"edge,candidate"`
 
+		NodeKeepaliveV2 func(p0 context.Context) (uuid.UUID, error) `perm:"edge,candidate"`
+
 		NodeLogin func(p0 context.Context, p1 string, p2 string) (string, error) `perm:"default"`
 
-		RegisterNode func(p0 context.Context, p1 string, p2 string, p3 string) error `perm:"default"`
+		RegisterEdgeNode func(p0 context.Context, p1 string, p2 string) (*types.ActivationDetail, error) `perm:"default"`
+
+		RegisterNode func(p0 context.Context, p1 string, p2 string, p3 types.NodeType) (*types.ActivationDetail, error) `perm:"default"`
 
 		RequestActivationCodes func(p0 context.Context, p1 types.NodeType, p2 int) ([]*types.NodeActivation, error) `perm:"web,admin"`
 
@@ -301,6 +297,8 @@ type SchedulerStruct struct {
 		DeleteEdgeUpdateConfig func(p0 context.Context, p1 int) error `perm:"admin"`
 
 		GetEdgeUpdateConfigs func(p0 context.Context) (map[int]*EdgeUpdateConfig, error) `perm:"edge"`
+
+		GetNodePublicKey func(p0 context.Context, p1 string) (string, error) `perm:"web,admin"`
 
 		GetRetrieveEventRecords func(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListRetrieveEventRsp, error) `perm:"web,admin"`
 
@@ -340,15 +338,37 @@ type UserAPIStruct struct {
 	Internal struct {
 		AllocateStorage func(p0 context.Context, p1 string) (*types.UserInfo, error) `perm:"web,admin"`
 
-		CreateAPIKey func(p0 context.Context, p1 string, p2 string) (string, error) `perm:"web,admin"`
+		CreateAPIKey func(p0 context.Context, p1 string, p2 string, p3 []types.UserAccessControl) (string, error) `perm:"web,admin"`
+
+		CreateAssetGroup func(p0 context.Context, p1 string, p2 string, p3 int) (*types.AssetGroup, error) `perm:"user,web,admin"`
 
 		DeleteAPIKey func(p0 context.Context, p1 string, p2 string) error `perm:"web,admin"`
 
+		DeleteAssetGroup func(p0 context.Context, p1 string, p2 int) error `perm:"user,web,admin"`
+
 		GetAPIKeys func(p0 context.Context, p1 string) (map[string]types.UserAPIKeysInfo, error) `perm:"web,admin"`
+
+		GetAPPKeyPermissions func(p0 context.Context, p1 string, p2 string) ([]string, error) `perm:"user,web,admin"`
 
 		GetUserAccessToken func(p0 context.Context, p1 string) (string, error) `perm:"web,admin"`
 
 		GetUserInfo func(p0 context.Context, p1 string) (*types.UserInfo, error) `perm:"web,admin"`
+
+		GetUserInfos func(p0 context.Context, p1 []string) (map[string]*types.UserInfo, error) `perm:"web,admin"`
+
+		GetUserStorageStats func(p0 context.Context, p1 string) (*types.StorageStats, error) `perm:"web,admin"`
+
+		ListAssetGroup func(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetGroupRsp, error) `perm:"user,web,admin"`
+
+		ListAssetSummary func(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetSummaryRsp, error) `perm:"user,web,admin"`
+
+		ListUserStorageStats func(p0 context.Context, p1 int, p2 int) (*types.ListStorageStatsRsp, error) `perm:"web,admin"`
+
+		MoveAssetGroup func(p0 context.Context, p1 string, p2 int, p3 int) error `perm:"user,web,admin"`
+
+		MoveAssetToGroup func(p0 context.Context, p1 string, p2 string, p3 int) error `perm:"user,web,admin"`
+
+		RenameAssetGroup func(p0 context.Context, p1 string, p2 string, p3 int) error `perm:"user,web,admin"`
 
 		SetUserVIP func(p0 context.Context, p1 string, p2 bool) error `perm:"admin"`
 
@@ -447,17 +467,6 @@ func (s *AssetAPIStub) CreateAsset(p0 context.Context, p1 *types.CreateAssetReq)
 	return nil, ErrNotSupported
 }
 
-func (s *AssetAPIStruct) CreateUserAsset(p0 context.Context, p1 *types.AssetProperty) (*types.CreateAssetRsp, error) {
-	if s.Internal.CreateUserAsset == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.CreateUserAsset(p0, p1)
-}
-
-func (s *AssetAPIStub) CreateUserAsset(p0 context.Context, p1 *types.AssetProperty) (*types.CreateAssetRsp, error) {
-	return nil, ErrNotSupported
-}
-
 func (s *AssetAPIStruct) DeleteAsset(p0 context.Context, p1 string, p2 string) error {
 	if s.Internal.DeleteAsset == nil {
 		return ErrNotSupported
@@ -466,17 +475,6 @@ func (s *AssetAPIStruct) DeleteAsset(p0 context.Context, p1 string, p2 string) e
 }
 
 func (s *AssetAPIStub) DeleteAsset(p0 context.Context, p1 string, p2 string) error {
-	return ErrNotSupported
-}
-
-func (s *AssetAPIStruct) DeleteUserAsset(p0 context.Context, p1 string) error {
-	if s.Internal.DeleteUserAsset == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.DeleteUserAsset(p0, p1)
-}
-
-func (s *AssetAPIStub) DeleteUserAsset(p0 context.Context, p1 string) error {
 	return ErrNotSupported
 }
 
@@ -579,25 +577,14 @@ func (s *AssetAPIStub) GetReplicas(p0 context.Context, p1 string, p2 int, p3 int
 	return nil, ErrNotSupported
 }
 
-func (s *AssetAPIStruct) ListAssets(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListAssetRecordRsp, error) {
+func (s *AssetAPIStruct) ListAssets(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetRecordRsp, error) {
 	if s.Internal.ListAssets == nil {
 		return nil, ErrNotSupported
 	}
-	return s.Internal.ListAssets(p0, p1, p2, p3)
+	return s.Internal.ListAssets(p0, p1, p2, p3, p4)
 }
 
-func (s *AssetAPIStub) ListAssets(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListAssetRecordRsp, error) {
-	return nil, ErrNotSupported
-}
-
-func (s *AssetAPIStruct) ListUserAssets(p0 context.Context, p1 int, p2 int) (*types.ListAssetRecordRsp, error) {
-	if s.Internal.ListUserAssets == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.ListUserAssets(p0, p1, p2)
-}
-
-func (s *AssetAPIStub) ListUserAssets(p0 context.Context, p1 int, p2 int) (*types.ListAssetRecordRsp, error) {
+func (s *AssetAPIStub) ListAssets(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetRecordRsp, error) {
 	return nil, ErrNotSupported
 }
 
@@ -675,17 +662,6 @@ func (s *AssetAPIStruct) ShareAssets(p0 context.Context, p1 string, p2 []string)
 }
 
 func (s *AssetAPIStub) ShareAssets(p0 context.Context, p1 string, p2 []string) (map[string]string, error) {
-	return *new(map[string]string), ErrNotSupported
-}
-
-func (s *AssetAPIStruct) ShareUserAssets(p0 context.Context, p1 []string) (map[string]string, error) {
-	if s.Internal.ShareUserAssets == nil {
-		return *new(map[string]string), ErrNotSupported
-	}
-	return s.Internal.ShareUserAssets(p0, p1)
-}
-
-func (s *AssetAPIStub) ShareUserAssets(p0 context.Context, p1 []string) (map[string]string, error) {
 	return *new(map[string]string), ErrNotSupported
 }
 
@@ -1217,6 +1193,17 @@ func (s *NodeAPIStub) NodeKeepalive(p0 context.Context) (uuid.UUID, error) {
 	return *new(uuid.UUID), ErrNotSupported
 }
 
+func (s *NodeAPIStruct) NodeKeepaliveV2(p0 context.Context) (uuid.UUID, error) {
+	if s.Internal.NodeKeepaliveV2 == nil {
+		return *new(uuid.UUID), ErrNotSupported
+	}
+	return s.Internal.NodeKeepaliveV2(p0)
+}
+
+func (s *NodeAPIStub) NodeKeepaliveV2(p0 context.Context) (uuid.UUID, error) {
+	return *new(uuid.UUID), ErrNotSupported
+}
+
 func (s *NodeAPIStruct) NodeLogin(p0 context.Context, p1 string, p2 string) (string, error) {
 	if s.Internal.NodeLogin == nil {
 		return "", ErrNotSupported
@@ -1228,15 +1215,26 @@ func (s *NodeAPIStub) NodeLogin(p0 context.Context, p1 string, p2 string) (strin
 	return "", ErrNotSupported
 }
 
-func (s *NodeAPIStruct) RegisterNode(p0 context.Context, p1 string, p2 string, p3 string) error {
+func (s *NodeAPIStruct) RegisterEdgeNode(p0 context.Context, p1 string, p2 string) (*types.ActivationDetail, error) {
+	if s.Internal.RegisterEdgeNode == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.RegisterEdgeNode(p0, p1, p2)
+}
+
+func (s *NodeAPIStub) RegisterEdgeNode(p0 context.Context, p1 string, p2 string) (*types.ActivationDetail, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *NodeAPIStruct) RegisterNode(p0 context.Context, p1 string, p2 string, p3 types.NodeType) (*types.ActivationDetail, error) {
 	if s.Internal.RegisterNode == nil {
-		return ErrNotSupported
+		return nil, ErrNotSupported
 	}
 	return s.Internal.RegisterNode(p0, p1, p2, p3)
 }
 
-func (s *NodeAPIStub) RegisterNode(p0 context.Context, p1 string, p2 string, p3 string) error {
-	return ErrNotSupported
+func (s *NodeAPIStub) RegisterNode(p0 context.Context, p1 string, p2 string, p3 types.NodeType) (*types.ActivationDetail, error) {
+	return nil, ErrNotSupported
 }
 
 func (s *NodeAPIStruct) RequestActivationCodes(p0 context.Context, p1 types.NodeType, p2 int) ([]*types.NodeActivation, error) {
@@ -1314,6 +1312,17 @@ func (s *SchedulerStruct) GetEdgeUpdateConfigs(p0 context.Context) (map[int]*Edg
 
 func (s *SchedulerStub) GetEdgeUpdateConfigs(p0 context.Context) (map[int]*EdgeUpdateConfig, error) {
 	return *new(map[int]*EdgeUpdateConfig), ErrNotSupported
+}
+
+func (s *SchedulerStruct) GetNodePublicKey(p0 context.Context, p1 string) (string, error) {
+	if s.Internal.GetNodePublicKey == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.GetNodePublicKey(p0, p1)
+}
+
+func (s *SchedulerStub) GetNodePublicKey(p0 context.Context, p1 string) (string, error) {
+	return "", ErrNotSupported
 }
 
 func (s *SchedulerStruct) GetRetrieveEventRecords(p0 context.Context, p1 string, p2 int, p3 int) (*types.ListRetrieveEventRsp, error) {
@@ -1448,15 +1457,26 @@ func (s *UserAPIStub) AllocateStorage(p0 context.Context, p1 string) (*types.Use
 	return nil, ErrNotSupported
 }
 
-func (s *UserAPIStruct) CreateAPIKey(p0 context.Context, p1 string, p2 string) (string, error) {
+func (s *UserAPIStruct) CreateAPIKey(p0 context.Context, p1 string, p2 string, p3 []types.UserAccessControl) (string, error) {
 	if s.Internal.CreateAPIKey == nil {
 		return "", ErrNotSupported
 	}
-	return s.Internal.CreateAPIKey(p0, p1, p2)
+	return s.Internal.CreateAPIKey(p0, p1, p2, p3)
 }
 
-func (s *UserAPIStub) CreateAPIKey(p0 context.Context, p1 string, p2 string) (string, error) {
+func (s *UserAPIStub) CreateAPIKey(p0 context.Context, p1 string, p2 string, p3 []types.UserAccessControl) (string, error) {
 	return "", ErrNotSupported
+}
+
+func (s *UserAPIStruct) CreateAssetGroup(p0 context.Context, p1 string, p2 string, p3 int) (*types.AssetGroup, error) {
+	if s.Internal.CreateAssetGroup == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.CreateAssetGroup(p0, p1, p2, p3)
+}
+
+func (s *UserAPIStub) CreateAssetGroup(p0 context.Context, p1 string, p2 string, p3 int) (*types.AssetGroup, error) {
+	return nil, ErrNotSupported
 }
 
 func (s *UserAPIStruct) DeleteAPIKey(p0 context.Context, p1 string, p2 string) error {
@@ -1470,6 +1490,17 @@ func (s *UserAPIStub) DeleteAPIKey(p0 context.Context, p1 string, p2 string) err
 	return ErrNotSupported
 }
 
+func (s *UserAPIStruct) DeleteAssetGroup(p0 context.Context, p1 string, p2 int) error {
+	if s.Internal.DeleteAssetGroup == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.DeleteAssetGroup(p0, p1, p2)
+}
+
+func (s *UserAPIStub) DeleteAssetGroup(p0 context.Context, p1 string, p2 int) error {
+	return ErrNotSupported
+}
+
 func (s *UserAPIStruct) GetAPIKeys(p0 context.Context, p1 string) (map[string]types.UserAPIKeysInfo, error) {
 	if s.Internal.GetAPIKeys == nil {
 		return *new(map[string]types.UserAPIKeysInfo), ErrNotSupported
@@ -1479,6 +1510,17 @@ func (s *UserAPIStruct) GetAPIKeys(p0 context.Context, p1 string) (map[string]ty
 
 func (s *UserAPIStub) GetAPIKeys(p0 context.Context, p1 string) (map[string]types.UserAPIKeysInfo, error) {
 	return *new(map[string]types.UserAPIKeysInfo), ErrNotSupported
+}
+
+func (s *UserAPIStruct) GetAPPKeyPermissions(p0 context.Context, p1 string, p2 string) ([]string, error) {
+	if s.Internal.GetAPPKeyPermissions == nil {
+		return *new([]string), ErrNotSupported
+	}
+	return s.Internal.GetAPPKeyPermissions(p0, p1, p2)
+}
+
+func (s *UserAPIStub) GetAPPKeyPermissions(p0 context.Context, p1 string, p2 string) ([]string, error) {
+	return *new([]string), ErrNotSupported
 }
 
 func (s *UserAPIStruct) GetUserAccessToken(p0 context.Context, p1 string) (string, error) {
@@ -1501,6 +1543,94 @@ func (s *UserAPIStruct) GetUserInfo(p0 context.Context, p1 string) (*types.UserI
 
 func (s *UserAPIStub) GetUserInfo(p0 context.Context, p1 string) (*types.UserInfo, error) {
 	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) GetUserInfos(p0 context.Context, p1 []string) (map[string]*types.UserInfo, error) {
+	if s.Internal.GetUserInfos == nil {
+		return *new(map[string]*types.UserInfo), ErrNotSupported
+	}
+	return s.Internal.GetUserInfos(p0, p1)
+}
+
+func (s *UserAPIStub) GetUserInfos(p0 context.Context, p1 []string) (map[string]*types.UserInfo, error) {
+	return *new(map[string]*types.UserInfo), ErrNotSupported
+}
+
+func (s *UserAPIStruct) GetUserStorageStats(p0 context.Context, p1 string) (*types.StorageStats, error) {
+	if s.Internal.GetUserStorageStats == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.GetUserStorageStats(p0, p1)
+}
+
+func (s *UserAPIStub) GetUserStorageStats(p0 context.Context, p1 string) (*types.StorageStats, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) ListAssetGroup(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetGroupRsp, error) {
+	if s.Internal.ListAssetGroup == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.ListAssetGroup(p0, p1, p2, p3, p4)
+}
+
+func (s *UserAPIStub) ListAssetGroup(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetGroupRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) ListAssetSummary(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetSummaryRsp, error) {
+	if s.Internal.ListAssetSummary == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.ListAssetSummary(p0, p1, p2, p3, p4)
+}
+
+func (s *UserAPIStub) ListAssetSummary(p0 context.Context, p1 string, p2 int, p3 int, p4 int) (*types.ListAssetSummaryRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) ListUserStorageStats(p0 context.Context, p1 int, p2 int) (*types.ListStorageStatsRsp, error) {
+	if s.Internal.ListUserStorageStats == nil {
+		return nil, ErrNotSupported
+	}
+	return s.Internal.ListUserStorageStats(p0, p1, p2)
+}
+
+func (s *UserAPIStub) ListUserStorageStats(p0 context.Context, p1 int, p2 int) (*types.ListStorageStatsRsp, error) {
+	return nil, ErrNotSupported
+}
+
+func (s *UserAPIStruct) MoveAssetGroup(p0 context.Context, p1 string, p2 int, p3 int) error {
+	if s.Internal.MoveAssetGroup == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.MoveAssetGroup(p0, p1, p2, p3)
+}
+
+func (s *UserAPIStub) MoveAssetGroup(p0 context.Context, p1 string, p2 int, p3 int) error {
+	return ErrNotSupported
+}
+
+func (s *UserAPIStruct) MoveAssetToGroup(p0 context.Context, p1 string, p2 string, p3 int) error {
+	if s.Internal.MoveAssetToGroup == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.MoveAssetToGroup(p0, p1, p2, p3)
+}
+
+func (s *UserAPIStub) MoveAssetToGroup(p0 context.Context, p1 string, p2 string, p3 int) error {
+	return ErrNotSupported
+}
+
+func (s *UserAPIStruct) RenameAssetGroup(p0 context.Context, p1 string, p2 string, p3 int) error {
+	if s.Internal.RenameAssetGroup == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.RenameAssetGroup(p0, p1, p2, p3)
+}
+
+func (s *UserAPIStub) RenameAssetGroup(p0 context.Context, p1 string, p2 string, p3 int) error {
+	return ErrNotSupported
 }
 
 func (s *UserAPIStruct) SetUserVIP(p0 context.Context, p1 string, p2 bool) error {

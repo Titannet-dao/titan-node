@@ -81,6 +81,7 @@ var cNodeRegisterTable = `
 		created_time    VARCHAR(64)   DEFAULT '' ,
 		node_type       VARCHAR(64)   DEFAULT '' ,
 		activation_key  VARCHAR(128)  DEFAULT '' ,
+		ip 				VARCHAR(16)  DEFAULT '' ,
 		PRIMARY KEY (node_id)
 	) ENGINE=InnoDB COMMENT='node register info';`
 
@@ -162,8 +163,11 @@ var cUserAssetTable = `
 	    created_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		total_size        BIGINT       DEFAULT 0,
 		expiration        DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		password          VARCHAR(128) DEFAULT '' ,		
+		group_id          INT          DEFAULT 0,
 		PRIMARY KEY (hash,user_id),
-		KEY idx_user_id (user_id)
+		KEY idx_user_id (user_id),
+		KEY idx_group_id (group_id)
     ) ENGINE=InnoDB COMMENT='user asset';`
 
 var cUserInfoTable = `
@@ -219,3 +223,15 @@ var cReplenishBackupTable = `
 	    hash        VARCHAR(128) NOT NULL,
 		PRIMARY KEY (hash)
     ) ENGINE=InnoDB COMMENT='Assets that need to be replenish backed up to candidate nodes';`
+
+var cUserAssetGroupTable = `
+    CREATE TABLE if not exists %s (
+		id            INT UNSIGNED AUTO_INCREMENT,
+	    user_id       VARCHAR(128) NOT NULL,
+		name          VARCHAR(32)  DEFAULT '',
+		parent        INT          DEFAULT 0,
+	    created_time  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+	    KEY idx_user_id (user_id),
+	    KEY idx_parent (parent)
+    ) ENGINE=InnoDB COMMENT='user asset group';`

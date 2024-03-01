@@ -9,21 +9,21 @@ type DocField struct {
 }
 
 var Doc = map[string][]DocField{
-	"CandidateCfg": {
+	"CandidateCfg": []DocField{
 		{
-			Name: "TCPSrvAddr",
+			Name: "WebRedirect",
 			Type: "string",
 
 			Comment: ``,
 		},
 		{
-			Name: "IpfsAPIURL",
+			Name: "ExternalURL",
 			Type: "string",
 
 			Comment: ``,
 		},
 	},
-	"EdgeCfg": {
+	"EdgeCfg": []DocField{
 		{
 			Name: "ListenAddress",
 			Type: "string",
@@ -40,7 +40,13 @@ var Doc = map[string][]DocField{
 			Name: "NodeID",
 			Type: "string",
 
-			Comment: `deivce id`,
+			Comment: `node id`,
+		},
+		{
+			Name: "AreaID",
+			Type: "string",
+
+			Comment: `area id`,
 		},
 		{
 			Name: "Secret",
@@ -49,10 +55,16 @@ var Doc = map[string][]DocField{
 			Comment: `used auth when connect to scheduler`,
 		},
 		{
-			Name: "CarfileStorePath",
+			Name: "MetadataPath",
 			Type: "string",
 
-			Comment: `carfilestore path`,
+			Comment: `metadata path`,
+		},
+		{
+			Name: "AssetsPaths",
+			Type: "[]string",
+
+			Comment: `assets path`,
 		},
 		{
 			Name: "BandwidthUp",
@@ -76,7 +88,7 @@ var Doc = map[string][]DocField{
 			Name: "InsecureSkipVerify",
 			Type: "bool",
 
-			Comment: `InsecureSkipVerify skip tls verify`,
+			Comment: `InsecureSkipVerify http3 client skip tls verify`,
 		},
 		{
 			Name: "CertificatePath",
@@ -99,19 +111,73 @@ be used if InsecureSkipVerify is true`,
 			Comment: `self sign certificate, use for client`,
 		},
 		{
-			Name: "FetchBlockTimeout",
+			Name: "PullBlockTimeout",
 			Type: "int",
 
-			Comment: `FetchTimeout get block timeout`,
+			Comment: `PullBlockTimeout get block timeout`,
 		},
 		{
-			Name: "FetchBlockRetry",
+			Name: "PullBlockRetry",
 			Type: "int",
 
-			Comment: `FetchBlockFailedRetry retry when get block failed`,
+			Comment: `PullBlockRetry retry when get block failed`,
+		},
+		{
+			Name: "PullBlockParallel",
+			Type: "int",
+
+			Comment: `PullBlockParallel the number of goroutine to pull block`,
+		},
+		{
+			Name: "TCPSrvAddr",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "IPFSAPIURL",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "ValidateDuration",
+			Type: "int",
+
+			Comment: `seconds`,
+		},
+		{
+			Name: "MaxSizeOfUploadFile",
+			Type: "int",
+
+			Comment: ``,
+		},
+		{
+			Name: "Storage",
+			Type: "int64",
+
+			Comment: `Storage for use by node`,
+		},
+		{
+			Name: "Memory",
+			Type: "int64",
+
+			Comment: `Memory for use by node`,
+		},
+		{
+			Name: "CPU",
+			Type: "int",
+
+			Comment: `CPU for use by node`,
+		},
+		{
+			Name: "Bandwidth",
+			Type: "int64",
+
+			Comment: `Bandwidth for use by node`,
 		},
 	},
-	"LocatorCfg": {
+	"LocatorCfg": []DocField{
 		{
 			Name: "ListenAddress",
 			Type: "string",
@@ -131,36 +197,24 @@ be used if InsecureSkipVerify is true`,
 			Comment: `geodb path`,
 		},
 		{
-			Name: "DatabaseAddress",
-			Type: "string",
-
-			Comment: `mysql db address`,
-		},
-		{
-			Name: "UUID",
-			Type: "string",
-
-			Comment: `uuid`,
-		},
-		{
 			Name: "InsecureSkipVerify",
 			Type: "bool",
 
-			Comment: `InsecureSkipVerify skip tls verify`,
+			Comment: `InsecureSkipVerify http3 client skip tls verify`,
 		},
 		{
 			Name: "CertificatePath",
 			Type: "string",
 
 			Comment: `used for http3 server
-be used if InsecureSkipVerify is true`,
+be used if InsecureSkipVerify is false`,
 		},
 		{
 			Name: "PrivateKeyPath",
 			Type: "string",
 
 			Comment: `used for http3 server
-be used if InsecureSkipVerify is true`,
+be used if InsecureSkipVerify is false`,
 		},
 		{
 			Name: "CaCertificatePath",
@@ -168,10 +222,54 @@ be used if InsecureSkipVerify is true`,
 
 			Comment: `self sign certificate, use for client`,
 		},
-	},
-	"SchedulerCfg": {
 		{
-			Name: "ExternalAddress",
+			Name: "EtcdAddresses",
+			Type: "[]string",
+
+			Comment: `etcd server addresses`,
+		},
+		{
+			Name: "DefaultAreaID",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "DNSServerAddress",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "DNSRecords",
+			Type: "map[string]string",
+
+			Comment: ``,
+		},
+	},
+	"MinioConfig": []DocField{
+		{
+			Name: "Endpoint",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "AccessKeyID",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "SecretAccessKey",
+			Type: "string",
+
+			Comment: ``,
+		},
+	},
+	"SchedulerCfg": []DocField{
+		{
+			Name: "ExternalURL",
 			Type: "string",
 
 			Comment: `host external address and port`,
@@ -221,19 +319,7 @@ be used if InsecureSkipVerify is true`,
 			Comment: `self sign certificate, use for client`,
 		},
 		{
-			Name: "SchedulerServer1",
-			Type: "string",
-
-			Comment: `test nat type`,
-		},
-		{
-			Name: "SchedulerServer2",
-			Type: "string",
-
-			Comment: `test nat type`,
-		},
-		{
-			Name: "EnableValidate",
+			Name: "EnableValidation",
 			Type: "bool",
 
 			Comment: `config to enabled node validation, default: true`,
@@ -245,10 +331,129 @@ be used if InsecureSkipVerify is true`,
 			Comment: `etcd server addresses`,
 		},
 		{
-			Name: "CandidateReplicaCachesCount",
+			Name: "CandidateReplicas",
 			Type: "int",
 
-			Comment: `Cache to the number of candidate nodes (does not contain 'seedCacheCount')`,
+			Comment: `Number of candidate node replicas (does not contain 'seed')`,
+		},
+		{
+			Name: "ValidatorRatio",
+			Type: "float64",
+
+			Comment: `Proportion of validator in candidate nodes (0 ~ 1)`,
+		},
+		{
+			Name: "ValidatorBaseBwDn",
+			Type: "int",
+
+			Comment: `The base downstream bandwidth per validator window (unit : MiB)`,
+		},
+		{
+			Name: "ValidationProfit",
+			Type: "float64",
+
+			Comment: `Increased profit after node validation passes`,
+		},
+		{
+			Name: "WorkloadProfit",
+			Type: "float64",
+
+			Comment: `Increased profit after node workload passes`,
+		},
+		{
+			Name: "ElectionCycle",
+			Type: "int",
+
+			Comment: `ElectionCycle cycle (Unit:day)`,
+		},
+		{
+			Name: "NodeScoreLevel",
+			Type: "map[string][]int",
+
+			Comment: `Node score level scale
+The key of map is the rank name, and the value of map is a int array containing two elements,
+the first element of which is the minimum value of score,
+and the second element is the maximum value of score. (scores out of 100)`,
+		},
+		{
+			Name: "LevelSelectWeight",
+			Type: "map[string]int",
+
+			Comment: `Node level weight
+The key of the map is the name of the level, and the value of the map is an int,
+indicating how many select weight this level can get (the more select weight, the greater the probability of the node being selected)`,
+		},
+		{
+			Name: "UserFreeStorageSize",
+			Type: "int64",
+
+			Comment: ``,
+		},
+		{
+			Name: "UserVipStorageSize",
+			Type: "int64",
+
+			Comment: ``,
+		},
+		{
+			Name: "LotusRPCAddress",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "LotusToken",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "EdgeDownloadRatio",
+			Type: "float64",
+
+			Comment: `The ratio of edge nodes returned to the user for download`,
+		},
+		{
+			Name: "AssetPullTaskLimit",
+			Type: "int",
+
+			Comment: `Maximum number of concurrent asset pulls`,
+		},
+		{
+			Name: "NatDetectConcurrency",
+			Type: "int",
+
+			Comment: ``,
+		},
+		{
+			Name: "UploadAssetReplicaCount",
+			Type: "int",
+
+			Comment: `Default number of backups for user uploaded files`,
+		},
+		{
+			Name: "UploadAssetExpiration",
+			Type: "int",
+
+			Comment: `Default expiration time for user uploaded files`,
+		},
+		{
+			Name: "MaxCountOfVisitShareLink",
+			Type: "int",
+
+			Comment: `Non vip user`,
+		},
+		{
+			Name: "Weight",
+			Type: "int",
+
+			Comment: `if the area has several scheduler, node will connect to the scheduler which weight is bigger`,
+		},
+		{
+			Name: "MaxAPIKey",
+			Type: "int",
+
+			Comment: ``,
 		},
 	},
 }

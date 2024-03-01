@@ -3,14 +3,11 @@ package nat
 import (
 	"context"
 	"fmt"
-	"net"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
-
-	"golang.org/x/xerrors"
 )
 
 // checks if an edge node is behind a Full Cone NAT
@@ -20,21 +17,7 @@ func detectFullConeNAT(ctx context.Context, candidate *node.Node, edgeURL string
 
 // checks if an edge node is behind a Restricted NAT
 func detectRestrictedNAT(ctx context.Context, edgeURL string) (bool, error) {
-	udpPacketConn, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return false, err
-	}
-	defer func() {
-		err = udpPacketConn.Close()
-		if err != nil {
-			log.Errorf("udpPacketConn Close err:%s", err.Error())
-		}
-	}()
-
-	httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, true, "")
-	if err != nil {
-		return false, xerrors.Errorf("new http3 client %w", err)
-	}
+	httpClient := client.NewHTTP3Client()
 	httpClient.Timeout = 5 * time.Second
 
 	resp, err := httpClient.Get(edgeURL)
@@ -56,7 +39,7 @@ func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateN
 	candidate1 := candidateNodes[0]
 	externalAddr, err := edgeNode.API.ExternalServiceAddress(ctx, candidate1.RPCURL())
 	if err != nil {
-		return types.NatTypeUnknown, err
+		return types.NatTypeUnknown, fmt.Errorf("ExternalServiceAddress error %s", err.Error())
 	}
 
 	if externalAddr != edgeNode.RemoteAddr {

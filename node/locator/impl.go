@@ -167,7 +167,7 @@ func (l *Locator) newSchedulerAPI(config *types.SchedulerCfg) (*schedulerAPI, er
 
 	headers := http.Header{}
 	headers.Add("Authorization", "Bearer "+config.AccessToken)
-	api, close, err := client.NewScheduler(context.Background(), config.SchedulerURL, headers)
+	api, close, err := client.NewScheduler(context.Background(), config.SchedulerURL, headers, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +383,6 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		urls, ok := schedulerURLs[config.AreaID]
 		if !ok {
 			urls = make([]string, 0)
-			urls = append(urls, config.SchedulerURL)
 		}
 
 		urls = append(urls, config.SchedulerURL)

@@ -3,6 +3,7 @@ package region
 import (
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/oschwald/geoip2-golang"
 	"golang.org/x/xerrors"
@@ -85,6 +86,7 @@ func (g geoLite) GetGeoInfo(ip string) (*GeoInfo, error) {
 	geoInfo.Longitude = record.Location.Longitude
 
 	geoInfo.Geo = fmt.Sprintf("%s%s%s%s%s%s%s", continent, separate, country, separate, province, separate, city)
+	geoInfo.Geo = strings.Replace(geoInfo.Geo, " ", separate, -1)
 
 	return geoInfo, nil
 }

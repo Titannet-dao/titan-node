@@ -2,19 +2,19 @@ package edge
 
 import (
 	"context"
-	"net"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/common"
 	"github.com/Filecoin-Titan/titan/node/device"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 	validate "github.com/Filecoin-Titan/titan/node/validation"
+	"github.com/filecoin-project/go-jsonrpc"
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/quic-go/quic-go"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 )
@@ -31,7 +31,7 @@ type Edge struct {
 	*validate.Validation
 	*datasync.DataSync
 
-	PConn        net.PacketConn
+	Transport    *quic.Transport
 	SchedulerAPI api.Scheduler
 }
 
@@ -43,7 +43,12 @@ func (edge *Edge) WaitQuiet(ctx context.Context) error {
 
 // ExternalServiceAddress returns the external service address of the scheduler.
 func (edge *Edge) ExternalServiceAddress(ctx context.Context, candidateURL string) (string, error) {
-	candidateAPI, closer, err := client.NewCandidate(ctx, candidateURL, nil)
+	httpClient, err := client.NewHTTP3ClientWithPacketConn(edge.Transport)
+	if err != nil {
+		return "", err
+	}
+
+	candidateAPI, closer, err := client.NewCandidate(ctx, candidateURL, nil, jsonrpc.WithHTTPClient(httpClient))
 	if err != nil {
 		return "", err
 	}
@@ -59,7 +64,7 @@ func (edge *Edge) UserNATPunch(ctx context.Context, sourceURL string, req *types
 
 // checkNetworkConnectivity uses HTTP/3 to check network connectivity to a target URL.
 func (edge *Edge) checkNetworkConnectivity(targetURL string, timeout time.Duration) error {
-	httpClient, err := cliutil.NewHTTP3Client(edge.PConn, true, "")
+	httpClient, err := client.NewHTTP3ClientWithPacketConn(edge.Transport)
 	if err != nil {
 		return xerrors.Errorf("new http3 client %w", err)
 	}

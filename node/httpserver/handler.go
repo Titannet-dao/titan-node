@@ -19,6 +19,7 @@ var log = logging.Logger("httpserver")
 const (
 	ipfsPathPrefix        = "/ipfs/"
 	uploadPathPrefix      = "/upload"
+	rpcPathPrefix         = "/rpc"
 	immutableCacheControl = "public, max-age=29030400, immutable"
 	domainFields          = 4
 )
@@ -52,7 +53,8 @@ func resetPath(r *http.Request) {
 // ServeHTTP checks if the request path starts with the IPFS path prefix and delegates to the appropriate handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(r.URL.Path, ipfsPathPrefix) &&
-		!strings.Contains(r.URL.Path, uploadPathPrefix) {
+		!strings.Contains(r.URL.Path, uploadPathPrefix) &&
+		!strings.Contains(r.URL.Path, rpcPathPrefix) {
 		resetPath(r)
 	}
 

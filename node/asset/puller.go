@@ -5,18 +5,15 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
-	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
-	"golang.org/x/xerrors"
 )
 
 type pulledResult struct {
@@ -197,7 +194,7 @@ func (ap *assetPuller) pullBlocks(cids []string) (*pulledResult, error) {
 	linksMap := make(map[string][]string)
 	for _, b := range blks {
 		// get block links
-		node, err := legacy.DecodeNode(context.Background(), b)
+		node, err := ipld.DecodeNode(context.Background(), b)
 		if err != nil {
 			log.Errorf("decode block error:%s", err.Error())
 			return nil, err
@@ -352,11 +349,11 @@ func (ap *assetPuller) mergeWorkloadReports(reports []*types.WorkloadReport) {
 		rp.Workload.DownloadSpeed += report.Workload.DownloadSpeed
 		rp.Workload.DownloadSize += report.Workload.DownloadSize
 
-		if rp.Workload.StartTime == 0 || report.Workload.StartTime < rp.Workload.StartTime {
+		if rp.Workload.StartTime.IsZero() || report.Workload.StartTime.Before(rp.Workload.StartTime) {
 			rp.Workload.StartTime = report.Workload.StartTime
 		}
 
-		if rp.Workload.EndTime < report.Workload.EndTime {
+		if rp.Workload.EndTime.Before(report.Workload.EndTime) {
 			rp.Workload.EndTime = report.Workload.EndTime
 		}
 
@@ -387,19 +384,4 @@ func (ap *assetPuller) encodeWorkloadReports() ([]byte, error) {
 	}
 
 	return buffer.Bytes(), nil
-}
-
-func newHTTP3Client() (net.PacketConn, *http.Client, error) {
-	udpPacketConn, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// all jsonrpc client use udp
-	httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, true, "")
-	if err != nil {
-		return nil, nil, xerrors.Errorf("new http3 client error %w", err)
-	}
-
-	return udpPacketConn, httpClient, nil
 }

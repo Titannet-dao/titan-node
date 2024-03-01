@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/config"
@@ -19,7 +20,6 @@ import (
 	"github.com/Filecoin-Titan/titan/node/device"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	vd "github.com/Filecoin-Titan/titan/node/validation"
 	logging "github.com/ipfs/go-log/v2"
 )
@@ -101,21 +101,8 @@ func (c *Candidate) verifyTCPConnectivity(targetURL string) error {
 }
 
 func (c *Candidate) verifyUDPConnectivity(targetURL string) error {
-	udpPacketConn, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return xerrors.Errorf("list udp %w, url %s", err, targetURL)
-	}
-	defer func() {
-		err = udpPacketConn.Close()
-		if err != nil {
-			log.Errorf("udpPacketConn Close err:%s", err.Error())
-		}
-	}()
+	httpClient := client.NewHTTP3Client()
 
-	httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, true, "")
-	if err != nil {
-		return xerrors.Errorf("new http3 client %w", err)
-	}
 	httpClient.Timeout = connectivityCheckTimeout * time.Second
 
 	resp, err := httpClient.Get(targetURL)

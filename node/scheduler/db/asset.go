@@ -15,20 +15,8 @@ import (
 
 // UpdateReplicaInfo update unfinished replica info , return an error if the replica is finished
 func (n *SQLDB) UpdateReplicaInfo(cInfo *types.ReplicaInfo) error {
-	tx, err := n.db.Beginx()
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		err = tx.Rollback()
-		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("Rollback err:%s", err.Error())
-		}
-	}()
-
 	query := fmt.Sprintf(`UPDATE %s SET end_time=NOW(), status=?, done_size=? WHERE hash=? AND node_id=? AND (status=? or status=?)`, replicaInfoTable)
-	result, err := tx.Exec(query, cInfo.Status, cInfo.DoneSize, cInfo.Hash, cInfo.NodeID, types.ReplicaStatusPulling, types.ReplicaStatusWaiting)
+	result, err := n.db.Exec(query, cInfo.Status, cInfo.DoneSize, cInfo.Hash, cInfo.NodeID, types.ReplicaStatusPulling, types.ReplicaStatusWaiting)
 	if err != nil {
 		return err
 	}
@@ -42,7 +30,7 @@ func (n *SQLDB) UpdateReplicaInfo(cInfo *types.ReplicaInfo) error {
 		return xerrors.New("nothing to update")
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiration time.Time, event types.ReplicaEvent) error {
@@ -446,7 +434,7 @@ func (n *SQLDB) LoadReplicaEvents(start, end time.Time, limit, offset int) (*typ
 	res := new(types.ListReplicaEventRsp)
 
 	var infos []*types.ReplicaEventInfo
-	query := fmt.Sprintf("SELECT * FROM %s WHERE end_time BETWEEN ? AND ? order by end_time desc LIMIT ? OFFSET ? ", replicaEventTable)
+	query := fmt.Sprintf("SELECT * FROM %s WHERE end_time BETWEEN ? AND ? order by end_time asc LIMIT ? OFFSET ? ", replicaEventTable)
 	if limit > loadReplicaEventDefaultLimit {
 		limit = loadReplicaEventDefaultLimit
 	}
@@ -549,4 +537,12 @@ func (n *SQLDB) DeleteAssetRecordsOfNode(nodeID string) error {
 	}
 
 	return tx.Commit()
+}
+
+// DeleteReplicaEvents delete events
+func (n *SQLDB) DeleteReplicaEvents() error {
+	query := fmt.Sprintf(`DELETE FROM %s WHERE end_time<DATE_SUB(NOW(), INTERVAL 3 MONTH) `, replicaEventTable)
+	_, err := n.db.Exec(query)
+
+	return err
 }

@@ -120,7 +120,7 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, ds
 				downloadSpeed = float64(len(b.RawData())) / float64(duration) * float64(time.Second)
 			}
 
-			workload := &types.Workload{DownloadSpeed: int64(downloadSpeed), DownloadSize: int64(len(b.RawData())), StartTime: startTime.Unix(), EndTime: time.Now().Unix()}
+			workload := &types.Workload{DownloadSpeed: int64(downloadSpeed), DownloadSize: int64(len(b.RawData())), StartTime: startTime, EndTime: time.Now()}
 			workloadReport := &types.WorkloadReport{TokenID: ds.Tk.ID, NodeID: ds.NodeID, Workload: workload}
 
 			lock.Lock()
