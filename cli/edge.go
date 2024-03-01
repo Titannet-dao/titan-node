@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ var EdgeCmds = []*cli.Command{
 	configCmds,
 	stateCmd,
 	signCmd,
+	bindCmd,
 }
 
 var nodeInfoCmd = &cli.Command{
@@ -590,6 +592,20 @@ var setConfigCmd = &cli.Command{
 	},
 }
 
+func getConfigPath(cctx *cli.Context) (string, error) {
+	repoPath, err := getRepoPath(cctx)
+	if err != nil {
+		return "", err
+	}
+
+	repoPath, err = homedir.Expand(repoPath)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(repoPath, "config.toml"), nil
+}
+
 var mergeConfigCmd = &cli.Command{
 	Name:  "merge",
 	Usage: "merge config",
@@ -612,17 +628,10 @@ var mergeConfigCmd = &cli.Command{
 		}
 		// check quota
 
-		repoPath, err := getRepoPath(cctx)
+		configPath, err := getConfigPath(cctx)
 		if err != nil {
 			return err
 		}
-
-		repoPath, err = homedir.Expand(repoPath)
-		if err != nil {
-			return err
-		}
-
-		configPath := filepath.Join(repoPath, "config.toml")
 		cfg, err := config.FromFile(configPath, config.DefaultEdgeCfg())
 		if err != nil {
 			return xerrors.Errorf("load local config file error %w", err)
@@ -800,6 +809,123 @@ var signCmd = &cli.Command{
 		}
 
 		fmt.Println(hex.EncodeToString(sign))
+		return nil
+	},
+}
+
+var bindCmd = &cli.Command{
+	Name:      "bind",
+	Usage:     "sign with the hash",
+	UsageText: "sign your-hash-here",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "hash",
+			Usage: "--hash=your-hash",
+			Value: "",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		webServer := cctx.Args().Get(0)
+		if len(webServer) == 0 {
+			return fmt.Errorf("web server can not empty, example: bind --hash your-hash https://your-web-server-api")
+		}
+
+		hash := cctx.String("hash")
+		if len(hash) == 0 {
+			return fmt.Errorf("hash can not empty")
+		}
+
+		r, err := openRepo(cctx)
+		if err != nil {
+			return err
+		}
+
+		privateKeyPem, err := r.PrivateKey()
+		if err != nil {
+			return err
+		}
+
+		privateKey, err := titanrsa.Pem2PrivateKey(privateKeyPem)
+		if err != nil {
+			return err
+		}
+
+		titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+		sign, err := titanRsa.Sign(privateKey, []byte(hash))
+		if err != nil {
+			return err
+		}
+
+		nodeID, err := r.NodeID()
+		if err != nil {
+			return err
+		}
+
+		if len(nodeID) == 0 {
+			return fmt.Errorf("edge not init, can not get nodeID")
+		}
+
+		configPath, err := getConfigPath(cctx)
+		if err != nil {
+			return err
+		}
+
+		cfg, err := config.FromFile(configPath, config.DefaultEdgeCfg())
+		if err != nil {
+			return xerrors.Errorf("load local config file error %w", err)
+		}
+
+		edgeConfig := cfg.(*config.EdgeCfg)
+
+		type ReqBind struct {
+			Hash      string `json:"hash"`
+			NodeID    string `json:"node_id"`
+			Signature string `json:"signature"`
+			AreaID    string `json:"area_id"`
+		}
+
+		reqBind := ReqBind{
+			Hash:      hash,
+			NodeID:    string(nodeID),
+			Signature: hex.EncodeToString(sign),
+			AreaID:    edgeConfig.AreaID,
+		}
+
+		buf, err := json.Marshal(reqBind)
+		if err != nil {
+			return err
+		}
+
+		resp, err := http.Post(webServer, "application/json", bytes.NewBuffer(buf))
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			buf, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("status code %d, read body error %s", resp.StatusCode, err.Error())
+			}
+			return fmt.Errorf("status code %d, error message %s", resp.StatusCode, string(buf))
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read body error %s", err.Error())
+		}
+
+		type Resp struct {
+			Code int    `json:"code"`
+			Err  int    `json:"err"`
+			Msg  string `json:"msg"`
+		}
+
+		rsp := Resp{}
+		json.Unmarshal(respBody, &rsp)
+		if rsp.Code != 0 {
+			fmt.Println(rsp.Msg)
+		}
+
 		return nil
 	},
 }
