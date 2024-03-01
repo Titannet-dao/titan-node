@@ -118,12 +118,12 @@ func CheckFdLimit() error {
 	limit, _, err := ulimit.GetLimit()
 	switch {
 	case err == ulimit.ErrUnsupported:
-		log.Errorw("checking file descriptor limit failed", "error", err)
+		log.Debug("checking file descriptor limit failed, unsupported")
 	case err != nil:
 		return xerrors.Errorf("checking fd limit: %w", err)
 	default:
-		if limit < build.EdgeFDLimit {
-			return xerrors.Errorf("soft file descriptor limit (ulimit -n) too low, want %d, current %d", build.EdgeFDLimit, limit)
+		if limit < build.NodeFDLimit {
+			return xerrors.Errorf("soft file descriptor limit (ulimit -n) too low, want %d, current %d", build.NodeFDLimit, limit)
 		}
 	}
 	return nil

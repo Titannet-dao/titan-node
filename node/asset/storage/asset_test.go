@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
-	legacy "github.com/ipfs/go-ipld-legacy"
 	carv2 "github.com/ipld/go-car/v2"
 	"github.com/ipld/go-car/v2/blockstore"
 	"golang.org/x/xerrors"
@@ -44,7 +44,7 @@ func TestScanAsset(t *testing.T) {
 		return
 	}
 
-	node, err := legacy.DecodeNode(context.Background(), block)
+	node, err := ipld.DecodeNode(context.Background(), block)
 	if err != nil {
 		t.Errorf("DecodeNode error %s", err.Error())
 		return
@@ -78,7 +78,7 @@ func getBlocks(ctx context.Context, bs *blockstore.ReadOnly, links []*format.Lin
 		}
 		dongSize += int64(len(block.RawData()))
 		// fmt.Printf("totalSize: %d, dongSize:%d, blockSzie:%d, linkSize:%d\n", totalSize, dongSize, len(block.RawData()), link.Size)
-		node, err := legacy.DecodeNode(context.Background(), block)
+		node, err := ipld.DecodeNode(context.Background(), block)
 		if err != nil {
 			return err
 		}

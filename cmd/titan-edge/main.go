@@ -27,10 +27,10 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
+	"github.com/Filecoin-Titan/titan/api/terrors"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/build"
 	lcli "github.com/Filecoin-Titan/titan/cli"
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/lib/titanlog"
 	"github.com/Filecoin-Titan/titan/metrics"
 	"github.com/Filecoin-Titan/titan/node/config"
@@ -38,10 +38,12 @@ import (
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-jsonrpc/auth"
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
+	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/urfave/cli/v2"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
@@ -61,7 +63,7 @@ func main() {
 	types.RunningNodeType = types.NodeEdge
 	titanlog.SetupLogLevels()
 	local := []*cli.Command{
-		runCmd,
+		daemonCmd,
 	}
 
 	local = append(local, lcli.CommonCommands...)
@@ -102,14 +104,50 @@ func main() {
 
 	if err := app.Run(os.Args); err != nil {
 		log.Errorf("%+v", err)
-		return
+		os.Exit(1)
 	}
 }
 
-var runCmd = &cli.Command{
-	Name:  "run",
-	Usage: "Start titan edge node",
+var daemonCmd = &cli.Command{
+	Name:  "daemon",
+	Usage: "daemon cmd",
+	Subcommands: []*cli.Command{
+		daemonStartCmd,
+		daemonStopCmd,
+	},
+}
+
+var daemonStopCmd = &cli.Command{
+	Name:  "stop",
+	Usage: "stop a running daemon",
 	Flags: []cli.Flag{},
+	Action: func(cctx *cli.Context) error {
+		edgeAPI, close, err := lcli.GetEdgeAPI(cctx)
+		if err != nil {
+			return err
+		}
+
+		defer close()
+
+		return edgeAPI.Shutdown(cctx.Context)
+	},
+}
+
+var daemonStartCmd = &cli.Command{
+	Name:  "start",
+	Usage: "Start titan edge node",
+	Flags: []cli.Flag{
+		&cli.BoolFlag{
+			Name:  "init",
+			Usage: "--init=true, initialize edge at first run",
+			Value: false,
+		},
+		&cli.StringFlag{
+			Name:  "url",
+			Usage: "--url=https://titan-server-domain/rpc/v0",
+			Value: "",
+		},
+	},
 
 	Before: func(cctx *cli.Context) error {
 		return nil
@@ -125,6 +163,7 @@ var runCmd = &cli.Command{
 		}
 
 		repoPath := cctx.String(FlagEdgeRepo)
+
 		r, err := repo.NewFS(repoPath)
 		if err != nil {
 			return err
@@ -145,6 +184,19 @@ var runCmd = &cli.Command{
 			return err
 		}
 
+		_, nodeIDErr := r.NodeID()
+		isNeedInit := cctx.Bool("init")
+		if nodeIDErr == repo.ErrNodeIDNotExist && isNeedInit {
+			locatorURL := cctx.String("url")
+			if len(locatorURL) == 0 {
+				return fmt.Errorf("Must set --url for --init")
+			}
+
+			if err := lcli.RegitsterNode(cctx, lr, locatorURL, types.NodeEdge); err != nil {
+				return err
+			}
+		}
+
 		cfg, err := lr.Config()
 		if err != nil {
 			return err
@@ -159,39 +211,45 @@ var runCmd = &cli.Command{
 
 		privateKey, err := loadPrivateKey(r)
 		if err != nil {
-			return fmt.Errorf(`please register your private key, example: 
-			titan-edge register --key your_private_key`)
+			return fmt.Errorf(`please initialize edge, example: 
+			titan-edge daemon start --init --url https://titan-network-url/rpc/v0`)
 		}
 
-		if len(edgeCfg.NodeID) == 0 || len(edgeCfg.AreaID) == 0 {
+		if len(edgeCfg.AreaID) == 0 {
 			return fmt.Errorf(`please config node id and area id, example:
 			titan-edge config set --node-id=your_node_id --area-id=your_area_id `)
 		}
 
-		connectTimeout, err := time.ParseDuration(edgeCfg.Timeout)
+		nodeIDBuf, err := r.NodeID()
+		if err != nil {
+			return err
+		}
+		nodeID := string(nodeIDBuf)
+
+		connectTimeout, err := time.ParseDuration(edgeCfg.Network.Timeout)
 		if err != nil {
 			return err
 		}
 
-		udpPacketConn, err := net.ListenPacket("udp", edgeCfg.ListenAddress)
+		udpPacketConn, err := net.ListenPacket("udp", edgeCfg.Network.ListenAddress)
 		if err != nil {
 			return err
 		}
 		defer udpPacketConn.Close() //nolint:errcheck  // ignore error
 
-		// all jsonrpc client use udp
-		httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, edgeCfg.InsecureSkipVerify, edgeCfg.CaCertificatePath)
-		if err != nil {
-			return xerrors.Errorf("new http3 client: %w", err)
-		}
-		jsonrpc.SetHttp3Client(httpClient)
-
-		url, err := getSchedulerURL(cctx, edgeCfg.NodeID, edgeCfg.AreaID)
-		if err != nil {
-			return xerrors.Errorf("get scheduler url: %w", err)
+		transport := &quic.Transport{
+			Conn: udpPacketConn,
 		}
 
-		schedulerAPI, closer, err := newSchedulerAPI(cctx, url, edgeCfg.NodeID, privateKey)
+		schedulerURL, _, _ := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
+		if len(schedulerURL) == 0 {
+			schedulerURL, err = getAccessPoint(cctx, edgeCfg.Network.LocatorURL, nodeID, edgeCfg.AreaID)
+			if err != nil {
+				return err
+			}
+		}
+
+		schedulerAPI, closer, err := newSchedulerAPI(cctx, transport, schedulerURL, nodeID, privateKey)
 		if err != nil {
 			return xerrors.Errorf("new scheduler api: %w", err)
 		}
@@ -211,40 +269,37 @@ var runCmd = &cli.Command{
 		}
 		log.Infof("Remote version %s", v)
 
+		var shutdownChan = make(chan struct{})
 		var httpServer *httpserver.HttpServer
 		var edgeAPI api.Edge
 		stop, err := node.New(cctx.Context,
 			node.Edge(&edgeAPI),
 			node.Base(),
 			node.Repo(r),
-			node.Override(new(dtypes.NodeID), dtypes.NodeID(edgeCfg.NodeID)),
+			node.Override(new(dtypes.NodeID), dtypes.NodeID(nodeID)),
 			node.Override(new(api.Scheduler), schedulerAPI),
-			node.Override(new(net.PacketConn), udpPacketConn),
+			node.Override(new(dtypes.ShutdownChan), shutdownChan),
+			node.Override(new(*quic.Transport), transport),
 			node.Override(new(dtypes.NodeMetadataPath), func() dtypes.NodeMetadataPath {
-				metadataPath := edgeCfg.MetadataPath
+				metadataPath := edgeCfg.Storage.Path
 				if len(metadataPath) == 0 {
 					metadataPath = path.Join(lr.Path(), DefaultStorageDir)
 				}
 
-				log.Infof("metadataPath:%s", metadataPath)
+				log.Debugf("metadataPath:%s", metadataPath)
 				return dtypes.NodeMetadataPath(metadataPath)
 			}),
 			node.Override(new(dtypes.AssetsPaths), func() dtypes.AssetsPaths {
-				assetsPaths := edgeCfg.AssetsPaths
-				if len(assetsPaths) == 0 {
-					assetsPaths = []string{path.Join(lr.Path(), DefaultStorageDir)}
+				var assetsPaths = []string{path.Join(lr.Path(), DefaultStorageDir)}
+				if len(edgeCfg.Storage.Path) > 0 {
+					assetsPaths = []string{edgeCfg.Storage.Path}
 				}
 
-				log.Debugf("assetsPaths:%#v", assetsPaths)
+				log.Debugf("storage path:%#v", assetsPaths)
 				return dtypes.AssetsPaths(assetsPaths)
 			}),
 			node.Override(new(dtypes.InternalIP), func() (dtypes.InternalIP, error) {
-				ainfo, err := lcli.GetAPIInfo(cctx, repo.Scheduler)
-				if err != nil {
-					return "", xerrors.Errorf("could not get scheduler API info: %w", err)
-				}
-
-				schedulerAddr := strings.Split(ainfo.Addr, "/")
+				schedulerAddr := strings.Split(schedulerURL, "/")
 				conn, err := net.DialTimeout("tcp", schedulerAddr[2], connectTimeout)
 				if err != nil {
 					return "", err
@@ -268,6 +323,10 @@ var runCmd = &cli.Command{
 
 				return err
 			}),
+
+			node.Override(node.SetApiEndpointKey, func(lr repo.LockedRepo) error {
+				return setEndpointAPI(lr, edgeCfg.Network.ListenAddress)
+			}),
 		)
 		if err != nil {
 			return xerrors.Errorf("creating node: %w", err)
@@ -276,7 +335,7 @@ var runCmd = &cli.Command{
 		handler := EdgeHandler(edgeAPI.AuthVerify, edgeAPI, true)
 		handler = httpServer.NewHandler(handler)
 
-		srv := &http.Server{
+		httpSrv := &http.Server{
 			ReadHeaderTimeout: 30 * time.Second,
 			Handler:           handler,
 			BaseContext: func(listener net.Listener) context.Context {
@@ -285,36 +344,37 @@ var runCmd = &cli.Command{
 			},
 		}
 
-		tlsConfig, err := getTLSConfig(edgeCfg)
-		if err != nil {
-			return xerrors.Errorf("get tls config error: %w", err)
-		}
-
-		go startUDPServer(udpPacketConn, handler, tlsConfig) //nolint:errcheck
+		go startHTTP3Server(transport, handler, edgeCfg)
 
 		go func() {
 			<-ctx.Done()
 			log.Warn("Shutting down...")
-			if err := srv.Shutdown(context.TODO()); err != nil {
+
+			if err := transport.Close(); err != nil {
+				log.Errorf("shutting down http3Srv failed: %s", err)
+			}
+
+			if err := httpSrv.Shutdown(context.TODO()); err != nil {
 				log.Errorf("shutting down RPC server failed: %s", err)
 			}
+
 			stop(ctx) //nolint:errcheck
 			log.Warn("Graceful shutdown successful")
 		}()
 
-		nl, err := net.Listen("tcp", edgeCfg.ListenAddress)
+		nl, err := net.Listen("tcp", edgeCfg.Network.ListenAddress)
 		if err != nil {
 			return err
 		}
 
-		log.Infof("Edge listen on tcp %s", edgeCfg.ListenAddress)
+		log.Infof("Edge listen on tcp/udp %s", edgeCfg.Network.ListenAddress)
 
 		schedulerSession, err := schedulerAPI.Session(ctx)
 		if err != nil {
 			return xerrors.Errorf("getting scheduler session: %w", err)
 		}
 
-		token, err := edgeAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: edgeCfg.NodeID})
+		token, err := edgeAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: nodeID})
 		if err != nil {
 			return xerrors.Errorf("generate token for scheduler error: %w", err)
 		}
@@ -344,23 +404,7 @@ var runCmd = &cli.Command{
 					readyCh = waitQuietCh()
 				}
 
-				errCount := 0
 				for {
-					curSession, err := keepalive(schedulerAPI, connectTimeout)
-					if err != nil {
-						errCount++
-						log.Errorf("heartbeat: checking remote session failed: %+v", err)
-					} else {
-						if curSession != schedulerSession {
-							schedulerSession = curSession
-							break
-						}
-
-						if errCount > 0 {
-							break
-						}
-					}
-
 					select {
 					case <-readyCh:
 						opts := &types.ConnectOptions{Token: token}
@@ -371,11 +415,34 @@ var runCmd = &cli.Command{
 						}
 
 						log.Info("Edge registered successfully, waiting for tasks")
-						errCount = 0
 						readyCh = nil
 					case <-heartbeats.C:
 					case <-ctx.Done():
 						return // graceful shutdown
+					case <-shutdownChan:
+						cancel()
+						return
+					}
+
+					curSession, err := keepalive(schedulerAPI, connectTimeout)
+					if err != nil {
+						log.Errorf("heartbeat: keepalive failed: %+v", err)
+						errNode, ok := err.(*api.ErrNode)
+						if ok {
+							if errNode.Code == int(terrors.NodeDeactivate) {
+								cancel()
+								return
+							} else if errNode.Code == int(terrors.NodeIPInconsistent) {
+								break
+							} else if errNode.Code == int(terrors.NodeOffline) && readyCh == nil {
+								break
+							}
+						}
+					} else if curSession != schedulerSession {
+						log.Warn("change session id")
+						schedulerSession = curSession
+						break
+
 					}
 				}
 
@@ -383,7 +450,7 @@ var runCmd = &cli.Command{
 			}
 		}()
 
-		return srv.Serve(nl)
+		return httpSrv.Serve(nl)
 	},
 }
 
@@ -391,7 +458,7 @@ func keepalive(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return api.NodeKeepalive(ctx)
+	return api.NodeKeepaliveV2(ctx)
 }
 
 func getSchedulerVersion(api api.Scheduler, timeout time.Duration) (api.APIVersion, error) {
@@ -402,7 +469,7 @@ func getSchedulerVersion(api api.Scheduler, timeout time.Duration) (api.APIVersi
 }
 
 func newAuthTokenFromScheduler(schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (string, error) {
-	schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, nil)
+	schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 	if err != nil {
 		return "", err
 	}
@@ -418,12 +485,12 @@ func newAuthTokenFromScheduler(schedulerURL, nodeID string, privateKey *rsa.Priv
 	return schedulerAPI.NodeLogin(context.Background(), nodeID, hex.EncodeToString(sign))
 }
 
-func getAccessPoint(cctx *cli.Context, nodeID, areaID string) (string, error) {
-	locator, closer, err := lcli.GetLocatorAPI(cctx)
+func getAccessPoint(cctx *cli.Context, locatorURL, nodeID, areaID string) (string, error) {
+	locator, close, err := client.NewLocator(cctx.Context, locatorURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 	if err != nil {
 		return "", err
 	}
-	defer closer()
+	defer close()
 
 	schedulerURLs, err := locator.GetAccessPoints(context.Background(), nodeID, areaID)
 	if err != nil {
@@ -437,26 +504,13 @@ func getAccessPoint(cctx *cli.Context, nodeID, areaID string) (string, error) {
 	return schedulerURLs[0], nil
 }
 
-func getSchedulerURL(cctx *cli.Context, nodeID, areaID string) (string, error) {
-	schedulerURL, _, err := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
-	if err == nil {
-		return schedulerURL, nil
-	}
-
-	log.Debugf("get scheduler raw api error %s", err.Error())
-
-	schedulerURL, err = getAccessPoint(cctx, nodeID, areaID)
-	if err == nil {
-		return schedulerURL, nil
-	}
-
-	log.Debugf("get access point error %s", err.Error())
-
-	return "", fmt.Errorf("please set SCHEDULER_API_INFO or LOCATOR_API_INFO")
-}
-
-func newSchedulerAPI(cctx *cli.Context, schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (api.Scheduler, jsonrpc.ClientCloser, error) {
+func newSchedulerAPI(cctx *cli.Context, transport *quic.Transport, schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (api.Scheduler, jsonrpc.ClientCloser, error) {
 	token, err := newAuthTokenFromScheduler(schedulerURL, nodeID, privateKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	httpClient, err := client.NewHTTP3ClientWithPacketConn(transport)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -465,43 +519,13 @@ func newSchedulerAPI(cctx *cli.Context, schedulerURL, nodeID string, privateKey 
 	headers.Add("Authorization", "Bearer "+token)
 	headers.Add("Node-ID", nodeID)
 
-	schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, headers)
+	schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, headers, jsonrpc.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, nil, err
 	}
 	log.Debugf("scheduler url:%s, token:%s", schedulerURL, token)
 
-	if err := os.Setenv("SCHEDULER_API_INFO", token+":"+schedulerURL); err != nil {
-		log.Errorf("set env error: %s", err.Error())
-	}
-
 	return schedulerAPI, closer, nil
-}
-
-func startUDPServer(conn net.PacketConn, handler http.Handler, tlsConfig *tls.Config) error {
-	srv := http3.Server{
-		TLSConfig: tlsConfig,
-		Handler:   handler,
-	}
-
-	return srv.Serve(conn)
-}
-
-func getTLSConfig(edgeCfg *config.EdgeCfg) (*tls.Config, error) {
-	if len(edgeCfg.CertificatePath) > 0 && len(edgeCfg.PrivateKeyPath) > 0 {
-		cert, err := tls.LoadX509KeyPair(edgeCfg.CertificatePath, edgeCfg.PrivateKeyPath)
-		if err != nil {
-			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
-			return nil, err
-		}
-
-		return &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cert},
-		}, nil
-	}
-
-	return defaultTLSConfig()
 }
 
 func defaultTLSConfig() (*tls.Config, error) {
@@ -524,6 +548,7 @@ func defaultTLSConfig() (*tls.Config, error) {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		Certificates:       []tls.Certificate{tlsCert},
+		NextProtos:         []string{"h2", "h3"},
 		InsecureSkipVerify: true, //nolint:gosec // skip verify in default config
 	}, nil
 }
@@ -534,4 +559,62 @@ func loadPrivateKey(r *repo.FsRepo) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 	return titanrsa.Pem2PrivateKey(pem)
+}
+
+func setEndpointAPI(lr repo.LockedRepo, address string) error {
+	a, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return xerrors.Errorf("parsing address: %w", err)
+	}
+
+	ma, err := manet.FromNetAddr(a)
+	if err != nil {
+		return xerrors.Errorf("creating api multiaddress: %w", err)
+	}
+
+	if err := lr.SetAPIEndpoint(ma); err != nil {
+		return xerrors.Errorf("setting api endpoint: %w", err)
+	}
+
+	return nil
+}
+
+func startHTTP3Server(transport *quic.Transport, handler http.Handler, config *config.EdgeCfg) error {
+	var tlsConfig *tls.Config
+	if len(config.CertificatePath) == 0 && len(config.PrivateKeyPath) == 0 {
+		config, err := defaultTLSConfig()
+		if err != nil {
+			log.Errorf("startUDPServer, defaultTLSConfig error:%s", err.Error())
+			return err
+		}
+		tlsConfig = config
+	} else {
+		cert, err := tls.LoadX509KeyPair(config.CertificatePath, config.PrivateKeyPath)
+		if err != nil {
+			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
+			return err
+		}
+
+		tlsConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			Certificates:       []tls.Certificate{cert},
+			NextProtos:         []string{"h2", "h3"},
+			InsecureSkipVerify: false,
+		}
+	}
+
+	ln, err := transport.ListenEarly(tlsConfig, nil)
+	if err != nil {
+		return err
+	}
+
+	srv := http3.Server{
+		TLSConfig: tlsConfig,
+		Handler:   handler,
+	}
+
+	if err = srv.ServeListener(ln); err != nil {
+		log.Warn("http3 server ", err.Error())
+	}
+	return err
 }

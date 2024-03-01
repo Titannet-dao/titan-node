@@ -2,11 +2,9 @@ package lotuscli
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
-	"time"
 
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
@@ -15,7 +13,7 @@ import (
 var log = logging.Logger("lotus")
 
 // ChainHead lotus ChainHead api
-func ChainHead(url string) (int64, error) {
+func ChainHead(url string) (uint64, error) {
 	req := request{
 		Jsonrpc: "2.0",
 		Method:  "Filecoin.ChainHead",
@@ -28,66 +26,50 @@ func ChainHead(url string) (int64, error) {
 		return 0, err
 	}
 
-	var ts tipSet
 	b, err := json.Marshal(rsp.Result)
 	if err != nil {
 		return 0, err
 	}
 
+	var ts TipSet
 	err = json.Unmarshal(b, &ts)
 	if err != nil {
 		return 0, err
 	}
 
-	return ts.Height, nil
+	return ts.Height(), nil
 }
 
-// StateGetRandomnessFromBeacon lotus StateGetRandomnessFromBeacon api
-func StateGetRandomnessFromBeacon(url string) (int64, error) {
-	seed := time.Now().UnixNano()
-
-	height, err := ChainHead(url)
-	if err != nil {
-		return seed, err
-	}
-
-	serializedParams, err := json.Marshal(params{
-		0, height, nil, nil,
-	})
-	if err != nil {
-		return seed, err
+// ChainGetTipSetByHeight lotus ChainGetTipSetByHeight api
+func ChainGetTipSetByHeight(url string, height int64) (*TipSet, error) {
+	serializedParams := params{
+		height, nil,
 	}
 
 	req := request{
 		Jsonrpc: "2.0",
-		Method:  "Filecoin.StateGetRandomnessFromBeacon",
+		Method:  "Filecoin.ChainGetTipSetByHeight",
 		Params:  serializedParams,
 		ID:      1,
 	}
 
 	rsp, err := requestLotus(url, req)
 	if err != nil {
-		return seed, err
+		return nil, err
 	}
 
-	var rs randomness
 	b, err := json.Marshal(rsp.Result)
 	if err != nil {
-		return seed, err
+		return nil, err
 	}
-	err = json.Unmarshal(b, &rs)
+
+	var ts TipSet
+	err = json.Unmarshal(b, &ts)
 	if err != nil {
-		return seed, err
+		return nil, err
 	}
 
-	if len(rs) >= 3 {
-		s := binary.BigEndian.Uint32(rs)
-		log.Debugf("lotus Randomness:%d \n", s)
-		return int64(s), nil
-	}
-
-	log.Debugf("lotus Randomness rs:%v \n", rs)
-	return seed, nil
+	return &ts, nil
 }
 
 func requestLotus(url string, req request) (*response, error) {
@@ -102,7 +84,7 @@ func requestLotus(url string, req request) (*response, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}

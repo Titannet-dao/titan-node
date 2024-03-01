@@ -123,6 +123,8 @@ func (av *assetsView) addAsset(ctx context.Context, root cid.Cid) error {
 	}
 
 	assetHashes = append(assetHashes, root.Hash().String())
+	sort.Strings(assetHashes)
+
 	return av.update(ctx, bucketID, assetHashes)
 }
 
@@ -260,10 +262,9 @@ func (b *bucket) getAssetHashes(ctx context.Context, bucketID uint32) ([]string,
 	return hashes, nil
 }
 
+// hashes must be sorted before saving
 func (b *bucket) setAssetHashes(ctx context.Context, bucketID uint32, hashes []string) error {
 	key := ds.NewKey(fmt.Sprintf("%d", bucketID))
-
-	sort.Strings(hashes)
 
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)

@@ -289,7 +289,7 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
-	err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration)
+	err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration, req.Password, req.GroupID)
 	if err != nil {
 		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
@@ -919,46 +919,46 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 		filterMap[nodeID] = struct{}{}
 	}
 
-	// Define filter function loop control types
-	type fType int
-
-	const (
-		continueType fType = iota
-		breakType
-	)
-	// nodeFilter filters nodes to pick based on certain conditions and updates selectMap
-	f := func(node *node.Node) fType {
+	// shouldSelectNode determines whether a given node should be selected based on specific criteria.
+	// It calculates the node's residual capacity and compares it with thresholds and limits to make a decision.
+	//
+	// Parameters:
+	// - node: The node to evaluate.
+	//
+	// Returns:
+	// - bool: true if the node satisfies the selection criteria, false otherwise.
+	selectNodes := func(node *node.Node) bool {
 		if node == nil {
-			return continueType
+			return false
 		}
 		nodeID := node.NodeID
 
 		if _, exist := filterMap[nodeID]; exist {
-			return continueType
+			return false
 		}
 
 		// Calculate node residual capacity
-		residual := (100 - node.DiskUsage) * node.DiskSpace
+		residual := (100 - node.DiskUsage) * node.Info.DiskSpace
 		if residual <= size {
 			log.Debugf("node %s disk residual %.2f", nodeID, residual)
-			return continueType
+			return false
 		}
 
 		if _, exist := selectMap[nodeID]; exist {
-			return continueType
+			return false
 		}
 
 		bandwidthDown -= int64(node.BandwidthDown)
 		selectMap[nodeID] = node
 		if len(selectMap) >= count && bandwidthDown <= 0 {
-			return breakType
+			return true
 		}
 
 		if len(selectMap) >= assetEdgeReplicasLimit-len(filterNodes) {
-			return breakType
+			return true
 		}
 
-		return continueType
+		return false
 	}
 
 	// If count is greater or equal to the difference between total edge nodes and the filterNodes length,
@@ -968,7 +968,7 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 		nodes := m.nodeMgr.GetAllEdgeNode()
 
 		for _, node := range nodes {
-			if f(node) == breakType {
+			if selectNodes(node) {
 				break
 			}
 		}
@@ -977,7 +977,7 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 		for i := 0; i < count*selectNodeRetryLimit; i++ {
 			node, rNum := m.nodeMgr.GetRandomEdge()
 			str = fmt.Sprintf("%s%d,", str, rNum)
-			if f(node) == breakType {
+			if selectNodes(node) {
 				break
 			}
 		}

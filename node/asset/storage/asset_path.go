@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
-	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
 	"github.com/shirou/gopsutil/v3/disk"
 )
@@ -93,7 +93,7 @@ func (ap *assetsPaths) allocatePathWithBlocks(root cid.Cid, blks []blocks.Block)
 		return "", fmt.Errorf("can not allocate disk for none root asset ")
 	}
 
-	node, err := legacy.DecodeNode(context.Background(), rootBlk)
+	node, err := ipld.DecodeNode(context.Background(), rootBlk)
 	if err != nil {
 		return "", err
 	}

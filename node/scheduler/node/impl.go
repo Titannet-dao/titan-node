@@ -4,8 +4,8 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 )
 
-// GetAllCandidateNodes  returns a list of all candidate nodes
-func (m *Manager) GetAllCandidateNodes() ([]string, []*Node) {
+// GetAllValidCandidateNodes  Get all valid candidate nodes
+func (m *Manager) GetAllValidCandidateNodes() ([]string, []*Node) {
 	var ids []string
 	var nodes []*Node
 	m.candidateNodes.Range(func(key, value interface{}) bool {
@@ -92,22 +92,22 @@ func (m *Manager) GetOnlineNodeCount(nodeType types.NodeType) int {
 // NodeOnline registers a node as online
 func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	node.OnlineDuration = info.OnlineDuration
-	node.DiskSpace = info.DiskSpace
-	node.ExternalIP = info.ExternalIP
 	node.DiskUsage = info.DiskUsage
-	node.NodeID = info.NodeID
-	node.Type = info.Type
 	node.BandwidthDown = info.BandwidthDown
 	node.BandwidthUp = info.BandwidthUp
 	node.PortMapping = info.PortMapping
 	node.DeactivateTime = info.DeactivateTime
+
+	node.Info = info
+	node.NodeID = info.NodeID
+	node.Type = info.Type
 
 	err := m.saveInfo(info)
 	if err != nil {
 		return err
 	}
 
-	switch node.Type {
+	switch node.Info.Type {
 	case types.NodeEdge:
 		m.storeEdgeNode(node)
 	case types.NodeCandidate:

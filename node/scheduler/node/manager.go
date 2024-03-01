@@ -17,7 +17,8 @@ var log = logging.Logger("node")
 
 const (
 	// keepaliveTime is the interval between keepalive requests
-	keepaliveTime = 30 * time.Second // seconds
+	keepaliveTime       = 30 * time.Second // seconds
+	calculatePointsTime = 30 * time.Minute
 
 	// saveInfoInterval is the interval at which node information is saved during keepalive requests
 	saveInfoInterval = 2 // keepalive saves information every 2 times
@@ -51,7 +52,8 @@ func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb 
 	}
 
 	go nodeManager.startNodeKeepaliveTimer()
-	go nodeManager.startNodeTimer()
+	go nodeManager.startCheckNodeTimer()
+	go nodeManager.startCalculatePointsTimer()
 
 	return nodeManager
 }
@@ -72,7 +74,7 @@ func (m *Manager) startNodeKeepaliveTimer() {
 	}
 }
 
-func (m *Manager) startNodeTimer() {
+func (m *Manager) startCheckNodeTimer() {
 	now := time.Now()
 
 	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -95,6 +97,57 @@ func (m *Manager) startNodeTimer() {
 		m.checkNodeDeactivate()
 
 		timer.Reset(oneDay)
+	}
+}
+
+func (m *Manager) startCalculatePointsTimer() {
+	ticker := time.NewTicker(calculatePointsTime)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+
+		m.updateNodeProfits()
+	}
+}
+
+func (m *Manager) updateNodeProfits() {
+	infos := make(map[string]int)
+	m.edgeNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		if node == nil {
+			return true
+		}
+
+		if node.IsAbnormal() {
+			return true
+		}
+
+		points := m.calculateAndSavePoints(node)
+		infos[node.NodeID] = points
+
+		return true
+	})
+
+	m.candidateNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		if node == nil {
+			return true
+		}
+
+		if node.IsAbnormal() {
+			return true
+		}
+
+		points := m.calculateAndSavePoints(node)
+		infos[node.NodeID] = points
+
+		return true
+	})
+
+	err := m.UpdateNodeProfits(infos)
+	if err != nil {
+		log.Errorf("UpdateNodeProfits err:%s", err.Error())
 	}
 }
 
@@ -165,10 +218,6 @@ func (m *Manager) DistributeNodeWeight(node *Node) {
 		return
 	}
 
-	if node.IsPrivateMinioOnly {
-		return
-	}
-
 	score := m.getNodeScoreLevel(node.NodeID)
 	wNum := m.weightMgr.getWeightNum(score)
 	if node.Type == types.NodeCandidate {
@@ -218,7 +267,7 @@ func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) bool {
 func (m *Manager) nodesKeepalive(isSave bool) {
 	t := time.Now().Add(-keepaliveTime)
 
-	nodes := make([]*types.NodeDynamicInfo, 0)
+	nodes := make([]*types.NodeSnapshot, 0)
 
 	m.edgeNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
@@ -227,7 +276,7 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 		}
 
 		if m.nodeKeepalive(node, t, isSave) {
-			nodes = append(nodes, &types.NodeDynamicInfo{
+			nodes = append(nodes, &types.NodeSnapshot{
 				NodeID:         node.NodeID,
 				OnlineDuration: node.OnlineDuration,
 				DiskUsage:      node.DiskUsage,
@@ -245,7 +294,7 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 		}
 
 		if m.nodeKeepalive(node, t, isSave) {
-			nodes = append(nodes, &types.NodeDynamicInfo{
+			nodes = append(nodes, &types.NodeSnapshot{
 				NodeID:         node.NodeID,
 				OnlineDuration: node.OnlineDuration,
 				DiskUsage:      node.DiskUsage,
@@ -285,10 +334,6 @@ func (m *Manager) redistributeNodeSelectWeights() {
 		node := value.(*Node)
 
 		if node.IsAbnormal() {
-			return true
-		}
-
-		if node.IsPrivateMinioOnly {
 			return true
 		}
 
@@ -361,4 +406,93 @@ func (m *Manager) checkNodeDeactivate() {
 			log.Errorf("DeleteAssetOfNode err:%s", err.Error())
 		}
 	}
+}
+
+// calculateAndSavePoints Calculate and save the points of the node
+func (m *Manager) calculateAndSavePoints(n *Node) int {
+	mc := calculateMC(float64(n.Info.CPUCores), n.Info.Memory)
+	mb := 10 + min(float64(n.BandwidthUp)/100, 5)*2
+	mbn := float64(mb) * calculateMN(n.NATType)
+	size := bytesToGB(n.Info.DiskSpace)
+	ms := min(size, 2000) * (0.01 + float64(1/max(size, 1000)))
+
+	weighting := weighting(m.Edges)
+	online := 1.0
+
+	point := int((mc + mbn + ms) * weighting * online)
+	log.Debugf("calculatePoints [%s] cpu:[%d] memory:[%d] bandwidth:[%d] NAT:[%d] DiskSpace:[%d] point:[%d]", n.NodeID, n.Info.CPUCores, int(n.Info.Memory), n.BandwidthUp, n.NATType, int(n.Info.DiskSpace), point)
+
+	return point
+}
+
+func bytesToGB(bytes float64) float64 {
+	return bytes / 1024 / 1024 / 1024
+}
+
+func calculateMN(natType types.NatType) float64 {
+	switch natType {
+	case types.NatTypeFullCone:
+		return 2.5
+	case types.NatTypeRestricted:
+		return 2
+	case types.NatTypePortRestricted:
+		return 1.5
+	case types.NatTypeSymmetric:
+		return 1
+	}
+
+	return 0
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+
+	return b
+}
+
+func max(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+func weighting(num int) float64 {
+	if num <= 2000 {
+		return 2
+	} else if num <= 5000 {
+		return 1.8
+	} else if num <= 5000 {
+		return 1.8
+	} else if num <= 10000 {
+		return 1.6
+	} else if num <= 15000 {
+		return 1.4
+	} else if num <= 25000 {
+		return 1.3
+	} else if num <= 35000 {
+		return 1.2
+	} else if num <= 50000 {
+		return 1.1
+	} else {
+		return 1
+	}
+}
+
+func calculateMC(i, j float64) float64 {
+	sum1 := 0.0
+	sum2 := 0.0
+
+	for k := 1.0; k <= min(i, 4); k++ {
+		sum1 += k
+	}
+
+	for k := 1.0; k <= min(j, 4); k++ {
+		sum2 += k
+	}
+
+	return (sum1 + sum2) * 0.7
 }

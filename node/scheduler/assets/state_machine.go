@@ -85,7 +85,7 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 
 // plan creates a plan for the next asset pulling action based on the given events and asset state
 func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (func(statemachine.Context, AssetPullingInfo) error, uint64, error) {
-	log.Debugf("state:%s , events:%v", state.State, events)
+	log.Debugf("hash:%s , state:%s , events:%v", state.Hash, state.State, events)
 	p := planners[state.State]
 	if p == nil {
 		if len(events) == 1 {

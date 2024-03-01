@@ -8,14 +8,11 @@ import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/ipfs/go-cid"
-	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
 	logging "github.com/ipfs/go-log/v2"
-	"github.com/ipfs/go-merkledag"
-	dagpb "github.com/ipld/go-codec-dagpb"
-	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"golang.org/x/xerrors"
 )
 
@@ -30,9 +27,6 @@ type Asset struct {
 
 // NewAsset creates a new Asset instance
 func NewAsset(storageMgr *storage.Manager, scheduler api.Scheduler, assetMgr *Manager, apiSecret *jwt.HMACSHA) *Asset {
-	legacy.RegisterCodec(cid.DagProtobuf, dagpb.Type.PBNode, merkledag.ProtoNodeConverter)
-	legacy.RegisterCodec(cid.Raw, basicnode.Prototype.Bytes, merkledag.RawNodeConverter)
-
 	return &Asset{
 		scheduler: scheduler,
 		mgr:       assetMgr,
@@ -238,7 +232,7 @@ func (a *Asset) progressForAssetPulledSucceeded(root cid.Cid) (*types.AssetPullP
 	linksSize := uint64(len(blk.RawData()))
 
 	// TODO check blk data type
-	node, err := legacy.DecodeNode(context.Background(), blk)
+	node, err := ipld.DecodeNode(context.Background(), blk)
 	if err == nil {
 		for _, link := range node.Links() {
 			linksSize += link.Size

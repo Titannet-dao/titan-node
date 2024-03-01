@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -33,7 +34,7 @@ type User struct {
 // AllocateStorage allocates storage space.
 func (u *User) AllocateStorage(ctx context.Context, size int64) (*types.UserInfo, error) {
 	userInfo, err := u.GetInfo()
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 
@@ -67,31 +68,36 @@ func (u *User) GetInfo() (*types.UserInfo, error) {
 }
 
 // CreateAPIKey creates a key for the client API.
-func (u *User) CreateAPIKey(ctx context.Context, keyName string, commonAPI api.Common) (string, error) {
-	buf, err := u.LoadUserAPIKeys(u.ID)
+func (u *User) CreateAPIKey(ctx context.Context, keyName string, perms []types.UserAccessControl, schedulerCfg *config.SchedulerCfg, commonAPI api.Common) (string, error) {
+	// check perms
+	if err := checkPermsIfInACL(perms); err != nil {
+		return "", &api.ErrWeb{Code: terrors.APIKeyACLError.Int(), Message: err.Error()}
+	}
+
+	apiKeys, err := u.GetAPIKeys(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	apiKeys := make(map[string]types.UserAPIKeysInfo)
-	if len(buf) > 0 {
-		apiKeys, err = u.decodeAPIKeys(buf)
-		if err != nil {
-			return "", err
-		}
+	if apiKeys == nil {
+		apiKeys = make(map[string]types.UserAPIKeysInfo)
 	}
 
-	if len(apiKeys) > 0 {
-		return "", fmt.Errorf("api key already exist, only support create one now")
+	if _, ok := apiKeys[keyName]; ok {
+		return "", &api.ErrWeb{Code: terrors.APPKeyAlreadyExist.Int(), Message: fmt.Sprintf("the API key %s already exist", keyName)}
 	}
 
-	keyValue, err := generateAPIKey(u.ID, commonAPI)
+	if len(apiKeys) >= schedulerCfg.MaxAPIKey {
+		return "", &api.ErrWeb{Code: terrors.OutOfMaxAPIKeyLimit.Int(), Message: fmt.Sprintf("api key exceeds maximum limit %d", schedulerCfg.MaxAPIKey)}
+	}
+
+	keyValue, err := generateAPIKey(u.ID, keyName, perms, commonAPI)
 	if err != nil {
 		return "", err
 	}
 	apiKeys[keyName] = types.UserAPIKeysInfo{CreatedTime: time.Now(), APIKey: keyValue}
 
-	buf, err = u.encodeAPIKeys(apiKeys)
+	buf, err := u.encodeAPIKeys(apiKeys)
 	if err != nil {
 		return "", err
 	}
@@ -178,8 +184,8 @@ func (u *User) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*typ
 }
 
 // ListAssets lists the assets of the user.
-func (u *User) ListAssets(ctx context.Context, limit, offset int, maxCountOfVisitAsset int) (*types.ListAssetRecordRsp, error) {
-	count, err := u.GetAssetCountsForUser(u.ID)
+func (u *User) ListAssets(ctx context.Context, limit, offset, maxCountOfVisitAsset, groupID int) (*types.ListAssetRecordRsp, error) {
+	count, err := u.GetAssetCountsForUser(u.ID, groupID)
 	if err != nil {
 		log.Errorf("GetAssetCountsForUser err:%s", err.Error())
 		return nil, err
@@ -191,7 +197,7 @@ func (u *User) ListAssets(ctx context.Context, limit, offset int, maxCountOfVisi
 		return nil, err
 	}
 
-	userAssets, err := u.ListAssetsForUser(u.ID, limit, offset)
+	userAssets, err := u.ListAssetsForUser(u.ID, limit, offset, groupID)
 	if err != nil {
 		log.Errorf("ListAssetsForUser err:%s", err.Error())
 		return nil, err
@@ -211,21 +217,23 @@ func (u *User) ListAssets(ctx context.Context, limit, offset int, maxCountOfVisi
 			continue
 		}
 
-		count, err := u.GetAssetVisitCount(userAsset.Hash)
+		gCount, err := u.GetAssetVisitCount(userAsset.Hash)
 		if err != nil {
 			log.Errorf("get asset visit count err: %s", err.Error())
 			continue
 		}
 
-		if !userInfo.EnableVIP && count >= maxCountOfVisitAsset {
+		if !userInfo.EnableVIP && gCount >= maxCountOfVisitAsset {
 			userAsset.ShareStatus = int64(types.UserAssetShareStatusForbid)
+		} else if gCount > 0 {
+			userAsset.ShareStatus = int64(types.UserAssetShareStatusShared)
 		}
 
 		r := &types.AssetOverview{
 			AssetRecord:      record,
 			UserAssetDetail:  userAsset,
-			VisitCount:       count,
-			RemainVisitCount: maxCountOfVisitAsset - count,
+			VisitCount:       gCount,
+			RemainVisitCount: maxCountOfVisitAsset - gCount,
 		}
 
 		list = append(list, r)
@@ -359,8 +367,8 @@ func (u *User) encodeAPIKeys(apiKeys map[string]types.UserAPIKeysInfo) ([]byte, 
 	return buffer.Bytes(), nil
 }
 
-func generateAPIKey(userID string, commonAPI api.Common) (string, error) {
-	payload := types.JWTPayload{ID: userID, Allow: []auth.Permission{api.RoleUser}}
+func generateAPIKey(userID string, keyName string, perms []types.UserAccessControl, commonAPI api.Common) (string, error) {
+	payload := types.JWTPayload{ID: userID, Allow: []auth.Permission{api.RoleUser}, Extend: keyName, AccessControlList: perms}
 	tk, err := commonAPI.AuthNew(context.Background(), &payload)
 	if err != nil {
 		return "", err
@@ -382,4 +390,26 @@ func generateAccessToken(auth *types.AuthUserUploadDownloadAsset, commonAPI api.
 	}
 
 	return tk, nil
+}
+
+func checkPermsIfInACL(perms []types.UserAccessControl) error {
+	if len(perms) == 0 {
+		return fmt.Errorf("perms can not empty")
+	}
+
+	for _, perm := range perms {
+		isInACL := false
+		for _, ac := range types.UserAccessControlAll {
+			if perm == ac {
+				isInACL = true
+				break
+			}
+		}
+
+		if !isInACL {
+			return fmt.Errorf("%s not in acl %s", perm, types.UserAccessControlAll)
+		}
+	}
+
+	return nil
 }

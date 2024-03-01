@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -13,7 +14,6 @@ import (
 	"os"
 
 	"github.com/Filecoin-Titan/titan/api/types"
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/node"
 
 	"github.com/Filecoin-Titan/titan/api"
@@ -21,15 +21,18 @@ import (
 	lcli "github.com/Filecoin-Titan/titan/cli"
 	"github.com/Filecoin-Titan/titan/lib/titanlog"
 	"github.com/Filecoin-Titan/titan/node/config"
+	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	"github.com/Filecoin-Titan/titan/node/secret"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/gbrlsnchs/jwt/v3"
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/xerrors"
 
 	logging "github.com/ipfs/go-log/v2"
+	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/urfave/cli/v2"
 )
 
@@ -211,13 +214,30 @@ var runCmd = &cli.Command{
 			return err
 		}
 
-		shutdownChan := make(chan struct{})
+		udpPacketConn, err := net.ListenPacket("udp", schedulerCfg.ListenAddress)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			err = udpPacketConn.Close()
+			if err != nil {
+				log.Errorf("udpPacketConn Close err:%s", err.Error())
+			}
+		}()
 
+		transport := &quic.Transport{Conn: udpPacketConn}
+
+		var shutdownChan = make(chan struct{})
 		var schedulerAPI api.Scheduler
 		stop, err := node.New(cctx.Context,
 			node.Scheduler(&schedulerAPI),
 			node.Base(),
 			node.Repo(r),
+			node.Override(new(*quic.Transport), transport),
+			node.Override(new(dtypes.ShutdownChan), shutdownChan),
+			node.Override(node.SetApiEndpointKey, func(lr repo.LockedRepo) error {
+				return setEndpointAPI(lr, schedulerCfg.ListenAddress)
+			}),
 		)
 		if err != nil {
 			return xerrors.Errorf("creating node: %w", err)
@@ -235,24 +255,11 @@ var runCmd = &cli.Command{
 			return fmt.Errorf("failed to instantiate rpc handler: %s", err.Error())
 		}
 
-		udpPacketConn, err := net.ListenPacket("udp", schedulerCfg.ListenAddress)
-		if err != nil {
-			return err
+		var stopHTTP3Server = func(context.Context) error {
+			return transport.Close()
 		}
-		defer func() {
-			err = udpPacketConn.Close()
-			if err != nil {
-				log.Errorf("udpPacketConn Close err:%s", err.Error())
-			}
-		}()
 
-		httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, schedulerCfg.InsecureSkipVerify, schedulerCfg.CaCertificatePath)
-		if err != nil {
-			return xerrors.Errorf("new http3 client error %w", err)
-		}
-		jsonrpc.SetHttp3Client(httpClient)
-
-		go startUDPServer(udpPacketConn, h, schedulerCfg) //nolint:errcheck
+		go startHTTP3Server(transport, h, schedulerCfg) //nolint:errcheck
 
 		// Serve the RPC.
 		rpcStopper, err := node.ServeRPC(h, "scheduler", schedulerCfg.ListenAddress)
@@ -266,6 +273,7 @@ var runCmd = &cli.Command{
 		finishCh := node.MonitorShutdown(shutdownChan,
 			node.ShutdownHandler{Component: "rpc server", StopFunc: rpcStopper},
 			node.ShutdownHandler{Component: "node", StopFunc: stop},
+			node.ShutdownHandler{Component: "http3 server", StopFunc: stopHTTP3Server},
 		)
 		<-finishCh // fires when shutdown is complete.
 		return nil
@@ -297,9 +305,9 @@ func openRepo(cctx *cli.Context) (repo.LockedRepo, error) {
 	return lr, nil
 }
 
-func startUDPServer(conn net.PacketConn, handler http.Handler, schedulerCfg *config.SchedulerCfg) error {
+func startHTTP3Server(transport *quic.Transport, handler http.Handler, schedulerCfg *config.SchedulerCfg) error {
 	var tlsConfig *tls.Config
-	if schedulerCfg.InsecureSkipVerify {
+	if len(schedulerCfg.CertificatePath) == 0 || len(schedulerCfg.PrivateKeyPath) == 0 {
 		config, err := defaultTLSConfig()
 		if err != nil {
 			log.Errorf("startUDPServer, defaultTLSConfig error:%s", err.Error())
@@ -307,7 +315,7 @@ func startUDPServer(conn net.PacketConn, handler http.Handler, schedulerCfg *con
 		}
 		tlsConfig = config
 	} else {
-		cert, err := tls.LoadX509KeyPair(schedulerCfg.CaCertificatePath, schedulerCfg.PrivateKeyPath)
+		cert, err := tls.LoadX509KeyPair(schedulerCfg.CertificatePath, schedulerCfg.PrivateKeyPath)
 		if err != nil {
 			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
 			return err
@@ -316,8 +324,14 @@ func startUDPServer(conn net.PacketConn, handler http.Handler, schedulerCfg *con
 		tlsConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			Certificates:       []tls.Certificate{cert},
+			NextProtos:         []string{"h2", "h3"},
 			InsecureSkipVerify: false,
 		}
+	}
+
+	ln, err := transport.ListenEarly(tlsConfig, nil)
+	if err != nil {
+		return err
 	}
 
 	srv := http3.Server{
@@ -325,7 +339,11 @@ func startUDPServer(conn net.PacketConn, handler http.Handler, schedulerCfg *con
 		Handler:   handler,
 	}
 
-	return srv.Serve(conn)
+	if err = srv.ServeListener(ln); err != nil {
+		log.Warn("http3 server ", err.Error())
+	}
+
+	return err
 }
 
 func defaultTLSConfig() (*tls.Config, error) {
@@ -348,6 +366,25 @@ func defaultTLSConfig() (*tls.Config, error) {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		Certificates:       []tls.Certificate{tlsCert},
+		NextProtos:         []string{"h2", "h3"},
 		InsecureSkipVerify: true, //nolint:gosec // skip verify in default config
 	}, nil
+}
+
+func setEndpointAPI(lr repo.LockedRepo, address string) error {
+	a, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return xerrors.Errorf("parsing address: %w", err)
+	}
+
+	ma, err := manet.FromNetAddr(a)
+	if err != nil {
+		return xerrors.Errorf("creating api multiaddress: %w", err)
+	}
+
+	if err := lr.SetAPIEndpoint(ma); err != nil {
+		return xerrors.Errorf("setting api endpoint: %w", err)
+	}
+
+	return nil
 }

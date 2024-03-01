@@ -18,6 +18,8 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/nat"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
 	"github.com/Filecoin-Titan/titan/node/scheduler/workload"
+	"github.com/docker/go-units"
+	"github.com/quic-go/quic-go"
 
 	"go.uber.org/fx"
 
@@ -57,6 +59,7 @@ type Scheduler struct {
 	WorkloadManager        *workload.Manager
 
 	PrivateKey *rsa.PrivateKey
+	Transport  *quic.Transport
 }
 
 var _ api.Scheduler = &Scheduler{}
@@ -82,7 +85,7 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 
 	log.Infof("node connected %s, address:%s", nodeID, remoteAddr)
 
-	err := cNode.ConnectRPC(remoteAddr, nodeType)
+	err := cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
 	if err != nil {
 		return xerrors.Errorf("nodeConnect ConnectRPC err:%s", err.Error())
 	}
@@ -140,7 +143,7 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		cNode.TCPPort = opts.TcpServerPort
 		cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
-		err = s.NodeManager.NodeOnline(cNode, &nodeInfo)
+		err = s.NodeManager.NodeOnline(cNode, checkNodeParameters(&nodeInfo))
 		if err != nil {
 			log.Errorf("nodeConnect err:%s,nodeID:%s", err.Error(), nodeID)
 			return err
@@ -154,6 +157,26 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	s.DataSync.AddNodeToList(nodeID)
 
 	return nil
+}
+
+func checkNodeParameters(nodeInfo *types.NodeInfo) *types.NodeInfo {
+	if nodeInfo.DiskSpace > units.PiB {
+		nodeInfo.DiskSpace = units.PiB
+	}
+
+	if nodeInfo.BandwidthDown > units.TB {
+		nodeInfo.BandwidthDown = units.TB
+	}
+
+	if nodeInfo.BandwidthUp > units.TB {
+		nodeInfo.BandwidthUp = units.TB
+	}
+
+	if nodeInfo.Memory > units.TiB {
+		nodeInfo.Memory = units.TiB
+	}
+
+	return nodeInfo
 }
 
 // NodeValidationResult processes the validation result for a node
@@ -202,9 +225,6 @@ func (s *Scheduler) TriggerElection(ctx context.Context) error {
 
 // GetValidationResults retrieves a list of validation results.
 func (s *Scheduler) GetValidationResults(ctx context.Context, nodeID string, limit, offset int) (*types.ListValidationResultRsp, error) {
-	startTime := time.Now()
-	defer log.Debugf("GetValidationResults [%s] request time:%s", nodeID, time.Since(startTime))
-
 	svm, err := s.NodeManager.LoadValidationResultInfos(nodeID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -221,6 +241,16 @@ func (s *Scheduler) GetSchedulerPublicKey(ctx context.Context) (string, error) {
 
 	publicKey := s.PrivateKey.PublicKey
 	pem := titanrsa.PublicKey2Pem(&publicKey)
+	return string(pem), nil
+}
+
+// GetNodePublicKey get node publicKey
+func (s *Scheduler) GetNodePublicKey(ctx context.Context, nodeID string) (string, error) {
+	pem, err := s.NodeManager.LoadNodePublicKey(nodeID)
+	if err != nil {
+		return "", xerrors.Errorf("%s load node public key failed: %w", nodeID, err)
+	}
+
 	return string(pem), nil
 }
 
@@ -282,17 +312,11 @@ func (s *Scheduler) SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) e
 
 // GetWorkloadRecords retrieves a list of workload results.
 func (s *Scheduler) GetWorkloadRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListWorkloadRecordRsp, error) {
-	startTime := time.Now()
-	defer log.Debugf("GetWorkloadRecords [%s] request time:%s", nodeID, time.Since(startTime))
-
 	return s.NodeManager.LoadWorkloadRecords(nodeID, limit, offset)
 }
 
 // GetRetrieveEventRecords retrieves a list of retrieve events
 func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListRetrieveEventRsp, error) {
-	startTime := time.Now()
-	defer log.Debugf("GetRetrieveEventRecords [%s] request time:%s", nodeID, time.Since(startTime))
-
 	return s.NodeManager.LoadRetrieveEventRecords(nodeID, limit, offset)
 }
 

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
 	ipldformat "github.com/ipfs/go-ipld-format"
-	legacy "github.com/ipfs/go-ipld-legacy"
 )
 
 // format.NodeGetter interface implement
@@ -25,7 +25,7 @@ func (ng *nodeGetter) Get(ctx context.Context, block cid.Cid) (ipldformat.Node, 
 		return nil, err
 	}
 
-	return legacy.DecodeNode(context.Background(), blk)
+	return ipld.DecodeNode(context.Background(), blk)
 }
 
 // GetMany returns a channel of NodeOptions given a set of CIDs.

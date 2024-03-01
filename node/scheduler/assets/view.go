@@ -51,6 +51,21 @@ func (m *Manager) removeAssetFromView(nodeID string, assetCID string) error {
 			return err
 		}
 		delete(bucketHashes, bucketNumber)
+	} else {
+		hash, err := computeBucketHash(assetHashes)
+		if err != nil {
+			return err
+		}
+
+		bucketHashes[bucketNumber] = hash
+
+		bytes, err = encode(assetHashes)
+		if err != nil {
+			return err
+		}
+		if err = m.SaveBucket(bucketID, bytes); err != nil {
+			return err
+		}
 	}
 
 	if len(bucketHashes) == 0 {
@@ -67,18 +82,7 @@ func (m *Manager) removeAssetFromView(nodeID string, assetCID string) error {
 		return err
 	}
 
-	if err := m.SaveAssetsView(nodeID, topHash, bytes); err != nil {
-		return err
-	}
-
-	if len(assetHashes) > 0 {
-		bytes, err = encode(assetHashes)
-		if err != nil {
-			return err
-		}
-		return m.SaveBucket(bucketID, bytes)
-	}
-	return nil
+	return m.SaveAssetsView(nodeID, topHash, bytes)
 }
 
 // addAssetToView adds an asset to the node's asset view

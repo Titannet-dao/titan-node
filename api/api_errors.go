@@ -54,6 +54,8 @@ func (ew *ErrWeb) Error() string {
 	return ew.Message
 }
 
+type ErrNode = ErrWeb
+
 var RPCErrors = jsonrpc.NewErrors()
 
 func ErrorIsIn(err error, errorTypes []error) bool {

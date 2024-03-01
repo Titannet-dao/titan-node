@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/lib/tablewriter"
 	"github.com/docker/go-units"
 	"github.com/urfave/cli/v2"
@@ -26,7 +27,7 @@ var userAPIKeyCmds = &cli.Command{
 	Usage: "Manage user api keys",
 	Subcommands: []*cli.Command{
 		createUserAPIKey,
-		getUserAPIKeys,
+		listUserAPIKeys,
 		deleteUserAPIKey,
 	},
 }
@@ -64,6 +65,11 @@ var createUserAPIKey = &cli.Command{
 			Usage:    "special a name for key",
 			Required: true,
 		},
+		&cli.StringSliceFlag{
+			Name:  "perms",
+			Usage: "special user access control for key",
+			Value: cli.NewStringSlice("readFile", "createFile", "deleteFile", "readFolder", "createFolder", "deleteFolder"),
+		},
 	},
 
 	Action: func(cctx *cli.Context) error {
@@ -75,9 +81,15 @@ var createUserAPIKey = &cli.Command{
 
 		userID := cctx.String("user")
 		keyName := cctx.String("key-name")
+		perms := cctx.StringSlice("perms")
+
+		acl := make([]types.UserAccessControl, 0, len(perms))
+		for _, perm := range perms {
+			acl = append(acl, types.UserAccessControl(perm))
+		}
 
 		ctx := ReqContext(cctx)
-		key, err := schedulerAPI.CreateAPIKey(ctx, userID, keyName)
+		key, err := schedulerAPI.CreateAPIKey(ctx, userID, keyName, acl)
 		if err != nil {
 			return err
 		}
@@ -87,9 +99,9 @@ var createUserAPIKey = &cli.Command{
 	},
 }
 
-var getUserAPIKeys = &cli.Command{
-	Name:  "get",
-	Usage: "get api keys for user",
+var listUserAPIKeys = &cli.Command{
+	Name:  "list",
+	Usage: "list api keys for user",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:     "user",
@@ -246,7 +258,7 @@ var listAssets = &cli.Command{
 		offset := cctx.Int("offset")
 
 		ctx := ReqContext(cctx)
-		info, err := schedulerAPI.ListAssets(ctx, userID, limit, offset)
+		info, err := schedulerAPI.ListAssets(ctx, userID, limit, offset, 0)
 		if err != nil {
 			return err
 		}

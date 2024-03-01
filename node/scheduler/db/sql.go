@@ -43,6 +43,7 @@ const (
 	retrieveEventTable    = "retrieve_event"
 	assetVisitCountTable  = "asset_visit_count"
 	replenishBackupTable  = "replenish_backup"
+	userAssetGroupTable   = "user_asset_group"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 100
@@ -50,9 +51,10 @@ const (
 	loadAssetRecordsDefaultLimit        = 100
 	loadExpiredAssetRecordsDefaultLimit = 100
 	loadWorkloadDefaultLimit            = 100
-	loadReplicaEventDefaultLimit        = 100
+	loadReplicaEventDefaultLimit        = 500
 	loadRetrieveDefaultLimit            = 100
 	loadReplicaDefaultLimit             = 100
+	loadUserDefaultLimit                = 100
 )
 
 // assetStateTable returns the asset state table name for the given serverID.
@@ -94,6 +96,7 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cRetrieveEventTable, retrieveEventTable))
 	tx.MustExec(fmt.Sprintf(cAssetVisitCountTable, assetVisitCountTable))
 	tx.MustExec(fmt.Sprintf(cReplenishBackupTable, replenishBackupTable))
+	tx.MustExec(fmt.Sprintf(cUserAssetGroupTable, userAssetGroupTable))
 
 	return tx.Commit()
 }

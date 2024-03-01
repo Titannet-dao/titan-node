@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -9,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 
 	"github.com/filecoin-project/go-jsonrpc"
 
@@ -134,4 +138,36 @@ func NewLocator(ctx context.Context, addr string, requestHeader http.Header, opt
 	)
 
 	return &res, closer, err
+}
+
+func NewHTTP3Client() *http.Client {
+	return &http.Client{
+		Transport: &http3.RoundTripper{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+}
+
+// NewHTTP3ClientWithPacketConn new http3 client for nat trave
+func NewHTTP3ClientWithPacketConn(tansport *quic.Transport) (*http.Client, error) {
+	dial := func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (quic.EarlyConnection, error) {
+		remoteAddr, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			return nil, err
+		}
+
+		return tansport.DialEarly(ctx, remoteAddr, tlsCfg, cfg)
+	}
+
+	roundTripper := &http3.RoundTripper{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+		QuicConfig: &quic.Config{},
+		Dial:       dial,
+	}
+
+	return &http.Client{Transport: roundTripper, Timeout: 30 * time.Second}, nil
 }

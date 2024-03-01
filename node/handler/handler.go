@@ -105,6 +105,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		ctx = context.WithValue(ctx, ID{}, payload.ID)
 		ctx = api.WithPerm(ctx, payload.Allow)
+		ctx = api.WithUserAccessControl(ctx, payload.AccessControlList)
 	}
 
 	h.next(w, r.WithContext(ctx))

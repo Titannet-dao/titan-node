@@ -3,24 +3,25 @@ package validation
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math/rand"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/Filecoin-Titan/titan/lotuscli"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/google/uuid"
+	"golang.org/x/xerrors"
 )
 
 const (
-	duration           = 10              // Validation duration per node (Unit:Second)
-	validationInterval = 5 * time.Minute // validation start-up time interval (Unit:minute)
+	duration           = 10               // Validation duration per node (Unit:Second)
+	validationInterval = 30 * time.Minute // validation start-up time interval (Unit:minute)
 
 	// Processing validation result data from 5 days ago
 	vResultDay = 5 * oneDay
-	// Process 1000 pieces of validation result data at a time
-	vResultLimit = 1000
+	// Process 50000 pieces of validation result data at a time
+	vResultLimit = 50000
 )
 
 // startValidationTicker starts the validation process.
@@ -85,9 +86,10 @@ func (m *Manager) startValidate() error {
 
 	roundID := uuid.NewString()
 	m.curRoundID = roundID
-	seed, err := lotuscli.StateGetRandomnessFromBeacon(m.getLotusURL())
+
+	seed, err := m.getSeedFromFilecoin()
 	if err != nil {
-		log.Errorf("startNewRound:%s StateGetRandomnessFromBeacon err:%s", m.curRoundID, err.Error())
+		log.Errorf("startNewRound:%s getSeedFromFilecoin err:%s", m.curRoundID, err.Error())
 	}
 	m.seed = seed
 
@@ -95,7 +97,7 @@ func (m *Manager) startValidate() error {
 
 	vReqs, dbInfos := m.getValidationDetails(vrs)
 	if len(vReqs) == 0 {
-		return nil
+		return xerrors.New("validation pair fail")
 	}
 
 	err = m.nodeMgr.SaveValidationResultInfos(dbInfos)
@@ -192,6 +194,7 @@ func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.Valida
 		TokenID:     vr.Token,
 	}
 
+	// update node bandwidths
 	if status == types.ValidationStatusSuccess {
 		m.nodeMgr.UpdateNodeBandwidths(vr.NodeID, 0, int64(vr.Bandwidth))
 	}
@@ -266,7 +269,7 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 		return
 	}
 
-	cids, err := m.getAssetBlocksFromCandidate(hash, vInfo.Cid, nodeID, cidCount)
+	cids, cNodeID, err := m.getAssetBlocksFromCandidate(hash, vInfo.Cid, nodeID, cidCount)
 	if err != nil {
 		status = types.ValidationStatusLoadDBErr
 		return
@@ -287,7 +290,7 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 
 		if !m.compareCid(resultCid, validatorCid) {
 			status = types.ValidationStatusValidateFail
-			log.Errorf("round [%s] validator [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
+			log.Errorf("round [%s] validator [%s] cNodeID [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, cNodeID, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
 			return
 		}
 	}
@@ -296,11 +299,11 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 	status = types.ValidationStatusSuccess
 }
 
-func (m *Manager) getAssetBlocksFromCandidate(hash, cid string, filterNode string, cidCount int) ([]string, error) {
+func (m *Manager) getAssetBlocksFromCandidate(hash, cid string, filterNode string, cidCount int) ([]string, string, error) {
 	replicas, err := m.nodeMgr.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
 	if err != nil {
 		log.Errorf("LoadReplicasByHash %s , err:%s", hash, err.Error())
-		return nil, err
+		return nil, "", err
 	}
 
 	var cids []string
@@ -322,10 +325,10 @@ func (m *Manager) getAssetBlocksFromCandidate(hash, cid string, filterNode strin
 			continue
 		}
 
-		break
+		return cids, cNodeID, nil
 	}
 
-	return cids, nil
+	return nil, "", fmt.Errorf("can not find candidate node")
 }
 
 // compares two CID strings and returns true if they are equal, false otherwise
@@ -359,7 +362,7 @@ func (m *Manager) startHandleResultsTimer() {
 	for {
 		<-timer.C
 
-		log.Debugln("start node timer...")
+		log.Debugln("start handle validation results timer...")
 		m.handleValidationResults()
 
 		timer.Reset(oneDay)
@@ -371,24 +374,26 @@ func (m *Manager) handleValidationResults() {
 		return
 	}
 
-	defer log.Infoln("handleValidationResults end")
-	log.Infoln("handleValidationResults start")
+	startTime := time.Now()
+	defer func() {
+		log.Debugf("handleValidationResults time:%s", time.Since(startTime))
+	}()
 
 	maxTime := time.Now().Add(-vResultDay)
 
 	// do handle validation result
 	for {
-		infos, nodeProfits, err := m.loadResults(maxTime)
+		ids, nodeProfits, err := m.loadResults(maxTime)
 		if err != nil {
 			log.Errorf("loadResults err:%s", err.Error())
 			return
 		}
 
-		if len(infos) == 0 {
+		if len(ids) == 0 {
 			return
 		}
 
-		err = m.nodeMgr.UpdateNodeInfosByValidationResult(infos, nodeProfits)
+		err = m.nodeMgr.UpdateNodeInfosByValidationResult(ids, nodeProfits)
 		if err != nil {
 			log.Errorf("UpdateNodeProfitsByValidationResult err:%s", err.Error())
 			return
@@ -397,14 +402,15 @@ func (m *Manager) handleValidationResults() {
 	}
 }
 
-func (m *Manager) loadResults(maxTime time.Time) ([]*types.ValidationResultInfo, map[string]float64, error) {
+func (m *Manager) loadResults(maxTime time.Time) ([]int, map[string]float64, error) {
 	rows, err := m.nodeMgr.LoadUnCalculatedValidationResults(maxTime, vResultLimit)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
 
-	infos := make([]*types.ValidationResultInfo, 0)
+	// infos := make([]*types.ValidationResultInfo, 0)
+	ids := make([]int, 0)
 	nodeProfits := make(map[string]float64)
 
 	for rows.Next() {
@@ -420,19 +426,20 @@ func (m *Manager) loadResults(maxTime time.Time) ([]*types.ValidationResultInfo,
 			record, err := m.nodeMgr.LoadRetrieveEvent(tokenID)
 			if err != nil {
 				vInfo.Profit = 0
-			}
+			} else {
+				// check time
+				if record.CreatedTime > vInfo.EndTime.Unix() {
+					vInfo.Profit = 0
+				}
 
-			// check time
-			if record.CreatedTime > vInfo.EndTime.Unix() {
-				vInfo.Profit = 0
-			}
-
-			if record.EndTime < vInfo.StartTime.Unix() {
-				vInfo.Profit = 0
+				if record.EndTime < vInfo.StartTime.Unix() {
+					vInfo.Profit = 0
+				}
 			}
 		}
 
-		infos = append(infos, vInfo)
+		// infos = append(infos, vInfo)
+		ids = append(ids, vInfo.ID)
 
 		if vInfo.Profit == 0 {
 			continue
@@ -441,5 +448,5 @@ func (m *Manager) loadResults(maxTime time.Time) ([]*types.ValidationResultInfo,
 		nodeProfits[vInfo.NodeID] += vInfo.Profit
 	}
 
-	return infos, nodeProfits, nil
+	return ids, nodeProfits, nil
 }

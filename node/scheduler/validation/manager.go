@@ -2,22 +2,28 @@ package validation
 
 import (
 	"context"
+	"encoding/binary"
 	"sync"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/lotuscli"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/filecoin-project/pubsub"
 	logging "github.com/ipfs/go-log/v2"
+	"golang.org/x/xerrors"
 )
 
 var log = logging.Logger("validation")
 
 const (
+	FILECOIN_EPOCH_DURATION   = 30
+	GAME_CHAIN_EPOCH_LOOKBACK = 10
+
 	validationWorkers = 50
 	oneDay            = 24 * time.Hour
 )
@@ -77,6 +83,11 @@ type Manager struct {
 	resultQueue chan *api.ValidationResult
 
 	leadershipMgr *leadership.Manager
+
+	lck             sync.Mutex
+	isCacheValid    bool // use cache to reduce 'ChainHead' calls
+	cachedEpoch     uint64
+	cachedTimestamp time.Time
 }
 
 // NewManager return new node manager instance
@@ -176,4 +187,75 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 // GetNextElectionTime Get the time of the next election
 func (m *Manager) GetNextElectionTime() time.Time {
 	return m.nextElectionTime
+}
+
+func (m *Manager) getGameEpoch() (uint64, error) {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	if !m.isCacheValid {
+		m.cachedTimestamp = time.Now()
+		h, err := lotuscli.ChainHead(m.getLotusURL())
+		if err != nil {
+			return 0, err
+		}
+
+		m.cachedEpoch = h
+		m.isCacheValid = true
+	}
+
+	duration := time.Since(m.cachedTimestamp)
+	if duration < 0 {
+		return 0, xerrors.Errorf("current time is not correct with negative duration: %s", duration)
+	}
+
+	elapseEpoch := int64(duration.Seconds()) / FILECOIN_EPOCH_DURATION
+
+	return m.cachedEpoch + uint64(elapseEpoch), nil
+}
+
+func (m *Manager) getSeedFromFilecoin() (int64, error) {
+	seed := time.Now().UnixNano()
+
+	height, err := m.getGameEpoch()
+	if err != nil {
+		return seed, xerrors.Errorf("getGameEpoch failed: %w", err)
+	}
+
+	if height <= GAME_CHAIN_EPOCH_LOOKBACK {
+		return seed, xerrors.Errorf("getGameEpoch return invalid height: %d", height)
+	}
+
+	lookback := height - GAME_CHAIN_EPOCH_LOOKBACK
+	tps, err := m.getTipsetByHeight(lookback)
+	if err != nil {
+		return seed, xerrors.Errorf("getTipsetByHeight failed: %w", err)
+	}
+
+	rs := tps.MinTicket().VRFProof
+	if len(rs) >= 3 {
+		s := binary.BigEndian.Uint32(rs)
+		log.Debugf("lotus Randomness:%d \n", s)
+		return int64(s), nil
+	}
+
+	return seed, xerrors.Errorf("VRFProof size %d < 3", len(rs))
+}
+
+func (m *Manager) getTipsetByHeight(height uint64) (*lotuscli.TipSet, error) {
+	iheight := int64(height)
+	for i := 0; i < GAME_CHAIN_EPOCH_LOOKBACK && iheight > 0; i++ {
+		tps, err := lotuscli.ChainGetTipSetByHeight(m.getLotusURL(), iheight)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(tps.Blocks()) > 0 {
+			return tps, nil
+		}
+
+		iheight--
+	}
+
+	return nil, xerrors.Errorf("getTipsetByHeight can't found a non-empty tipset from height: %d", height)
 }

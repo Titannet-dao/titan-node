@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/common"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/Filecoin-Titan/titan/node/sqldb"
 	"github.com/gbrlsnchs/jwt/v3"
@@ -78,7 +80,7 @@ func TestUserAPIKey(t *testing.T) {
 	}
 
 	// schedulerAPI := api.Scheduler
-	apiKey, err := u.CreateAPIKey(context.Background(), "test_key", &common.CommonAPI{APISecret: jwt.NewHS256([]byte("abc_123"))})
+	apiKey, err := u.CreateAPIKey(context.Background(), "test_key", types.UserAccessControlAll, config.DefaultSchedulerCfg(), &common.CommonAPI{APISecret: jwt.NewHS256([]byte("abc_123"))})
 	if err != nil {
 		t.Errorf("CreateAPIKey error %s", err.Error())
 		return

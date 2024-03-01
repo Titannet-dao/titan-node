@@ -17,6 +17,20 @@ const (
 
 	VisitShareLinkOutOfMaxCount // visit share link out of max count
 	VerifyTokenError            // verify token error
+	OutOfMaxAPIKeyLimit         // out of max api key limit
+	APPKeyAlreadyExist          // the APPKey already exist
+	APPKeyNotFound              // the APPKey not found
+	APIKeyACLError              // api key access control list error
+	GroupNotEmptyCannotBeDelete // the group is not empty and cannot be deleted
+	GroupNotExist               // group not exist
+	GroupLimit                  // group limit
+	CannotMoveToSubgroup        // cannot move to subgroup
+	RootGroupCannotMoved        // the root group cannot be moved
+	GroupsAreSame               // groups are the same
+
+	NodeIPInconsistent // node ip inconsistent
+	NodeDeactivate     // node deactivate
+	NodeOffline        // node offline
 
 	Success = 0
 	Unknown = -1

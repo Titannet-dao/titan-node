@@ -28,10 +28,11 @@ func init() {
 // DefaultEdgeCfg returns the default edge config
 func DefaultEdgeCfg() *EdgeCfg {
 	return &EdgeCfg{
-		ListenAddress: "0.0.0.0:1234",
-		Timeout:       "30s",
-		MetadataPath:  "",
-		AssetsPaths:   []string{},
+		Network: Network{
+			ListenAddress: "0.0.0.0:1234",
+			Timeout:       "30s",
+			LocatorURL:    "https://localhost:5000/rpc/v0",
+		},
 		BandwidthUp:   104857600,
 		BandwidthDown: 1073741824,
 		Locator:       true,
@@ -44,16 +45,30 @@ func DefaultEdgeCfg() *EdgeCfg {
 		PullBlockTimeout:  15,
 		PullBlockRetry:    1,
 		PullBlockParallel: 5,
+
+		Storage: Storage{
+			StorageGB: 64,
+		},
+		Memory: Memory{
+			MemoryGB: 1,
+		},
+		Bandwidth: Bandwidth{
+			BandwidthMB: 10,
+		},
+		CPU: CPU{
+			Cores: 1,
+		},
 	}
 }
 
 // DefaultCandidateCfg returns the default candidate config
 func DefaultCandidateCfg() *CandidateCfg {
 	edgeCfg := EdgeCfg{
-		ListenAddress: "0.0.0.0:2345",
-		Timeout:       "30s",
-		MetadataPath:  "",
-		AssetsPaths:   []string{},
+		Network: Network{
+			ListenAddress: "0.0.0.0:2345",
+			Timeout:       "30s",
+			LocatorURL:    "https://localhost:5000/rpc/v0",
+		},
 		BandwidthUp:   1073741824,
 		BandwidthDown: 1073741824,
 		Locator:       true,
@@ -70,10 +85,26 @@ func DefaultCandidateCfg() *CandidateCfg {
 		IPFSAPIURL:          "http://127.0.0.1:5001",
 		ValidateDuration:    10,
 		MaxSizeOfUploadFile: 104857600, // 100 MB
+
+		Storage: Storage{
+			StorageGB: 64,
+			Path:      "./",
+		},
+		Memory: Memory{
+			MemoryGB: 1,
+		},
+		Bandwidth: Bandwidth{
+			BandwidthMB: 10,
+		},
+		CPU: CPU{
+			Cores: 1,
+		},
 	}
 	return &CandidateCfg{
-		EdgeCfg:     edgeCfg,
-		WebRedirect: "https://storage.titannet.io/#/redirect",
+		EdgeCfg:      edgeCfg,
+		MetadataPath: "",
+		AssetsPaths:  []string{},
+		WebRedirect:  "https://storage.titannet.io/#/redirect",
 	}
 }
 
@@ -109,14 +140,14 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		CandidateReplicas:       0,
 		ValidatorRatio:          1,
 		ValidatorBaseBwDn:       100,
-		ValidationProfit:        1,
-		WorkloadProfit:          5,
+		ValidationProfit:        0,
+		WorkloadProfit:          0,
 		ElectionCycle:           5,
 		LotusRPCAddress:         "http://api.node.glif.io/rpc/v0",
 		LotusToken:              "",
 		EdgeDownloadRatio:       0.7,
 		AssetPullTaskLimit:      10,
-		UploadAssetReplicaCount: 50,
+		UploadAssetReplicaCount: 20,
 		UploadAssetExpiration:   150,
 		NodeScoreLevel: map[string][]int{
 			"A": {90, 100},
@@ -134,6 +165,8 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		UserVipStorageSize:       5368709120,
 		MaxCountOfVisitShareLink: 10,
 		Weight:                   100,
+		MaxAPIKey:                5,
+		LocatorURL:               "https://localhost:5000/rpc/v0",
 	}
 }
 

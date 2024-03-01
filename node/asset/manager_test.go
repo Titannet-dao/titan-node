@@ -9,8 +9,8 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
-	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
@@ -103,7 +103,7 @@ func testGetAssetSize(m *Manager, root cid.Cid) error {
 	blk := blocks.NewBlock(block.RawData())
 	fmt.Printf("cid %s prefix code %d, block prefix code %d\n", blk.String(), root.Prefix().Codec, blk.Cid().Prefix().Codec)
 
-	node, err := legacy.DecodeNode(context.Background(), blk)
+	node, err := ipld.DecodeNode(context.Background(), blk)
 	if err != nil {
 		return err
 	}

@@ -304,7 +304,7 @@ var sConfigShowCmd = &cli.Command{
 	Usage: "show scheduler config",
 	Flags: []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
-		lr, err := openRepo(cctx)
+		_, lr, err := openRepoAndLock(cctx)
 		if err != nil {
 			return err
 		}
@@ -407,7 +407,7 @@ var sConfigSetCmd = &cli.Command{
 	},
 
 	Action: func(cctx *cli.Context) error {
-		lr, err := openRepo(cctx)
+		_, lr, err := openRepoAndLock(cctx)
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/build"
 	"github.com/Filecoin-Titan/titan/journal/alerting"
+	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 
 	"github.com/gbrlsnchs/jwt/v3"
@@ -22,7 +23,7 @@ var session = uuid.New()
 type CommonAPI struct {
 	Alerting     *alerting.Alerting
 	APISecret    *jwt.HMACSHA
-	ShutdownChan chan struct{}
+	ShutdownChan dtypes.ShutdownChan
 }
 
 // SessionCallbackFunc will be called after node connection
@@ -31,9 +32,10 @@ type SessionCallbackFunc func(string, string)
 // MethodGroup: Auth
 
 // NewCommonAPI initializes a new CommonAPI
-func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA) (CommonAPI, error) {
+func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA, shutdownChan dtypes.ShutdownChan) (CommonAPI, error) {
 	commAPI := CommonAPI{
-		APISecret: secret,
+		APISecret:    secret,
+		ShutdownChan: shutdownChan,
 	}
 
 	return commAPI, nil

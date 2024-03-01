@@ -16,7 +16,6 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/build"
 	lcli "github.com/Filecoin-Titan/titan/cli"
-	cliutil "github.com/Filecoin-Titan/titan/cli/util"
 	"github.com/Filecoin-Titan/titan/lib/titanlog"
 	"github.com/Filecoin-Titan/titan/node"
 	"github.com/Filecoin-Titan/titan/node/config"
@@ -24,7 +23,6 @@ import (
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	"github.com/Filecoin-Titan/titan/region"
-	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/quic-go/quic-go/http3"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -151,6 +149,7 @@ var runCmd = &cli.Command{
 			node.Locator(&locatorAPI),
 			node.Base(),
 			node.Repo(r),
+			node.Override(new(dtypes.ShutdownChan), shutdownChan),
 			node.ApplyIf(func(s *node.Settings) bool { return cctx.IsSet("etcd-addresses") },
 				node.Override(new(dtypes.EtcdAddresses), func() dtypes.EtcdAddresses {
 					return dtypes.EtcdAddresses(cctx.StringSlice("etcd-addresses"))
@@ -180,12 +179,6 @@ var runCmd = &cli.Command{
 		defer udpPacketConn.Close() //nolint:errcheck  // ignore error
 
 		go startUDPServer(udpPacketConn, handler, locatorCfg) //nolint:errcheck
-
-		httpClient, err := cliutil.NewHTTP3Client(udpPacketConn, locatorCfg.InsecureSkipVerify, locatorCfg.CaCertificatePath)
-		if err != nil {
-			return xerrors.Errorf("new http3 client error %w", err)
-		}
-		jsonrpc.SetHttp3Client(httpClient)
 
 		// Serve the RPC.
 		rpcStopper, err := node.ServeRPC(handler, "titan-locator", locatorCfg.ListenAddress)

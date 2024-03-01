@@ -57,8 +57,8 @@ func (w *SpeedCountWriter) generateReport(payload *types.TokenPayload) *report {
 	workload := &types.Workload{
 		DownloadSpeed: w.speed(),
 		DownloadSize:  int64(w.dataSize),
-		StartTime:     w.startTime.Unix(),
-		EndTime:       time.Now().Unix(),
+		StartTime:     w.startTime,
+		EndTime:       time.Now(),
 	}
 
 	return &report{

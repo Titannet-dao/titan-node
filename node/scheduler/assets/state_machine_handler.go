@@ -141,6 +141,11 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 
 	needCount := info.CandidateReplicas - int64(len(info.CandidateReplicaSucceeds))
 	if needCount < 1 {
+		err := m.DeleteReplenishBackup(info.Hash.String())
+		if err != nil {
+			log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
+		}
+
 		// The number of candidate node replicas has reached the requirement
 		return ctx.Send(SkipStep{})
 	}
@@ -185,12 +190,12 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 
 // handleCandidatesPulling handles the asset pulling process of candidate nodes
 func (m *Manager) handleCandidatesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle candidates pulling, %s", info.CID)
+	log.Debugf("handle candidates pulling,cid: %s, hash:%s", info.CID, info.Hash.String())
 
 	if int64(len(info.CandidateReplicaSucceeds)) >= info.CandidateReplicas {
 		err := m.DeleteReplenishBackup(info.Hash.String())
 		if err != nil {
-			log.Errorf("handle candidates DeleteReplenishBackup err, %s", err.Error())
+			log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
 		}
 
 		return ctx.Send(PullSucceed{})
@@ -311,6 +316,12 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 
 	if info.RetryCount >= int64(MaxRetryCount) {
 		log.Infof("handle pulls failed: %s, retry count: %d", info.CID, info.RetryCount)
+
+		err := m.DeleteReplenishBackup(info.Hash.String())
+		if err != nil {
+			log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
+		}
+
 		return nil
 	}
 

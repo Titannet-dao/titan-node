@@ -62,6 +62,8 @@ type UserAssetDetail struct {
 	Expiration  time.Time `db:"expiration"`
 	CreatedTime time.Time `db:"created_time"`
 	TotalSize   int64     `db:"total_size"`
+	Password    string    `db:"password"`
+	GroupID     int       `db:"group_id"`
 }
 
 type AssetOverview struct {

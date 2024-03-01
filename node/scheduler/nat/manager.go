@@ -149,7 +149,7 @@ func (m *Manager) retryDetectNatType(node *retryNode) {
 
 func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
 	if m.isInRetryList(nodeID) {
-		log.Debugf("node %s waiting to retry")
+		log.Debugf("node %s waiting to retry", nodeID)
 		return
 	}
 
@@ -178,7 +178,7 @@ func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
 	if natType == types.NatTypeUnknown {
 		m.delayDetectNatType(&retryNode{id: nodeID, retry: 0})
 	}
-	log.Debugf("nat type %s", eNode.NATType)
+	log.Debugf("%s nat type %s", nodeID, eNode.NATType)
 }
 
 // GetCandidateURLsForDetectNat Get the rpc url of the specified number of candidate nodes

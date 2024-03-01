@@ -54,6 +54,7 @@ func (m *Manager) startTimer() {
 	}
 
 	duration := nextTime.Sub(now)
+	log.Debugf("start save validation result to files time : %d", duration.Seconds())
 
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
@@ -61,7 +62,7 @@ func (m *Manager) startTimer() {
 	for {
 		<-timer.C
 
-		log.Debugln("start timer...")
+		log.Debugln("start save validation result to files timer...")
 		m.handleValidationResultSaveToFiles()
 		// Packaging
 
@@ -73,9 +74,6 @@ func (m *Manager) handleValidationResultSaveToFiles() {
 	if !m.leadershipMgr.RequestAndBecomeMaster() {
 		return
 	}
-
-	defer log.Infoln("handleValidationResultSaveToFiles end")
-	log.Infoln("handleValidationResultSaveToFiles start")
 
 	// do handle validation result
 	for {
@@ -91,9 +89,9 @@ func (m *Manager) handleValidationResultSaveToFiles() {
 
 		m.saveValidationResultToFiles(ds)
 
-		err = m.UpdateFileSavedStatus(ids)
+		err = m.RemoveInvalidValidationResult(ids)
 		if err != nil {
-			log.Errorf("UpdateFileSavedStatus err:%s", err.Error())
+			log.Errorf("RemoveInvalidValidationResult err:%s", err.Error())
 			return
 		}
 	}

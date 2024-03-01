@@ -101,8 +101,8 @@ func (r *reporter) mergeReports(rps []*report) []*types.WorkloadReport {
 		downloadSize    int64
 		speedCount      int
 		accumulateSpeed int64
-		startTime       int64
-		endTime         int64
+		startTime       time.Time
+		endTime         time.Time
 	}
 	// reportMap := make(map[string]*types.WorkloadReport)
 	reportStatsMap := make(map[string]*reportStats)
@@ -117,10 +117,10 @@ func (r *reporter) mergeReports(rps []*report) []*types.WorkloadReport {
 			r.accumulateSpeed += rp.DownloadSpeed
 			r.speedCount++
 		}
-		if r.startTime == 0 || rp.StartTime < r.startTime {
+		if r.startTime.IsZero() || rp.StartTime.Before(r.startTime) {
 			r.startTime = rp.StartTime
 		}
-		if rp.EndTime > r.endTime {
+		if rp.EndTime.After(r.endTime) {
 			r.endTime = rp.EndTime
 		}
 		reportStatsMap[rp.TokenID] = r
