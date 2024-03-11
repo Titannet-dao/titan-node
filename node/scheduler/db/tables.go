@@ -24,30 +24,30 @@ var cReplicaInfoTable = `
 
 var cNodeInfoTable = `
     CREATE TABLE if not exists %s (
-	    node_id            VARCHAR(128) NOT NULL UNIQUE,
-	    port_mapping       VARCHAR(8)   DEFAULT '',
-	    mac_location       VARCHAR(32)  DEFAULT '',
-	    cpu_cores          INT          DEFAULT 0,
-	    memory             FLOAT        DEFAULT 0,
-	    node_name          VARCHAR(64)  DEFAULT '',
-	    disk_type          VARCHAR(64)  DEFAULT '',
-	    io_system          VARCHAR(64)  DEFAULT '',
-	    system_version     VARCHAR(64)  DEFAULT '',
-	    nat_type           VARCHAR(32)  DEFAULT '',
-	    disk_space         FLOAT        DEFAULT 0,
-    	bandwidth_up       INT          DEFAULT 0,
-    	bandwidth_down     INT          DEFAULT 0,
-	    scheduler_sid      VARCHAR(128) NOT NULL,
-		first_login_time   DATETIME     DEFAULT CURRENT_TIMESTAMP,
-	    online_duration    INT          DEFAULT 0,
-	    profit             FLOAT        DEFAULT 0,
-	    last_seen          DATETIME     DEFAULT CURRENT_TIMESTAMP,
-	    disk_usage         FLOAT        DEFAULT 0,
-    	upload_traffic     BIGINT       DEFAULT 0,
-    	download_traffic   BIGINT       DEFAULT 0,		
-    	retrieve_count     INT          DEFAULT 0,	
-    	asset_count        INT          DEFAULT 0,
-		deactivate_time    INT          DEFAULT 0,
+	    node_id            VARCHAR(128)    NOT NULL UNIQUE,
+	    port_mapping       VARCHAR(8)      DEFAULT '',
+	    mac_location       VARCHAR(32)     DEFAULT '',
+	    cpu_cores          INT             DEFAULT 0,
+	    memory             FLOAT           DEFAULT 0,
+	    node_name          VARCHAR(64)     DEFAULT '',
+	    disk_type          VARCHAR(64)     DEFAULT '',
+	    io_system          VARCHAR(64)     DEFAULT '',
+	    system_version     VARCHAR(64)     DEFAULT '',
+	    nat_type           VARCHAR(32)     DEFAULT '',
+	    disk_space         FLOAT           DEFAULT 0,
+    	bandwidth_up       INT             DEFAULT 0,
+    	bandwidth_down     INT             DEFAULT 0,
+	    scheduler_sid      VARCHAR(128)    NOT NULL,
+		first_login_time   DATETIME        DEFAULT CURRENT_TIMESTAMP,
+	    online_duration    INT             DEFAULT 0,
+	    profit             DECIMAL(14, 6)  DEFAULT 0,
+	    last_seen          DATETIME        DEFAULT CURRENT_TIMESTAMP,
+	    disk_usage         FLOAT           DEFAULT 0,
+    	upload_traffic     BIGINT          DEFAULT 0,
+    	download_traffic   BIGINT          DEFAULT 0,		
+    	retrieve_count     INT             DEFAULT 0,	
+    	asset_count        INT             DEFAULT 0,
+		deactivate_time    INT             DEFAULT 0,
 	    PRIMARY KEY (node_id)
 	) ENGINE=InnoDB COMMENT='node info';`
 
@@ -64,10 +64,11 @@ var cValidationResultsTable = `
 	    bandwidth         FLOAT        DEFAULT 0,
 	    start_time        DATETIME     DEFAULT NULL,
 	    end_time          DATETIME     DEFAULT NULL,
-		profit            FLOAT        DEFAULT 0,
+		profit            DOUBLE       DEFAULT 0,
 		calculated_profit BOOLEAN,
 		token_id          VARCHAR(128) DEFAULT '',
 		file_saved        BOOLEAN,
+		node_count        INT          DEFAULT 0,
 		PRIMARY KEY (id),
 	    KEY round_node (round_id, node_id),
 		KEY idx_profit (calculated_profit),
@@ -206,7 +207,7 @@ var cRetrieveEventTable = `
 		size            INT          DEFAULT 0,
 		created_time    INT          DEFAULT 0,
 		end_time        INT          DEFAULT 0,
-	    profit          FLOAT        DEFAULT 0,
+	    profit          DOUBLE       DEFAULT 0,
 		PRIMARY KEY (token_id),
 		KEY idx_node_id (node_id)
 	) ENGINE=InnoDB COMMENT='asset retrieve event';`
@@ -235,3 +236,13 @@ var cUserAssetGroupTable = `
 	    KEY idx_user_id (user_id),
 	    KEY idx_parent (parent)
     ) ENGINE=InnoDB COMMENT='user asset group';`
+
+var cAWSDataTable = `
+    CREATE TABLE if not exists %s (
+	    bucket          VARCHAR(128) NOT NULL,
+		cid             VARCHAR(128) DEFAULT '',
+		replicas        INT          DEFAULT 0,
+		is_distribute   BOOLEAN      DEFAULT false,
+		distribute_time DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (bucket)
+    ) ENGINE=InnoDB COMMENT='aws data';`

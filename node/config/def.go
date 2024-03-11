@@ -43,7 +43,7 @@ func DefaultEdgeCfg() *EdgeCfg {
 		InsecureSkipVerify: true,
 
 		PullBlockTimeout:  15,
-		PullBlockRetry:    1,
+		PullBlockRetry:    5,
 		PullBlockParallel: 5,
 
 		Storage: Storage{
@@ -79,7 +79,7 @@ func DefaultCandidateCfg() *CandidateCfg {
 		CaCertificatePath:  "",
 
 		PullBlockTimeout:    15,
-		PullBlockRetry:      1,
+		PullBlockRetry:      5,
 		PullBlockParallel:   5,
 		TCPSrvAddr:          "0.0.0.0:9000",
 		IPFSAPIURL:          "http://127.0.0.1:5001",
@@ -146,7 +146,7 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		LotusRPCAddress:         "http://api.node.glif.io/rpc/v0",
 		LotusToken:              "",
 		EdgeDownloadRatio:       0.7,
-		AssetPullTaskLimit:      10,
+		AssetPullTaskLimit:      100,
 		UploadAssetReplicaCount: 20,
 		UploadAssetExpiration:   150,
 		NodeScoreLevel: map[string][]int{
@@ -166,7 +166,8 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		MaxCountOfVisitShareLink: 10,
 		Weight:                   100,
 		MaxAPIKey:                5,
-		LocatorURL:               "https://localhost:5000/rpc/v0",
+		// Maximum number of node registrations for the same IP on the same day
+		MaxNumberOfSameDayRegistrations: 10,
 	}
 }
 

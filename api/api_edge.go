@@ -19,4 +19,6 @@ type Edge interface {
 	ExternalServiceAddress(ctx context.Context, candidateURL string) (string, error) //perm:admin
 	// UserNATTravel build connection for user
 	UserNATPunch(ctx context.Context, userServiceAddress string, req *types.NatPunchReq) error //perm:admin
+	// GetEdgeOnlineStateFromScheduler this online state is get from scheduler
+	GetEdgeOnlineStateFromScheduler(ctx context.Context) (bool, error) //perm:default
 }

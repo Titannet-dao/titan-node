@@ -84,6 +84,8 @@ func (m *Manager) startValidate() error {
 		}
 	}
 
+	delay := 0
+
 	roundID := uuid.NewString()
 	m.curRoundID = roundID
 
@@ -106,14 +108,22 @@ func (m *Manager) startValidate() error {
 	}
 
 	for nodeID, reqs := range vReqs {
-		go m.sendValidateReqToNodes(nodeID, reqs)
+		delay += duration
+		if delay > 25*60 {
+			delay = 0
+		}
+
+		go m.sendValidateReqToNodes(nodeID, reqs, delay)
 	}
 
 	return nil
 }
 
 // sends a validation request to a node.
-func (m *Manager) sendValidateReqToNodes(nID string, req *api.ValidateReq) {
+func (m *Manager) sendValidateReqToNodes(nID string, req *api.ValidateReq, delay int) {
+	time.Sleep(time.Duration(delay) * time.Second)
+	log.Infof("%d sendValidateReqToNodes v:[%s] n:[%s]", delay, req.TCPSrvAddr, nID)
+
 	cNode := m.nodeMgr.GetNode(nID)
 	if cNode != nil {
 		err := cNode.ExecuteValidation(context.Background(), req)
@@ -130,6 +140,8 @@ func (m *Manager) sendValidateReqToNodes(nID string, req *api.ValidateReq) {
 func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.ValidateReq, []*types.ValidationResultInfo) {
 	bReqs := make(map[string]*api.ValidateReq)
 	vrInfos := make([]*types.ValidationResultInfo, 0)
+
+	count := m.nodeMgr.Candidates + m.nodeMgr.Edges
 
 	for _, vr := range vrs {
 		vID := vr.NodeID
@@ -156,6 +168,7 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 				Cid:         cid.String(),
 				StartTime:   time.Now(),
 				EndTime:     time.Now(),
+				NodeCount:   count,
 			}
 			vrInfos = append(vrInfos, dbInfo)
 
@@ -182,7 +195,20 @@ func (m *Manager) getRandNum(max int, r *rand.Rand) int {
 }
 
 // updateResultInfo updates the validation result information for a given node.
-func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult, profit float64) error {
+func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult) error {
+	// update node bandwidths
+	if status == types.ValidationStatusSuccess {
+		m.nodeMgr.NodeValidationSuccess(vr.NodeID, int64(vr.Bandwidth))
+	} else if status == types.ValidationStatusNodeTimeOut || status == types.ValidationStatusValidateFail {
+		m.nodeMgr.NodeValidationFail(vr.NodeID)
+	}
+
+	profit := 0.0
+	node := m.nodeMgr.GetNode(vr.NodeID)
+	if node != nil {
+		profit = node.CalculateIncome(m.nodeMgr.Edges)
+	}
+
 	resultInfo := &types.ValidationResultInfo{
 		RoundID:     m.curRoundID,
 		NodeID:      vr.NodeID,
@@ -192,11 +218,6 @@ func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.Valida
 		Duration:    vr.CostTime,
 		Profit:      profit,
 		TokenID:     vr.Token,
-	}
-
-	// update node bandwidths
-	if status == types.ValidationStatusSuccess {
-		m.nodeMgr.UpdateNodeBandwidths(vr.NodeID, 0, int64(vr.Bandwidth))
 	}
 
 	return m.nodeMgr.UpdateValidationResultInfo(resultInfo)
@@ -223,10 +244,9 @@ func (m *Manager) pullResults() {
 func (m *Manager) handleResult(vr *api.ValidationResult) {
 	var status types.ValidationStatus
 	nodeID := vr.NodeID
-	profit := float64(0)
 
 	defer func() {
-		err := m.updateResultInfo(status, vr, profit)
+		err := m.updateResultInfo(status, vr)
 		if err != nil {
 			log.Errorf("updateResultInfo [%s] fail : %s", nodeID, err.Error())
 			return
@@ -235,7 +255,6 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 
 	if vr.IsCancel {
 		status = types.ValidationStatusCancel
-		profit = m.profit
 		return
 	}
 
@@ -295,7 +314,6 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 		}
 	}
 
-	profit = m.profit
 	status = types.ValidationStatusSuccess
 }
 

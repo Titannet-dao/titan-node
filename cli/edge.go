@@ -764,15 +764,30 @@ var stateCmd = &cli.Command{
 	Usage: "check daemon state",
 	Flags: []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
-		api, close, err := GetAPI(cctx)
+		api, close, err := getEdgeAPI(cctx)
 		if err != nil {
 			return err
 		}
 
 		defer close()
 
-		_, err = api.Version(cctx.Context)
-		return err
+		type NodeState struct {
+			Runing bool `json:"running"`
+			Online bool `json:"online"`
+		}
+
+		nodeState := NodeState{}
+		online, err := api.GetEdgeOnlineStateFromScheduler(cctx.Context)
+		if err == nil {
+			nodeState.Runing = true
+			nodeState.Online = online
+		} else {
+			fmt.Println("err ", err.Error())
+		}
+
+		buf, err := json.Marshal(nodeState)
+		fmt.Println(string(buf))
+		return nil
 	},
 }
 

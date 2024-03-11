@@ -53,7 +53,7 @@ func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb 
 
 	go nodeManager.startNodeKeepaliveTimer()
 	go nodeManager.startCheckNodeTimer()
-	go nodeManager.startCalculatePointsTimer()
+	// go nodeManager.startCalculatePointsTimer()
 
 	return nodeManager
 }
@@ -100,56 +100,61 @@ func (m *Manager) startCheckNodeTimer() {
 	}
 }
 
-func (m *Manager) startCalculatePointsTimer() {
-	ticker := time.NewTicker(calculatePointsTime)
-	defer ticker.Stop()
+// func (m *Manager) startCalculatePointsTimer() {
+// 	ticker := time.NewTicker(calculatePointsTime)
+// 	defer ticker.Stop()
 
-	for {
-		<-ticker.C
+// 	for {
+// 		<-ticker.C
 
-		m.updateNodeProfits()
-	}
-}
+// 		m.updateNodeProfits()
+// 	}
+// }
 
-func (m *Manager) updateNodeProfits() {
-	infos := make(map[string]int)
-	m.edgeNodes.Range(func(key, value interface{}) bool {
-		node := value.(*Node)
-		if node == nil {
-			return true
-		}
+// func (m *Manager) updateNodeProfits() {
+// 	infos := make(map[string]int)
+// 	nodeCount := m.Edges
 
-		if node.IsAbnormal() {
-			return true
-		}
+// 	m.edgeNodes.Range(func(key, value interface{}) bool {
+// 		node := value.(*Node)
+// 		if node == nil {
+// 			return true
+// 		}
 
-		points := m.calculateAndSavePoints(node)
-		infos[node.NodeID] = points
+// 		if node.IsAbnormal() {
+// 			return true
+// 		}
 
-		return true
-	})
+// 		points := node.CalculateIncome(nodeCount)
+// 		infos[node.NodeID] = points
+// 		node.Mc = 0
 
-	m.candidateNodes.Range(func(key, value interface{}) bool {
-		node := value.(*Node)
-		if node == nil {
-			return true
-		}
+// 		return true
+// 	})
 
-		if node.IsAbnormal() {
-			return true
-		}
+// 	m.candidateNodes.Range(func(key, value interface{}) bool {
+// 		node := value.(*Node)
+// 		if node == nil {
+// 			return true
+// 		}
 
-		points := m.calculateAndSavePoints(node)
-		infos[node.NodeID] = points
+// 		if node.IsAbnormal() {
+// 			return true
+// 		}
 
-		return true
-	})
+// 		// points := node.CalculateIncome(nodeCount)
+// 		// infos[node.NodeID] = points
 
-	err := m.UpdateNodeProfits(infos)
-	if err != nil {
-		log.Errorf("UpdateNodeProfits err:%s", err.Error())
-	}
-}
+// 		// node.Mc = 0
+
+// 		return true
+// 	})
+
+// 	err := m.UpdateNodeProfits(infos)
+// 	if err != nil {
+// 		log.Errorf("UpdateNodeProfits err:%s", err.Error())
+// 	}
+// }
 
 // storeEdgeNode adds an edge node to the manager's list of edge nodes
 func (m *Manager) storeEdgeNode(node *Node) {
@@ -218,6 +223,15 @@ func (m *Manager) DistributeNodeWeight(node *Node) {
 		return
 	}
 
+	b, err := m.IsValidator(node.NodeID)
+	if err != nil {
+		log.Errorf("DistributeNodeWeight IsValidator %s err:%s", node.NodeID, err.Error())
+	}
+
+	if b {
+		return
+	}
+
 	score := m.getNodeScoreLevel(node.NodeID)
 	wNum := m.weightMgr.getWeightNum(score)
 	if node.Type == types.NodeCandidate {
@@ -276,11 +290,18 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 		}
 
 		if m.nodeKeepalive(node, t, isSave) {
+			// add node mc
+			mc := node.CalculateMCx() * float64(keepaliveTime/(5*time.Second))
+			// log.Infof("nodeKeepalive %s : Mc:[%v] , i:[%v]", node.NodeID, mc, float64(keepaliveTime/(5*time.Second)))
+
 			nodes = append(nodes, &types.NodeSnapshot{
 				NodeID:         node.NodeID,
 				OnlineDuration: node.OnlineDuration,
 				DiskUsage:      node.DiskUsage,
 				LastSeen:       time.Now(),
+				BandwidthDown:  node.BandwidthDown,
+				BandwidthUp:    node.BandwidthUp,
+				Profit:         mc,
 			})
 		}
 
@@ -299,6 +320,8 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 				OnlineDuration: node.OnlineDuration,
 				DiskUsage:      node.DiskUsage,
 				LastSeen:       time.Now(),
+				BandwidthDown:  node.BandwidthDown,
+				BandwidthUp:    node.BandwidthUp,
 			})
 		}
 
@@ -386,11 +409,29 @@ func (m *Manager) UpdateNodeBandwidths(nodeID string, bandwidthDown, bandwidthUp
 	if bandwidthUp > 0 {
 		node.BandwidthUp = bandwidthUp
 	}
+}
 
-	err := m.UpdateBandwidths(nodeID, node.BandwidthDown, node.BandwidthUp)
-	if err != nil {
-		log.Errorf("UpdateBandwidths err:%s", err.Error())
+// NodeValidationSuccess update node DiskUsage and bandwidthUp
+func (m *Manager) NodeValidationSuccess(nodeID string, bandwidthUp int64) {
+	node := m.GetNode(nodeID)
+	if node == nil {
+		return
 	}
+
+	node.BandwidthUp = bandwidthUp
+
+	m.UpdateNodeDiskUsage(nodeID)
+}
+
+// NodeValidationFail update node DiskUsage and bandwidthUp
+func (m *Manager) NodeValidationFail(nodeID string) {
+	node := m.GetNode(nodeID)
+	if node == nil {
+		return
+	}
+
+	node.BandwidthUp = 0
+	node.DiskUsage = 0
 }
 
 func (m *Manager) checkNodeDeactivate() {
@@ -408,91 +449,18 @@ func (m *Manager) checkNodeDeactivate() {
 	}
 }
 
-// calculateAndSavePoints Calculate and save the points of the node
-func (m *Manager) calculateAndSavePoints(n *Node) int {
-	mc := calculateMC(float64(n.Info.CPUCores), n.Info.Memory)
-	mb := 10 + min(float64(n.BandwidthUp)/100, 5)*2
-	mbn := float64(mb) * calculateMN(n.NATType)
-	size := bytesToGB(n.Info.DiskSpace)
-	ms := min(size, 2000) * (0.01 + float64(1/max(size, 1000)))
-
-	weighting := weighting(m.Edges)
-	online := 1.0
-
-	point := int((mc + mbn + ms) * weighting * online)
-	log.Debugf("calculatePoints [%s] cpu:[%d] memory:[%d] bandwidth:[%d] NAT:[%d] DiskSpace:[%d] point:[%d]", n.NodeID, n.Info.CPUCores, int(n.Info.Memory), n.BandwidthUp, n.NATType, int(n.Info.DiskSpace), point)
-
-	return point
-}
-
-func bytesToGB(bytes float64) float64 {
-	return bytes / 1024 / 1024 / 1024
-}
-
-func calculateMN(natType types.NatType) float64 {
-	switch natType {
-	case types.NatTypeFullCone:
-		return 2.5
-	case types.NatTypeRestricted:
-		return 2
-	case types.NatTypePortRestricted:
-		return 1.5
-	case types.NatTypeSymmetric:
-		return 1
+func (m *Manager) UpdateNodeDiskUsage(nodeID string) {
+	node := m.GetNode(nodeID)
+	if node == nil {
+		return
 	}
 
-	return 0
-}
-
-func min(a, b float64) float64 {
-	if a < b {
-		return a
+	size, err := m.LoadReplicaSizeByNodeID(nodeID)
+	if err != nil {
+		log.Errorf("LoadReplicaSizeByNodeID %s err:%s", nodeID, err.Error())
+		return
 	}
 
-	return b
-}
-
-func max(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-
-	return b
-}
-
-func weighting(num int) float64 {
-	if num <= 2000 {
-		return 2
-	} else if num <= 5000 {
-		return 1.8
-	} else if num <= 5000 {
-		return 1.8
-	} else if num <= 10000 {
-		return 1.6
-	} else if num <= 15000 {
-		return 1.4
-	} else if num <= 25000 {
-		return 1.3
-	} else if num <= 35000 {
-		return 1.2
-	} else if num <= 50000 {
-		return 1.1
-	} else {
-		return 1
-	}
-}
-
-func calculateMC(i, j float64) float64 {
-	sum1 := 0.0
-	sum2 := 0.0
-
-	for k := 1.0; k <= min(i, 4); k++ {
-		sum1 += k
-	}
-
-	for k := 1.0; k <= min(j, 4); k++ {
-		sum2 += k
-	}
-
-	return (sum1 + sum2) * 0.7
+	node.DiskUsage = (float64(size) / node.Info.DiskSpace) * 100
+	log.Infof("LoadReplicaSizeByNodeID %s update:%v", nodeID, node.DiskUsage)
 }

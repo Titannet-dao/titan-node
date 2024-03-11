@@ -21,21 +21,32 @@ func (n *SQLDB) UpdatePortMapping(nodeID, port string) error {
 	return err
 }
 
-// UpdateBandwidths sets the node's bandwidthDown and bandwidthUp.
-func (n *SQLDB) UpdateBandwidths(nodeID string, bandwidthDown, bandwidthUp int64) error {
-	// update
-	query := fmt.Sprintf(`UPDATE %s SET bandwidth_up=?, bandwidth_down=? WHERE node_id=?`, nodeInfoTable)
-	_, err := n.db.Exec(query, bandwidthUp, bandwidthDown, nodeID)
-	return err
-}
-
 // SaveValidationResultInfos inserts validation result information.
 func (n *SQLDB) SaveValidationResultInfos(infos []*types.ValidationResultInfo) error {
-	query := fmt.Sprintf(`INSERT INTO %s (round_id, node_id, validator_id, status, cid, start_time, end_time, calculated_profit, file_saved) 
-	                        VALUES (:round_id, :node_id, :validator_id, :status, :cid, :start_time, :end_time, :calculated_profit, :file_saved)`, validationResultTable)
-	_, err := n.db.NamedExec(query, infos)
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
 
-	return err
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("Rollback err:%s", err.Error())
+		}
+	}()
+
+	// query := fmt.Sprintf(`INSERT INTO %s (round_id, node_id, validator_id, status, cid, start_time, end_time, calculated_profit, file_saved)
+	//                         VALUES (:round_id, :node_id, :validator_id, :status, :cid, :start_time, :end_time, :calculated_profit, :file_saved)`, validationResultTable)
+	// _, err := n.db.NamedExec(query, infos)
+
+	for _, info := range infos {
+		query := fmt.Sprintf(`INSERT INTO %s (round_id, node_id, validator_id, status, cid, start_time, end_time, calculated_profit, file_saved, node_count) 
+								VALUES (:round_id, :node_id, :validator_id, :status, :cid, :start_time, :end_time, :calculated_profit, :file_saved, :node_count)`, validationResultTable)
+		tx.NamedExec(query, info)
+	}
+
+	// Commit
+	return tx.Commit()
 }
 
 // LoadNodeValidationInfo load the cid of a validation result.
@@ -82,8 +93,8 @@ func (n *SQLDB) UpdateValidationResultInfo(info *types.ValidationResultInfo) err
 		return err
 	}
 
-	iQuery = fmt.Sprintf(`UPDATE %s SET upload_traffic=upload_traffic+? WHERE node_id=?`, nodeInfoTable)
-	_, err = tx.Exec(iQuery, bandwidth, info.NodeID)
+	iQuery = fmt.Sprintf(`UPDATE %s SET upload_traffic=upload_traffic+?,profit=profit+? WHERE node_id=?`, nodeInfoTable)
+	_, err = tx.Exec(iQuery, bandwidth, info.Profit, info.NodeID)
 	if err != nil {
 		return err
 	}
@@ -265,8 +276,8 @@ func (n *SQLDB) UpdateOnlineDuration(infos []*types.NodeSnapshot) error {
 	}()
 
 	for _, info := range infos {
-		query := fmt.Sprintf(`UPDATE %s SET last_seen=?,online_duration=?,disk_usage=? WHERE node_id=?`, nodeInfoTable)
-		tx.Exec(query, info.LastSeen, info.OnlineDuration, info.DiskUsage, info.NodeID)
+		query := fmt.Sprintf(`UPDATE %s SET last_seen=?,online_duration=?,disk_usage=?,bandwidth_up=?,bandwidth_down=?,profit=profit+? WHERE node_id=?`, nodeInfoTable)
+		tx.Exec(query, info.LastSeen, info.OnlineDuration, info.DiskUsage, info.BandwidthUp, info.BandwidthDown, info.Profit, info.NodeID)
 	}
 
 	// Commit
@@ -523,12 +534,28 @@ func (n *SQLDB) DeleteBucket(bucketID string) error {
 
 // SaveWorkloadRecord save workload record
 func (n *SQLDB) SaveWorkloadRecord(records []*types.WorkloadRecord) error {
-	query := fmt.Sprintf(
-		`INSERT INTO %s (token_id, node_id, client_id, asset_id, limit_rate, created_time, expiration, client_workload, node_workload, status, client_end_time) 
-				VALUES (:token_id, :node_id, :client_id, :asset_id, :limit_rate, :created_time, :expiration, :client_workload, :node_workload, :status, :client_end_time)`, workloadRecordTable)
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
 
-	_, err := n.db.NamedExec(query, records)
-	return err
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("Rollback err:%s", err.Error())
+		}
+	}()
+
+	for _, info := range records {
+		query := fmt.Sprintf(
+			`INSERT INTO %s (token_id, node_id, client_id, asset_id, limit_rate, created_time, expiration, client_workload, node_workload, status, client_end_time) 
+					VALUES (:token_id, :node_id, :client_id, :asset_id, :limit_rate, :created_time, :expiration, :client_workload, :node_workload, :status, :client_end_time)`, workloadRecordTable)
+
+		tx.NamedExec(query, info)
+	}
+
+	// Commit
+	return tx.Commit()
 }
 
 // UpdateWorkloadRecord update workload record
@@ -694,48 +721,48 @@ func (n *SQLDB) UpdateNodeInfosByValidationResult(sIDs []int, nodeProfits map[st
 		return err
 	}
 
-	for nodeID, profit := range nodeProfits {
-		// update node profit
-		uQuery := fmt.Sprintf(`UPDATE %s SET profit=profit+? WHERE node_id=?`, nodeInfoTable)
-		_, err = tx.Exec(uQuery, profit, nodeID)
-		if err != nil {
-			return err
-		}
-	}
+	// for nodeID, profit := range nodeProfits {
+	// 	// update node profit
+	// 	uQuery := fmt.Sprintf(`UPDATE %s SET profit=profit+? WHERE node_id=?`, nodeInfoTable)
+	// 	_, err = tx.Exec(uQuery, profit, nodeID)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 
 	// Commit
 	return tx.Commit()
 }
 
-// UpdateNodeProfits update nodes profits
-func (n *SQLDB) UpdateNodeProfits(infos map[string]int) error {
-	tx, err := n.db.Beginx()
-	if err != nil {
-		return err
-	}
+// // UpdateNodeProfits update nodes profits
+// func (n *SQLDB) UpdateNodeProfits(infos map[string]int) error {
+// 	tx, err := n.db.Beginx()
+// 	if err != nil {
+// 		return err
+// 	}
 
-	defer func() {
-		err = tx.Rollback()
-		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("Rollback err:%s", err.Error())
-		}
-	}()
+// 	defer func() {
+// 		err = tx.Rollback()
+// 		if err != nil && err != sql.ErrTxDone {
+// 			log.Errorf("Rollback err:%s", err.Error())
+// 		}
+// 	}()
 
-	for nodeID, profit := range infos {
-		query := fmt.Sprintf(`UPDATE %s SET profit=profit+? WHERE node_id=?`, nodeInfoTable)
-		tx.Exec(query, profit, nodeID)
-	}
+// 	for nodeID, profit := range infos {
+// 		query := fmt.Sprintf(`UPDATE %s SET profit=profit+? WHERE node_id=?`, nodeInfoTable)
+// 		tx.Exec(query, profit, nodeID)
+// 	}
 
-	// Commit
-	return tx.Commit()
-}
+// 	// Commit
+// 	return tx.Commit()
+// }
 
-// UpdateNodeProfit update the profit
-func (n *SQLDB) UpdateNodeProfit(nodeID string, profit int) error {
-	uQuery := fmt.Sprintf(`UPDATE %s SET profit=profit+? WHERE node_id=?`, nodeInfoTable)
-	_, err := n.db.Exec(uQuery, profit, nodeID)
-	return err
-}
+// // UpdateNodeProfit update the profit
+// func (n *SQLDB) UpdateNodeProfit(nodeID string, profit int) error {
+// 	uQuery := fmt.Sprintf(`UPDATE %s SET profit=profit+? WHERE node_id=?`, nodeInfoTable)
+// 	_, err := n.db.Exec(uQuery, profit, nodeID)
+// 	return err
+// }
 
 // SaveRetrieveEventInfo save retrieve event and update node info
 func (n *SQLDB) SaveRetrieveEventInfo(cInfo *types.RetrieveEvent) error {
@@ -760,8 +787,8 @@ func (n *SQLDB) SaveRetrieveEventInfo(cInfo *types.RetrieveEvent) error {
 	}
 
 	// update node info
-	query = fmt.Sprintf(`UPDATE %s SET retrieve_count=retrieve_count+?,upload_traffic=upload_traffic+?,profit=profit+? WHERE node_id=?`, nodeInfoTable)
-	_, err = tx.Exec(query, 1, cInfo.Size, cInfo.Profit, cInfo.NodeID)
+	query = fmt.Sprintf(`UPDATE %s SET retrieve_count=retrieve_count+?,upload_traffic=upload_traffic+? WHERE node_id=?`, nodeInfoTable)
+	_, err = tx.Exec(query, 1, cInfo.Size, cInfo.NodeID)
 	if err != nil {
 		return err
 	}

@@ -121,8 +121,8 @@ func (m *Manager) StoreBlocksToCar(ctx context.Context, root cid.Cid) error {
 	return m.asset.storeBlocksToCar(ctx, root)
 }
 
-func (m *Manager) UploadUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
-	return m.asset.uploadUserAsset(ctx, userID, root, assetSize, r)
+func (m *Manager) StoreUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
+	return m.asset.saveUserAsset(ctx, userID, root, assetSize, r)
 }
 
 // GetAsset retrieves an asset

@@ -19,11 +19,7 @@ func (s *Scheduler) NodeRemoveAssetResult(ctx context.Context, resultInfo types.
 	nodeID := handler.GetNodeID(ctx)
 
 	// update node info
-	node := s.NodeManager.GetNode(nodeID)
-	if node != nil {
-		node.DiskUsage = resultInfo.DiskUsage
-	}
-
+	s.NodeManager.UpdateNodeDiskUsage(nodeID)
 	return nil
 }
 
@@ -156,7 +152,7 @@ func (s *Scheduler) PullAsset(ctx context.Context, info *types.PullAssetReq) err
 		return xerrors.Errorf("expiration %s less than now(%v)", info.Expiration.String(), time.Now())
 	}
 
-	return s.AssetManager.CreateAssetPullTask(info, info.UserID) // TODO UserID
+	return s.AssetManager.CreateAssetPullTask(info) // TODO UserID
 }
 
 // GetAssetListForBucket retrieves a list of asset hashes for the specified node's bucket.
@@ -308,4 +304,18 @@ func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.Minio
 	log.Debugf("MinioUploadFileEvent nodeID:%s, assetCID:", nodeID, event.AssetCID)
 
 	return s.db.SaveReplicaEvent(hash, event.AssetCID, nodeID, event.Size, event.Expiration, types.MinioEventAdd)
+}
+
+func (s *Scheduler) AddAWSData(ctx context.Context, list []types.AWSDataInfo) error {
+	return s.db.SaveAWSData(list)
+}
+
+func (s *Scheduler) SwitchFillDiskTimer(ctx context.Context, open bool) error {
+	if open {
+		s.AssetManager.StartFillDiskTimer()
+	} else {
+		s.AssetManager.StopFillDiskTimer()
+	}
+
+	return nil
 }

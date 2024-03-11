@@ -196,7 +196,7 @@ func (a *asset) isCarV1(filePath string) (bool, error) {
 }
 
 // storeAssetToCar stores the asset to the file system.
-func (a *asset) uploadUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
+func (a *asset) saveUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
 	if ok, err := a.exists(root); err != nil {
 		return err
 	} else if ok {

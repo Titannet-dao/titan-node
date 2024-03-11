@@ -15,6 +15,9 @@ type NodeSnapshot struct {
 	OnlineDuration int       `db:"online_duration"` // unit:Minute
 	DiskUsage      float64   `db:"disk_usage"`
 	LastSeen       time.Time `db:"last_seen"`
+	BandwidthUp    int64     `db:"bandwidth_up"`
+	BandwidthDown  int64     `db:"bandwidth_down"`
+	Profit         float64   `db:"profit"`
 }
 
 // NodeDynamicInfo Dynamic information about the node
@@ -24,6 +27,7 @@ type NodeDynamicInfo struct {
 	CPUUsage        float64
 	MemoryUsage     float64
 	Status          NodeStatus
+	IncomeIncr      float64   // Base points increase every half hour (30 minute)
 	OnlineDuration  int       `db:"online_duration"` // unit:Minute
 	Profit          float64   `db:"profit"`
 	LastSeen        time.Time `db:"last_seen"`
@@ -85,8 +89,6 @@ func (n NodeStatus) String() string {
 
 	return ""
 }
-
-const MaxNumberOfSameDayRegistrations = 10
 
 // NodeType node type
 type NodeType int
@@ -272,6 +274,7 @@ type ValidationResultInfo struct {
 	CalculatedProfit bool             `db:"calculated_profit"`
 	TokenID          string           `db:"token_id"`
 	FileSaved        bool             `db:"file_saved"`
+	NodeCount        int              `db:"node_count"`
 }
 
 // ValidationStatus Validation Status

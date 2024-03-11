@@ -25,12 +25,24 @@ func (m *Manager) GetAllValidCandidateNodes() ([]string, []*Node) {
 }
 
 // GetCandidateNodes return n candidate node
-func (m *Manager) GetCandidateNodes(n int) []*Node {
+func (m *Manager) GetCandidateNodes(num int, filterValidators bool) []*Node {
 	var out []*Node
 	m.candidateNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
+
+		if filterValidators {
+			b, err := m.IsValidator(node.NodeID)
+			if err != nil {
+				log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
+			}
+
+			if b {
+				return true
+			}
+		}
+
 		out = append(out, node)
-		return len(out) < n
+		return len(out) < num
 	})
 
 	return out
@@ -92,15 +104,17 @@ func (m *Manager) GetOnlineNodeCount(nodeType types.NodeType) int {
 // NodeOnline registers a node as online
 func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	node.OnlineDuration = info.OnlineDuration
-	node.DiskUsage = info.DiskUsage
 	node.BandwidthDown = info.BandwidthDown
 	node.BandwidthUp = info.BandwidthUp
 	node.PortMapping = info.PortMapping
 	node.DeactivateTime = info.DeactivateTime
+	node.DiskUsage = info.DiskUsage
 
 	node.Info = info
 	node.NodeID = info.NodeID
 	node.Type = info.Type
+
+	node.Info.IncomeIncr = (node.CalculateMCx() * 360)
 
 	err := m.saveInfo(info)
 	if err != nil {
@@ -114,6 +128,7 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 		m.storeCandidateNode(node)
 	}
 
+	m.UpdateNodeDiskUsage(info.NodeID)
 	return nil
 }
 

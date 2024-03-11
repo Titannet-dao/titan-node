@@ -20,4 +20,6 @@ type Asset interface {
 	GetAssetProgresses(ctx context.Context, assetCIDs []string) (*types.PullResult, error) //perm:admin
 	// CreateAsset notify candidate that user upload asset, return auth token of candidate
 	CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadDownloadAsset) (string, error) //perm:admin
+	// PullAssetWithURL download the file locally from the url and save it as car file
+	PullAssetFromAWS(ctx context.Context, bucket, key string) error //perm:admin
 }

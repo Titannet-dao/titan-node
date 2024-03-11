@@ -110,7 +110,7 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 // Start start validate and elect task
 func (m *Manager) Start(ctx context.Context) {
 	go m.startValidationTicker(ctx)
-	go m.startElectionTicker()
+	// go m.startElectionTicker()
 	go m.startHandleResultsTimer()
 
 	m.subscribeNodeEvents()
@@ -151,9 +151,9 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 
 	nodeID := node.NodeID
 
-	isV, err := m.nodeMgr.IsValidator(nodeID)
+	isValidator, err := m.nodeMgr.IsValidator(nodeID)
 	if err != nil {
-		log.Errorf("IsValidator err:%s", err.Error())
+		log.Errorf("onNodeStateChange IsValidator %s err:%s", node.NodeID, err.Error())
 		return
 	}
 
@@ -162,22 +162,25 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 			return
 		}
 
-		if isV {
+		if isValidator {
 			m.addValidator(nodeID, node.BandwidthDown)
 
 			// update validator owner
-			err = m.nodeMgr.UpdateValidatorInfo(m.nodeMgr.ServerID, nodeID)
+			err := m.nodeMgr.UpdateValidatorInfo(m.nodeMgr.ServerID, nodeID)
 			if err != nil {
 				log.Errorf("UpdateValidatorInfo err:%s", err.Error())
 			}
 		} else {
+			if node.Type == types.NodeCandidate {
+				return
+			}
 			m.addValidatableNode(nodeID, node.BandwidthDown)
 		}
 
 		return
 	}
 
-	if isV {
+	if isValidator {
 		m.removeValidator(nodeID)
 	} else {
 		m.removeValidatableNode(nodeID)

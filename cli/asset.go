@@ -34,6 +34,95 @@ var assetCmds = &cli.Command{
 		removeAssetReplicaCmd,
 		resetExpirationCmd,
 		restartAssetCmd,
+		addAWSDataCmd,
+		switchFillDiskTimerCmd,
+	},
+}
+
+var switchFillDiskTimerCmd = &cli.Command{
+	Name:  "fd",
+	Usage: "switch fill disk timer",
+	Flags: []cli.Flag{
+		&cli.BoolFlag{
+			Name:  "open",
+			Usage: "on or off",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		open := cctx.Bool("open")
+
+		ctx := ReqContext(cctx)
+
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.SwitchFillDiskTimer(ctx, open)
+	},
+}
+
+var addAWSDataCmd = &cli.Command{
+	Name:  "aws",
+	Usage: "Add AWS data ",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "bucket",
+			Usage: "aws data bucket",
+		},
+		&cli.StringFlag{
+			Name:  "path",
+			Usage: "aws data path",
+		},
+		replicaCountFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		bucket := cctx.String("bucket")
+		path := cctx.String("path")
+		replica := cctx.Int("replica-count")
+
+		ctx := ReqContext(cctx)
+
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		list := make([]types.AWSDataInfo, 0)
+
+		replacer := strings.NewReplacer("\n", "", "\r\n", "", "\r", "")
+
+		if path != "" {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			contentStr := string(content)
+			stringsList := strings.Split(contentStr, ",")
+
+			for _, b := range stringsList {
+				if b == "" {
+					continue
+				}
+				b = replacer.Replace(b)
+				list = append(list, types.AWSDataInfo{Bucket: b, Replicas: replica})
+			}
+		}
+
+		if bucket != "" {
+			bucket = replacer.Replace(bucket)
+
+			list = append(list, types.AWSDataInfo{Bucket: bucket, Replicas: replica})
+		}
+
+		if len(list) == 0 {
+			return nil
+		}
+
+		return schedulerAPI.AddAWSData(ctx, list)
 	},
 }
 
