@@ -23,6 +23,7 @@ type Asset struct {
 	mgr             *Manager
 	TotalBlockCount int
 	apiSecret       *jwt.HMACSHA
+	AWS
 }
 
 // NewAsset creates a new Asset instance
@@ -31,6 +32,7 @@ func NewAsset(storageMgr *storage.Manager, scheduler api.Scheduler, assetMgr *Ma
 		scheduler: scheduler,
 		mgr:       assetMgr,
 		apiSecret: apiSecret,
+		AWS:       NewAWS(scheduler, storageMgr),
 	}
 }
 

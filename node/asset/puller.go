@@ -237,7 +237,7 @@ func (ap *assetPuller) toMap(cids []string) map[string]struct{} {
 
 func (ap *assetPuller) filterUnPulledBlocks(blks []blocks.Block, cidMap map[string]struct{}) []string {
 	for _, blk := range blks {
-		delete(cidMap, blk.String())
+		delete(cidMap, blk.Cid().String())
 	}
 
 	cids := make([]string, 0, len(cidMap))

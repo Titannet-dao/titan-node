@@ -184,7 +184,8 @@ type SchedulerCfg struct {
 	// Non vip user
 	MaxCountOfVisitShareLink int
 	// if the area has several scheduler, node will connect to the scheduler which weight is bigger
-	Weight     int
-	MaxAPIKey  int
-	LocatorURL string
+	Weight                          int
+	MaxAPIKey                       int
+	IPWhitelist                     []string
+	MaxNumberOfSameDayRegistrations int
 }

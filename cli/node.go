@@ -124,15 +124,19 @@ var listNodeCmd = &cli.Command{
 			tablewriter.Col("NodeID"),
 			tablewriter.Col("NodeType"),
 			tablewriter.Col("Status"),
+			tablewriter.Col("Nat"),
+			tablewriter.Col("ExternalIP"),
 		)
 
 		for w := 0; w < len(r.Data); w++ {
 			info := r.Data[w]
 
 			m := map[string]interface{}{
-				"NodeID":   info.NodeID,
-				"NodeType": info.Type.String(),
-				"Status":   colorOnline(info.Status),
+				"NodeID":     info.NodeID,
+				"NodeType":   info.Type.String(),
+				"Status":     colorOnline(info.Status),
+				"Nat":        info.NATType,
+				"ExternalIP": info.ExternalIP,
 			}
 
 			tw.Write(m)

@@ -55,6 +55,10 @@ type AssetAPI interface {
 	GetAssetStatus(ctx context.Context, userID, assetCID string) (*types.AssetStatus, error) //perm:web,admin
 	// MinioUploadFileEvent the event of minio upload file
 	MinioUploadFileEvent(ctx context.Context, event *types.MinioUploadFileEvent) error //perm:candidate
+	// AddAWSData add aws resource information
+	AddAWSData(ctx context.Context, list []types.AWSDataInfo) error //perm:web,admin
+	// SwitchFillDiskTimer  switches the timer between ON and OFF states
+	SwitchFillDiskTimer(ctx context.Context, open bool) error //perm:web,admin
 }
 
 // NodeAPI is an interface for node
@@ -118,6 +122,10 @@ type NodeAPI interface {
 	GetMinioConfigFromCandidate(ctx context.Context, nodeID string) (*types.MinioConfig, error) //perm:default
 	// GetCandidateIPs get candidate ips
 	GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, error) //perm:web,user,admin
+	// GetNodeOnlineState get node online state
+	GetNodeOnlineState(ctx context.Context) (bool, error) //perm:edge
+	// DownloadDataResult node download data from AWS result
+	DownloadDataResult(ctx context.Context, bucket, cid string, size int64) error //perm:edge,candidate
 }
 
 // UserAPI is an interface for user

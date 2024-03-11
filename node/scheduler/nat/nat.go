@@ -50,10 +50,12 @@ func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateN
 
 	candidate2 := candidateNodes[1]
 	if err = candidate2.API.CheckNetworkConnectivity(ctx, "tcp", edgeURL); err == nil {
-		return types.NatTypeNo, nil
+		if err = candidate2.API.CheckNetworkConnectivity(ctx, "udp", edgeURL); err == nil {
+			return types.NatTypeNo, nil
+		}
 	}
 
-	log.Debugf("check candidate %s to edge %s tcp connectivity failed: %s", candidate2.NodeID, edgeURL, err.Error())
+	log.Debugf("check candidate %s to edge %s direct connectivity failed: %s", candidate2.NodeID, edgeURL, err.Error())
 
 	if err = detectFullConeNAT(ctx, candidate2, edgeURL); err == nil {
 		return types.NatTypeFullCone, nil

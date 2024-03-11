@@ -44,9 +44,10 @@ const (
 	assetVisitCountTable  = "asset_visit_count"
 	replenishBackupTable  = "replenish_backup"
 	userAssetGroupTable   = "user_asset_group"
+	awsDataTable          = "aws_data"
 
 	// Default limits for loading table entries.
-	loadNodeInfosDefaultLimit           = 100
+	loadNodeInfosDefaultLimit           = 1000
 	loadValidationResultsDefaultLimit   = 100
 	loadAssetRecordsDefaultLimit        = 100
 	loadExpiredAssetRecordsDefaultLimit = 100
@@ -97,6 +98,7 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cAssetVisitCountTable, assetVisitCountTable))
 	tx.MustExec(fmt.Sprintf(cReplenishBackupTable, replenishBackupTable))
 	tx.MustExec(fmt.Sprintf(cUserAssetGroupTable, userAssetGroupTable))
+	tx.MustExec(fmt.Sprintf(cAWSDataTable, awsDataTable))
 
 	return tx.Commit()
 }

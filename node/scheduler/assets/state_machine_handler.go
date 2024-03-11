@@ -43,10 +43,20 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 		return ctx.Send(SkipStep{})
 	}
 
-	// find nodes
-	nodes, str := m.chooseCandidateNodes(seedReplicaCount, info.CandidateReplicaSucceeds)
-	if len(nodes) < 1 {
-		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+	nodes := make(map[string]*node.Node)
+	if info.SeedNodeID != "" {
+		cNode := m.nodeMgr.GetNode(info.SeedNodeID)
+		if cNode == nil {
+			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", info.SeedNodeID)})
+		}
+		nodes[cNode.NodeID] = cNode
+	} else {
+		// find nodes
+		str := ""
+		nodes, str = m.chooseCandidateNodes(seedReplicaCount, info.CandidateReplicaSucceeds)
+		if len(nodes) < 1 {
+			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+		}
 	}
 
 	// save to db
@@ -95,7 +105,7 @@ func (m *Manager) handleUploadInit(ctx statemachine.Context, info AssetPullingIn
 		return ctx.Send(SkipStep{})
 	}
 
-	cNode := m.nodeMgr.GetCandidateNode(info.SeedNodeID)
+	cNode := m.nodeMgr.GetNode(info.SeedNodeID)
 	if cNode == nil {
 		return ctx.Send(SelectFailed{})
 	}
@@ -253,18 +263,18 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 
 	downloadSources, payloads, err := m.GenerateToken(info.CID, sources, nodes)
 	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
+		return ctx.Send(SelectFailed{error: xerrors.Errorf("GenerateToken; %s", err.Error())})
 	}
 
 	err = m.SaveTokenPayload(payloads)
 	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
+		return ctx.Send(SelectFailed{error: xerrors.Errorf("SaveTokenPayload; %s", err.Error())})
 	}
 
 	// save to db
 	err = m.saveReplicaInformation(nodes, info.Hash.String(), false)
 	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
+		return ctx.Send(SelectFailed{error: xerrors.Errorf("saveReplicaInformation; %s", err.Error())})
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0)
@@ -286,9 +296,8 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 
 // handleEdgesPulling handles the asset pulling process of edge nodes
 func (m *Manager) handleEdgesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle edges pulling, %s", info.CID)
-
 	needBandwidth := info.Bandwidth - m.getCurBandwidthUp(info.EdgeReplicaSucceeds)
+	log.Debugf("handle edges pulling, %s ; %d>=%d , %d", info.CID, int64(len(info.EdgeReplicaSucceeds)), info.EdgeReplicas, needBandwidth)
 
 	if int64(len(info.EdgeReplicaSucceeds)) >= info.EdgeReplicas && needBandwidth <= 0 {
 		return ctx.Send(PullSucceed{})

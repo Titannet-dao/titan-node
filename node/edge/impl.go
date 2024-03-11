@@ -80,3 +80,11 @@ func (edge *Edge) checkNetworkConnectivity(targetURL string, timeout time.Durati
 
 	return nil
 }
+
+func (edge *Edge) GetEdgeOnlineStateFromScheduler(ctx context.Context) (bool, error) {
+	online, err := edge.SchedulerAPI.GetNodeOnlineState(ctx)
+	if err != nil {
+		return false, nil
+	}
+	return online, nil
+}

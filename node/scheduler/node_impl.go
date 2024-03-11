@@ -89,7 +89,8 @@ func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey string, 
 
 	if count, err := s.db.TodayRegisterCount(ip); err != nil {
 		return nil, xerrors.Errorf("TodayRegisterCount %w", err)
-	} else if count >= types.MaxNumberOfSameDayRegistrations {
+	} else if count >= s.SchedulerCfg.MaxNumberOfSameDayRegistrations &&
+		!isInIPWhitelist(ip, s.SchedulerCfg.IPWhitelist) {
 		return nil, xerrors.New("today's registrations exceeded the number")
 	}
 
@@ -110,6 +111,16 @@ func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey string, 
 	}
 
 	return detail, nil
+}
+
+func isInIPWhitelist(ip string, ipWhiteList []string) bool {
+	for _, allowIP := range ipWhiteList {
+		if ip == allowIP {
+			return true
+		}
+	}
+
+	return false
 }
 
 // RegisterEdgeNode register edge node, return key
@@ -311,7 +322,7 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 
 	dbInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
 	if err != nil {
-		return nodeInfo, xerrors.Errorf("LoadNodeInfo err:%s", err.Error())
+		return nodeInfo, xerrors.Errorf("nodeID %s LoadNodeInfo err:%s", nodeID, err.Error())
 	}
 	nodeInfo = *dbInfo
 
@@ -328,8 +339,18 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		nodeInfo.BandwidthUp = node.BandwidthUp
 		nodeInfo.IoSystem = node.Info.IoSystem
 		nodeInfo.DiskType = node.Info.DiskType
+		nodeInfo.IncomeIncr = node.Info.IncomeIncr
 
 		log.Debugf("%s node select codes:%v", nodeID, node.SelectWeights())
+	}
+
+	isValidator, err := s.db.IsValidator(nodeID)
+	if err != nil {
+		log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
+	}
+
+	if isValidator {
+		nodeInfo.Type = types.NodeValidator
 	}
 
 	return nodeInfo, nil
@@ -376,6 +397,7 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 			nodeInfo.BandwidthUp = node.BandwidthUp
 			nodeInfo.IoSystem = node.Info.IoSystem
 			nodeInfo.DiskType = node.Info.DiskType
+			nodeInfo.IncomeIncr = node.Info.IncomeIncr
 		}
 
 		_, exist := validator[nodeInfo.NodeID]
@@ -739,6 +761,31 @@ func (s *Scheduler) UpdateBandwidths(ctx context.Context, bandwidthDown, bandwid
 	return nil
 }
 
+// DownloadDataResult node download data result
+func (s *Scheduler) DownloadDataResult(ctx context.Context, bucket, cid string, size int64) error {
+	nodeID := handler.GetNodeID(ctx)
+	node := s.NodeManager.GetNode(nodeID)
+	if node == nil {
+		return xerrors.Errorf("node %s not exists", nodeID)
+	}
+
+	if cid == "" {
+		return s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: false})
+	}
+
+	err := s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: true})
+	if err != nil {
+		return err
+	}
+
+	info, err := s.db.LoadAWSData(bucket)
+	if err != nil {
+		return err
+	}
+
+	return s.AssetManager.CreateBaseAsset(cid, nodeID, size, int64(info.Replicas))
+}
+
 // GetCandidateNodeIP get candidate ip for locator
 func (s *Scheduler) GetCandidateNodeIP(ctx context.Context, nodeID string) (string, error) {
 	node := s.NodeManager.GetCandidateNode(nodeID)
@@ -793,4 +840,15 @@ func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, e
 	}
 
 	return list, nil
+}
+
+func (s *Scheduler) GetNodeOnlineState(ctx context.Context) (bool, error) {
+	nodeID := handler.GetNodeID(ctx)
+	if len(nodeID) == 0 {
+		return false, fmt.Errorf("invalid request")
+	}
+	if node := s.NodeManager.GetNode(nodeID); node != nil {
+		return true, nil
+	}
+	return false, nil
 }

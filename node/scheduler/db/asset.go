@@ -238,6 +238,19 @@ func (n *SQLDB) LoadReplicasByNodeID(nodeID string, limit, offset int) (*types.L
 	return res, nil
 }
 
+// LoadReplicaSizeByNodeID load size of node.
+func (n *SQLDB) LoadReplicaSizeByNodeID(nodeID string) (int, error) {
+	// SELECT SUM(b.total_size) AS total_size FROM replica_info a JOIN asset_record b ON a.hash = b.hash WHERE a.status = 3 AND a.node_id='e_77dafc142748480bb38b5f45628807bd';
+	size := 0
+	query := fmt.Sprintf("SELECT COALESCE(SUM(b.total_size), 0) FROM %s a JOIN %s b ON a.hash = b.hash WHERE a.status=? AND a.node_id=?", replicaInfoTable, assetRecordTable)
+	err := n.db.Get(&size, query, types.ReplicaStatusSucceeded, nodeID)
+	if err != nil {
+		return 0, err
+	}
+
+	return size, nil
+}
+
 // UpdateAssetRecordExpiration resets asset record expiration time based on hash and eTime
 func (n *SQLDB) UpdateAssetRecordExpiration(hash string, eTime time.Time) error {
 	query := fmt.Sprintf(`UPDATE %s SET expiration=? WHERE hash=?`, assetRecordTable)
@@ -351,6 +364,25 @@ func (n *SQLDB) LoadAllAssetRecords(serverID dtypes.ServerID, limit, offset int,
 
 	query = n.db.Rebind(query)
 	return n.db.QueryxContext(context.Background(), query, args...)
+}
+
+// LoadNeedRefillAssetRecords loads
+func (n *SQLDB) LoadNeedRefillAssetRecords(serverID dtypes.ServerID, replicas int64, status string) (*types.AssetRecord, error) {
+	var info types.AssetRecord
+
+	sQuery := fmt.Sprintf(`SELECT * FROM %s a LEFT JOIN %s b ON a.hash = b.hash WHERE a.state=? AND edge_replicas<? limit 1;`, assetStateTable(serverID), assetRecordTable)
+	query, args, err := sqlx.In(sQuery, status, replicas)
+	if err != nil {
+		return nil, err
+	}
+
+	query = n.db.Rebind(query)
+	err = n.db.Get(&info, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &info, nil
 }
 
 // LoadAssetStateInfo loads the state of the asset for a given server ID.

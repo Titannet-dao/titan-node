@@ -689,7 +689,7 @@ func (m *Manager) submitPullerWorkloadReport(puller *assetPuller) error {
 }
 
 func (m *Manager) SaveUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
-	if err := m.Storage.UploadUserAsset(ctx, userID, root, assetSize, r); err != nil {
+	if err := m.Storage.StoreUserAsset(ctx, userID, root, assetSize, r); err != nil {
 		m.uploadingAssets.Delete(root.Hash().String())
 		return err
 	}

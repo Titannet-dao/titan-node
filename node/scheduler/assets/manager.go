@@ -61,6 +61,8 @@ type Manager struct {
 	*db.SQLDB
 	assetRemoveWaitGroup map[string]*sync.WaitGroup
 	removeMapLock        sync.Mutex
+
+	fillSwitch bool
 }
 
 // NewManager returns a new AssetManager instance
@@ -71,6 +73,7 @@ func NewManager(nodeManager *node.Manager, ds datastore.Batching, configFunc dty
 		config:               configFunc,
 		SQLDB:                sdb,
 		assetRemoveWaitGroup: make(map[string]*sync.WaitGroup),
+		fillSwitch:           true,
 	}
 
 	// state machine initialization
@@ -86,9 +89,10 @@ func (m *Manager) Start(ctx context.Context) {
 		log.Errorf("restartStateMachines err: %s", err.Error())
 	}
 
-	go m.startCheckAssetsTimer(ctx)
+	go m.startCheckAssetsTimer()
 	go m.startCheckPullProgressesTimer(ctx)
-	go m.startCheckCandidateBackupTimer(ctx)
+	go m.startCheckCandidateBackupTimer()
+	go m.initFillDiskTimer()
 }
 
 // Terminate stops the asset state machine
@@ -96,7 +100,7 @@ func (m *Manager) Terminate(ctx context.Context) error {
 	return m.assetStateMachines.Stop(ctx)
 }
 
-func (m *Manager) startCheckCandidateBackupTimer(ctx context.Context) {
+func (m *Manager) startCheckCandidateBackupTimer() {
 	ticker := time.NewTicker(checkCandidateBackupInterval)
 	defer ticker.Stop()
 
@@ -107,7 +111,7 @@ func (m *Manager) startCheckCandidateBackupTimer(ctx context.Context) {
 }
 
 // startCheckAssetsTimer Periodically Check for expired assets, check for missing replicas of assets
-func (m *Manager) startCheckAssetsTimer(ctx context.Context) {
+func (m *Manager) startCheckAssetsTimer() {
 	now := time.Now()
 
 	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
@@ -365,8 +369,21 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 	return &types.CreateAssetRsp{UploadURL: uploadURL, Token: token}, nil
 }
 
+func (m *Manager) CreateBaseAsset(cid, nodeID string, size, replicas int64) error {
+	log.Infof("CreateBaseAsset cid:%s , nodeID:%s", cid, nodeID)
+
+	hash, err := cidutil.CIDToHash(cid)
+	if err != nil {
+		return xerrors.Errorf("%s cid to hash err:%s", cid, err.Error())
+	}
+
+	expiration := time.Now().Add(360 * 24 * time.Hour)
+
+	return m.CreateAssetPullTask(&types.PullAssetReq{CID: cid, Replicas: replicas, Expiration: expiration, Hash: hash, UserID: "admin", SeedNodeID: nodeID})
+}
+
 // CreateAssetPullTask create a new asset pull task
-func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq, userID string) error {
+func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 	// Waiting for state machine initialization
 	m.stateMachineWait.Wait()
 
@@ -408,8 +425,9 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq, userID string) e
 		}
 
 		rInfo := AssetForceState{
-			State:     SeedSelect,
-			Requester: userID,
+			State:      SeedSelect,
+			Requester:  info.UserID,
+			SeedNodeID: info.SeedNodeID,
 		}
 
 		// create asset task
@@ -438,11 +456,11 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq, userID string) e
 	assetRecord.Expiration = info.Expiration
 	assetRecord.NeedBandwidth = info.Bandwidth
 
-	return m.replenishAssetReplicas(assetRecord, 0, userID, "", SeedSelect)
+	return m.replenishAssetReplicas(assetRecord, 0, info.UserID, "", SeedSelect, info.SeedNodeID)
 }
 
 // replenishAssetReplicas updates the existing asset replicas if needed
-func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, replenishReplicas int64, userID, details string, state AssetState) error {
+func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, replenishReplicas int64, userID, details string, state AssetState, seedNodeID string) error {
 	log.Debugf("replenishAssetReplicas : %d", replenishReplicas)
 
 	record := &types.AssetRecord{
@@ -465,9 +483,10 @@ func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, repleni
 	}
 
 	rInfo := AssetForceState{
-		State:     state,
-		Requester: userID,
-		Details:   details,
+		State:      state,
+		Requester:  userID,
+		Details:    details,
+		SeedNodeID: seedNodeID,
 	}
 
 	return m.assetStateMachines.Send(AssetHash(assetRecord.Hash), rInfo)
@@ -573,12 +592,7 @@ func (m *Manager) RemoveAsset(hash string, isWait bool) error {
 
 // updateAssetPullResults updates asset pull results
 func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult) {
-	nodeInfo := m.nodeMgr.GetNode(nodeID)
-	if nodeInfo != nil {
-		// update node info
-		nodeInfo.DiskUsage = result.DiskUsage
-	}
-
+	haveChange := false
 	for _, progress := range result.Progresses {
 		log.Debugf("updateAssetPullResults node_id: %s, status: %d, block:%d/%d, size: %d/%d, cid: %s ", nodeID, progress.Status, progress.DoneBlocksCount, progress.BlocksCount, progress.DoneSize, progress.Size, progress.CID)
 
@@ -626,6 +640,8 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 		}
 
 		if progress.Status == types.ReplicaStatusSucceeded {
+			haveChange = true
+
 			record, err := m.LoadAssetRecord(hash)
 			if err != nil {
 				log.Errorf("updateAssetPullResults %s LoadAssetRecord err:%s", nodeID, err.Error())
@@ -654,6 +670,11 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 			log.Errorf("updateAssetPullResults %s statemachine send err:%s", nodeID, err.Error())
 			continue
 		}
+	}
+
+	if haveChange {
+		// update node Disk Use
+		m.nodeMgr.UpdateNodeDiskUsage(nodeID)
 	}
 }
 
@@ -713,7 +734,7 @@ func (m *Manager) processMissingAssetReplicas(offset int) int {
 		}
 
 		// do replenish replicas
-		err = m.replenishAssetReplicas(cInfo, missingEdges, string(m.nodeMgr.ServerID), details, CandidatesSelect)
+		err = m.replenishAssetReplicas(cInfo, missingEdges, string(m.nodeMgr.ServerID), details, CandidatesSelect, "")
 		if err != nil {
 			log.Errorf("replenishAssetReplicas err: %s", err.Error())
 			continue
@@ -796,6 +817,8 @@ func (m *Manager) GetCandidateReplicaCount() int {
 		return seedReplicaCount
 	}
 
+	log.Infof("GetCandidateReplicaCount %d", cfg.CandidateReplicas)
+
 	return seedReplicaCount + cfg.CandidateReplicas
 }
 
@@ -836,10 +859,17 @@ func (m *Manager) getDownloadSources(hash string) []*types.CandidateDownloadInfo
 	sources := make([]*types.CandidateDownloadInfo, 0)
 	for _, replica := range replicaInfos {
 		nodeID := replica.NodeID
-		cNode := m.nodeMgr.GetCandidateNode(nodeID)
+		cNode := m.nodeMgr.GetNode(nodeID)
 		if cNode == nil {
 			continue
 		}
+
+		if cNode.Type != types.NodeCandidate {
+			if cNode.NATType != types.NatTypeNo || cNode.Info.ExternalIP == "" {
+				continue
+			}
+		}
+
 		source := &types.CandidateDownloadInfo{
 			NodeID:  nodeID,
 			Address: cNode.DownloadAddr(),

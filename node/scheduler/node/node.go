@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -246,4 +247,115 @@ func (n *Node) encryptTokenPayload(tkPayload *types.TokenPayload, publicKey *rsa
 	}
 
 	return rsa.Encrypt(buffer.Bytes(), publicKey)
+}
+
+// CalculateIncome Calculate income of the node
+func (n *Node) CalculateIncome(nodeCount int) float64 {
+	mb := n.calculateMb()
+	mn := n.calculateMN()
+	mx := weighting(nodeCount)
+	mbn := mb * mn * mx
+
+	s := bToGB(n.DiskUsage * n.Info.DiskSpace)
+	ms := mx * min(s, 2000) * (0.1 + float64(1/max(min(s, 2000), 10)))
+
+	poa := mbn + ms
+	poa = math.Round(poa*1000000) / 1000000
+	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] DiskSpace:[%.2f*%.2f=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] ", n.NodeID, n.BandwidthUp, n.NATType, mn, n.Info.DiskSpace, n.Info.DiskUsage, s, poa, mbn, ms)
+
+	return poa
+}
+
+func bToGB(b float64) float64 {
+	return b / 1024 / 1024 / 1024
+}
+
+func bToMB(b float64) float64 {
+	return b / 1024 / 1024
+}
+
+func (n *Node) calculateMb() float64 {
+	mb := 0.0
+	b := bToMB(float64(n.BandwidthUp))
+	if b <= 5 {
+		mb = 0.05 * b
+	} else if b <= 50 {
+		mb = 0.25 + 0.8*(b-5)
+	} else if b <= 200 {
+		mb = 36.25 + 0.2*(b-50)
+	} else {
+		mb = 66.25
+	}
+
+	return mb
+}
+
+func (n *Node) calculateMN() float64 {
+	switch n.NATType {
+	case types.NatTypeNo:
+		return 1.5
+	case types.NatTypeFullCone:
+		return 1.4
+	case types.NatTypeRestricted:
+		return 1.2
+	case types.NatTypePortRestricted:
+		return 1.1
+	case types.NatTypeSymmetric:
+		return 1
+	}
+
+	return 0
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+
+	return b
+}
+
+func max(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+func weighting(num int) float64 {
+	if num <= 2000 {
+		return 1.7
+	} else if num <= 5000 {
+		return 1.6
+	} else if num <= 10000 {
+		return 1.5
+	} else if num <= 15000 {
+		return 1.4
+	} else if num <= 25000 {
+		return 1.3
+	} else if num <= 35000 {
+		return 1.2
+	} else if num <= 50000 {
+		return 1.1
+	} else {
+		return 1
+	}
+}
+
+// Increase every 5 seconds
+func (n *Node) CalculateMCx() float64 {
+	return 0.00289
+	// mMbw := bToGB(float64(n.BandwidthUp))
+	// mMsw := bToGB(n.DiskUsage * n.Info.DiskSpace)
+	// if mMsw > 1 {
+	// 	mMsw = 1
+	// }
+
+	// mMcx := min(mMbw, mMsw) * 0.004
+	// mMcx = math.Round(mMcx*1000000) / 1000000
+
+	// log.Debugf("CalculateMCx [%s] bandwidth:[%d] DiskUsage:[%v] DiskSpace:[%v] mMbw:[%v] mMsw:[%v] mMcx:[%v] ", n.NodeID, n.BandwidthUp, n.DiskUsage, n.Info.DiskSpace, mMbw, mMsw, mMcx)
+
+	// return mMcx
 }

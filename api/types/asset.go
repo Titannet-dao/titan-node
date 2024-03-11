@@ -106,6 +106,8 @@ type PullAssetReq struct {
 	UserID    string
 	Hash      string
 	Bandwidth int64 // unit:MiB/s
+
+	SeedNodeID string
 }
 
 // AssetType represents the type of a asset
