@@ -110,18 +110,20 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	node.DeactivateTime = info.DeactivateTime
 	node.DiskUsage = info.DiskUsage
 
-	node.Info = info
 	node.NodeID = info.NodeID
 	node.Type = info.Type
 
-	node.Info.IncomeIncr = (node.CalculateMCx() * 360)
+	node.ExternalIP = info.ExternalIP
+	node.DiskSpace = info.DiskSpace
+
+	node.IncomeIncr = (node.CalculateMCx(m.TotalNetworkEdges) * 360)
 
 	err := m.saveInfo(info)
 	if err != nil {
 		return err
 	}
 
-	switch node.Info.Type {
+	switch node.Type {
 	case types.NodeEdge:
 		m.storeEdgeNode(node)
 	case types.NodeCandidate:

@@ -126,6 +126,8 @@ type NodeAPI interface {
 	GetNodeOnlineState(ctx context.Context) (bool, error) //perm:edge
 	// DownloadDataResult node download data from AWS result
 	DownloadDataResult(ctx context.Context, bucket, cid string, size int64) error //perm:edge,candidate
+	// GetNodeToken get node token
+	GetNodeToken(ctx context.Context, nodeID string) (string, error) //perm:admin
 }
 
 // UserAPI is an interface for user
@@ -214,4 +216,6 @@ type Scheduler interface {
 	DeleteEdgeUpdateConfig(ctx context.Context, nodeType int) error //perm:admin
 	// GetValidationInfo get information related to validation and election
 	GetValidationInfo(ctx context.Context) (*types.ValidationInfo, error) //perm:web,admin
+	// ElectValidators
+	ElectValidators(ctx context.Context, nodeIDs []string) error //perm:admin
 }

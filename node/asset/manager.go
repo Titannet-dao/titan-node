@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/index"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/Filecoin-Titan/titan/node/ipld"
@@ -54,6 +56,9 @@ type Manager struct {
 
 	// save asset upload status
 	uploadingAssets *sync.Map
+
+	// hold the error msg, and wait for scheduler query asset progress
+	pullAssetErrMsgs *sync.Map
 }
 
 // ManagerOptions is the struct that contains options for Manager
@@ -85,7 +90,8 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		pullTimeout:  opts.PullTimeout,
 		pullRetry:    opts.PullRetry,
 
-		uploadingAssets: &sync.Map{},
+		uploadingAssets:  &sync.Map{},
+		pullAssetErrMsgs: &sync.Map{},
 	}
 
 	m.restoreWaitListFromStore()
@@ -252,7 +258,7 @@ func (m *Manager) savePuller(puller *assetPuller) error {
 
 // onPullAssetFinish is called when an assetPuller finishes downloading an asset
 func (m *Manager) onPullAssetFinish(puller *assetPuller) {
-	log.Debugf("onPullAssetFinish, asset %s doneSize %d", puller.root.String(), puller.doneSize)
+	log.Debugf("onPullAssetFinish, asset %s totalSize %d doneSize %d", puller.root.String(), puller.totalSize, puller.doneSize)
 
 	if puller.isPulledComplete() {
 		if err := m.DeletePuller(puller.root); err != nil && !os.IsNotExist(err) {
@@ -286,6 +292,11 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller) {
 	if speed > 0 {
 		log.Debugf("UpdateBandwidths, bandwidthDown %d", int64(speed))
 		m.Scheduler.UpdateBandwidths(context.Background(), int64(speed), 0)
+	}
+
+	if len(puller.errMsgs) > 0 {
+		// TODO: if pull asset msg is out max, delete
+		m.pullAssetErrMsgs.Store(puller.root.Hash().String(), puller.errMsgs)
 	}
 }
 
@@ -411,8 +422,8 @@ func (m *Manager) deleteAssetFromWaitList(root cid.Cid) (bool, error) {
 	return false, nil
 }
 
-// cachedStatus returns the asset status of a given root CID
 func (m *Manager) assetStatus(root cid.Cid) (types.ReplicaStatus, error) {
+	// cachedStatus returns the asset status of a given root CID
 	if ok, err := m.AssetExists(root); err == nil && ok {
 		return types.ReplicaStatusSucceeded, nil
 	} else if err != nil {
@@ -487,6 +498,16 @@ func (m *Manager) progressForAssetPulledFailed(root cid.Cid) (*types.AssetPullPr
 	progress.Size = int64(cc.totalSize)
 	progress.DoneSize = int64(cc.doneSize)
 
+	if v, ok := m.pullAssetErrMsgs.LoadAndDelete(root.Hash().String()); ok {
+		msg := v.([]*fetcher.ErrMsg)
+		buf, err := json.Marshal(msg)
+		if err != nil {
+			log.Errorf("marshal fetcher.ErrMsg %s", err.Error())
+		} else {
+			progress.Msg = string(buf)
+		}
+	}
+
 	return progress, nil
 }
 
@@ -555,18 +576,11 @@ func (m *Manager) AddLostAsset(root cid.Cid) error {
 		return nil
 	}
 
-	switch types.RunningNodeType {
-	case types.NodeCandidate:
-		m.addToWaitList(root, nil)
-	case types.NodeEdge:
-		downloadInfos, err := m.GetCandidateDownloadInfos(context.Background(), root.String())
-		if err != nil {
-			return xerrors.Errorf("get candidate download infos: %w", err.Error())
-		}
-		m.addToWaitList(root, downloadInfos)
-	default:
-		return fmt.Errorf("not support node type:%s", types.RunningNodeType)
+	downloadInfos, err := m.GetCandidateDownloadInfos(context.Background(), root.String())
+	if err != nil {
+		return xerrors.Errorf("get candidate download infos: %w", err.Error())
 	}
+	m.addToWaitList(root, downloadInfos)
 
 	return nil
 }

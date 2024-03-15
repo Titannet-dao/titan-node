@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/lib/etcdcli"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/filecoin-project/pubsub"
 
@@ -16,6 +17,7 @@ import (
 var log = logging.Logger("node")
 
 const (
+	syncEdgeCountTime = 25 * time.Minute //
 	// keepaliveTime is the interval between keepalive requests
 	keepaliveTime       = 30 * time.Second // seconds
 	calculatePointsTime = 30 * time.Minute
@@ -35,27 +37,125 @@ type Manager struct {
 	weightMgr      *weightManager
 	config         dtypes.GetSchedulerConfigFunc
 	notify         *pubsub.PubSub
+	etcdcli        *etcdcli.Client
 	*db.SQLDB
 	*rsa.PrivateKey // scheduler privateKey
 	dtypes.ServerID // scheduler server id
+
+	ipLimit           int
+	TotalNetworkEdges int // Number of edge nodes in the entire network (including those on other schedulers)
+
+	nodeIPs sync.Map
 }
 
 // NewManager creates a new instance of the node manager
-func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, config dtypes.GetSchedulerConfigFunc) *Manager {
+func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, pk *rsa.PrivateKey, pb *pubsub.PubSub, config dtypes.GetSchedulerConfigFunc, ec *etcdcli.Client) *Manager {
 	nodeManager := &Manager{
 		SQLDB:      sdb,
 		ServerID:   serverID,
 		PrivateKey: pk,
 		notify:     pb,
 		config:     config,
+		etcdcli:    ec,
 		weightMgr:  newWeightManager(config),
 	}
 
+	nodeManager.ipLimit = nodeManager.getIPLimit()
+	log.Infof("nodeManager.ipLimit %d", nodeManager.ipLimit)
+
 	go nodeManager.startNodeKeepaliveTimer()
 	go nodeManager.startCheckNodeTimer()
+	go nodeManager.startSyncEdgeCountTimer()
 	// go nodeManager.startCalculatePointsTimer()
 
 	return nodeManager
+}
+
+func (m *Manager) getIPLimit() int {
+	cfg, err := m.config()
+	if err != nil {
+		log.Errorf("get config err:%s", err.Error())
+		return 0
+	}
+
+	return cfg.IPLimit
+}
+
+func (m *Manager) CheckNodeIP(nodeID, ip string) bool {
+	if m.ipLimit == 0 {
+		return true
+	}
+
+	listI, exist := m.nodeIPs.Load(ip)
+	if exist && listI != nil {
+		nodes := listI.([]string)
+
+		for _, nID := range nodes {
+			if nID == nodeID {
+				return true
+			}
+		}
+
+		if len(nodes) < m.ipLimit {
+			nodes = append(nodes, nodeID)
+			m.nodeIPs.Store(ip, nodes)
+			return true
+		}
+
+		return false
+	} else {
+		nodes := []string{nodeID}
+		m.nodeIPs.Store(ip, nodes)
+
+		return true
+	}
+}
+
+func (m *Manager) RemoveNodeIP(nodeID, ip string) {
+	if m.ipLimit == 0 {
+		return
+	}
+
+	listI, exist := m.nodeIPs.Load(ip)
+	if exist && listI != nil {
+		nodes := listI.([]string)
+
+		list := []string{}
+
+		for _, nID := range nodes {
+			if nID != nodeID {
+				list = append(list, nID)
+			}
+		}
+
+		m.nodeIPs.Store(ip, list)
+	}
+}
+
+func (m *Manager) syncEdgeCountFromNetwork() {
+	err := m.etcdcli.PutEdgeCount(string(m.ServerID), m.Edges)
+	if err != nil {
+		log.Errorf("SyncEdgeCountFromNetwork PutEdgeCount err:%s", err.Error())
+	}
+
+	count, err := m.etcdcli.GetEdgeCounts(string(m.ServerID))
+	if err != nil {
+		log.Errorf("SyncEdgeCountFromNetwork GetEdgeCounts err:%s", err.Error())
+	}
+
+	m.TotalNetworkEdges = count + m.Edges
+}
+
+// startSyncEdgeCountTimer
+func (m *Manager) startSyncEdgeCountTimer() {
+	ticker := time.NewTicker(syncEdgeCountTime)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+
+		m.syncEdgeCountFromNetwork()
+	}
 }
 
 // startNodeKeepaliveTimer periodically sends keepalive requests to all nodes and checks if any nodes have been offline for too long
@@ -99,62 +199,6 @@ func (m *Manager) startCheckNodeTimer() {
 		timer.Reset(oneDay)
 	}
 }
-
-// func (m *Manager) startCalculatePointsTimer() {
-// 	ticker := time.NewTicker(calculatePointsTime)
-// 	defer ticker.Stop()
-
-// 	for {
-// 		<-ticker.C
-
-// 		m.updateNodeProfits()
-// 	}
-// }
-
-// func (m *Manager) updateNodeProfits() {
-// 	infos := make(map[string]int)
-// 	nodeCount := m.Edges
-
-// 	m.edgeNodes.Range(func(key, value interface{}) bool {
-// 		node := value.(*Node)
-// 		if node == nil {
-// 			return true
-// 		}
-
-// 		if node.IsAbnormal() {
-// 			return true
-// 		}
-
-// 		points := node.CalculateIncome(nodeCount)
-// 		infos[node.NodeID] = points
-// 		node.Mc = 0
-
-// 		return true
-// 	})
-
-// 	m.candidateNodes.Range(func(key, value interface{}) bool {
-// 		node := value.(*Node)
-// 		if node == nil {
-// 			return true
-// 		}
-
-// 		if node.IsAbnormal() {
-// 			return true
-// 		}
-
-// 		// points := node.CalculateIncome(nodeCount)
-// 		// infos[node.NodeID] = points
-
-// 		// node.Mc = 0
-
-// 		return true
-// 	})
-
-// 	err := m.UpdateNodeProfits(infos)
-// 	if err != nil {
-// 		log.Errorf("UpdateNodeProfits err:%s", err.Error())
-// 	}
-// }
 
 // storeEdgeNode adds an edge node to the manager's list of edge nodes
 func (m *Manager) storeEdgeNode(node *Node) {
@@ -253,10 +297,12 @@ func (m *Manager) RepayNodeWeight(node *Node) {
 }
 
 // nodeKeepalive checks if a node has sent a keepalive recently and updates node status accordingly
-func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) bool {
+func (m *Manager) nodeKeepalive(node *Node, t time.Time) bool {
 	lastTime := node.LastRequestTime()
 
 	if !lastTime.After(t) {
+		m.RemoveNodeIP(node.NodeID, node.ExternalIP)
+
 		node.ClientCloser()
 		if node.Type == types.NodeCandidate {
 			m.deleteCandidateNode(node)
@@ -267,11 +313,6 @@ func (m *Manager) nodeKeepalive(node *Node, t time.Time, isSave bool) bool {
 		log.Infof("node offline %s", node.NodeID)
 
 		return false
-	}
-
-	if isSave {
-		// Minute
-		node.OnlineDuration += int((saveInfoInterval * keepaliveTime) / time.Minute)
 	}
 
 	return true
@@ -289,20 +330,29 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 			return true
 		}
 
-		if m.nodeKeepalive(node, t, isSave) {
-			// add node mc
-			mc := node.CalculateMCx() * float64(keepaliveTime/(5*time.Second))
-			// log.Infof("nodeKeepalive %s : Mc:[%v] , i:[%v]", node.NodeID, mc, float64(keepaliveTime/(5*time.Second)))
+		if m.nodeKeepalive(node, t) {
+			if isSave {
+				// Minute
+				node.OnlineDuration += int((saveInfoInterval * keepaliveTime) / time.Minute)
 
-			nodes = append(nodes, &types.NodeSnapshot{
-				NodeID:         node.NodeID,
-				OnlineDuration: node.OnlineDuration,
-				DiskUsage:      node.DiskUsage,
-				LastSeen:       time.Now(),
-				BandwidthDown:  node.BandwidthDown,
-				BandwidthUp:    node.BandwidthUp,
-				Profit:         mc,
-			})
+				// add node mc
+				mc := node.CalculateMCx(m.TotalNetworkEdges)
+				// update client incomeIncr (Increase value every thirty minutes)
+				node.IncomeIncr = (mc * 360)
+
+				profit := mc * float64((saveInfoInterval*keepaliveTime)/(5*time.Second))
+				// log.Infof("nodeKeepalive %s : Mc:[%v] , i:[%v]", node.NodeID, mc, float64(keepaliveTime/(5*time.Second)))
+
+				nodes = append(nodes, &types.NodeSnapshot{
+					NodeID:         node.NodeID,
+					OnlineDuration: node.OnlineDuration,
+					DiskUsage:      node.DiskUsage,
+					LastSeen:       time.Now(),
+					BandwidthDown:  node.BandwidthDown,
+					BandwidthUp:    node.BandwidthUp,
+					Profit:         profit,
+				})
+			}
 		}
 
 		return true
@@ -314,15 +364,20 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 			return true
 		}
 
-		if m.nodeKeepalive(node, t, isSave) {
-			nodes = append(nodes, &types.NodeSnapshot{
-				NodeID:         node.NodeID,
-				OnlineDuration: node.OnlineDuration,
-				DiskUsage:      node.DiskUsage,
-				LastSeen:       time.Now(),
-				BandwidthDown:  node.BandwidthDown,
-				BandwidthUp:    node.BandwidthUp,
-			})
+		if m.nodeKeepalive(node, t) {
+			if isSave {
+				// Minute
+				node.OnlineDuration += int((saveInfoInterval * keepaliveTime) / time.Minute)
+
+				nodes = append(nodes, &types.NodeSnapshot{
+					NodeID:         node.NodeID,
+					OnlineDuration: node.OnlineDuration,
+					DiskUsage:      node.DiskUsage,
+					LastSeen:       time.Now(),
+					BandwidthDown:  node.BandwidthDown,
+					BandwidthUp:    node.BandwidthUp,
+				})
+			}
 		}
 
 		return true
@@ -340,12 +395,7 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 func (m *Manager) saveInfo(n *types.NodeInfo) error {
 	n.LastSeen = time.Now()
 
-	err := m.SaveNodeInfo(n)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return m.SaveNodeInfo(n)
 }
 
 func (m *Manager) redistributeNodeSelectWeights() {
@@ -411,29 +461,6 @@ func (m *Manager) UpdateNodeBandwidths(nodeID string, bandwidthDown, bandwidthUp
 	}
 }
 
-// NodeValidationSuccess update node DiskUsage and bandwidthUp
-func (m *Manager) NodeValidationSuccess(nodeID string, bandwidthUp int64) {
-	node := m.GetNode(nodeID)
-	if node == nil {
-		return
-	}
-
-	node.BandwidthUp = bandwidthUp
-
-	m.UpdateNodeDiskUsage(nodeID)
-}
-
-// NodeValidationFail update node DiskUsage and bandwidthUp
-func (m *Manager) NodeValidationFail(nodeID string) {
-	node := m.GetNode(nodeID)
-	if node == nil {
-		return
-	}
-
-	node.BandwidthUp = 0
-	node.DiskUsage = 0
-}
-
 func (m *Manager) checkNodeDeactivate() {
 	nodes, err := m.LoadDeactivateNodes()
 	if err != nil {
@@ -461,6 +488,6 @@ func (m *Manager) UpdateNodeDiskUsage(nodeID string) {
 		return
 	}
 
-	node.DiskUsage = (float64(size) / node.Info.DiskSpace) * 100
+	node.DiskUsage = (float64(size) / node.DiskSpace) * 100
 	log.Infof("LoadReplicaSizeByNodeID %s update:%v", nodeID, node.DiskUsage)
 }

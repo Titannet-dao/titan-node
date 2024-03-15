@@ -113,10 +113,11 @@ type LocatorCfg struct {
 	// self sign certificate, use for client
 	CaCertificatePath string
 	// etcd server addresses
-	EtcdAddresses    []string
-	DefaultAreaID    string
-	DNSServerAddress string
-	DNSRecords       map[string]string
+	EtcdAddresses          []string
+	DefaultAreaID          string
+	DNSServerAddress       string
+	DNSRecords             map[string]string
+	LoadBalanceExcludeArea []string
 }
 
 // SchedulerCfg scheduler config
@@ -184,8 +185,10 @@ type SchedulerCfg struct {
 	// Non vip user
 	MaxCountOfVisitShareLink int
 	// if the area has several scheduler, node will connect to the scheduler which weight is bigger
-	Weight                          int
-	MaxAPIKey                       int
-	IPWhitelist                     []string
-	MaxNumberOfSameDayRegistrations int
+	Weight                   int
+	MaxAPIKey                int
+	IPWhitelist              []string
+	MaxNumberOfRegistrations int
+
+	IPLimit int
 }

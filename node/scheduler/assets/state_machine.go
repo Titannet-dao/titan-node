@@ -158,7 +158,7 @@ func planOne(ts ...func() (mut mutator, next func(info *AssetPullingInfo) (more 
 				}
 
 				if err, isErr := event.User.(error); isErr {
-					log.Warnf("asset %s got error event %T: %+v", state.CID, event.User, err)
+					log.Warnf("asset %s:%s got error event %T: %+v", state.Hash.String(), state.CID, event.User, err)
 				}
 
 				event.User.(mutator).apply(state)

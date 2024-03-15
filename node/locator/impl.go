@@ -369,9 +369,16 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		areaID = geoInfo.Geo
 	}
 
-	configs, err := l.GetSchedulerConfigs(areaID)
-	if err != nil {
-		return nil, err
+	configs := make([]*types.SchedulerCfg, 0)
+
+	exculdeAreas := convertAreasToMap(l.LocatorCfg.LoadBalanceExcludeArea)
+	if _, ok := exculdeAreas[areaID]; !ok {
+		var err error
+		configs, err = l.GetSchedulerConfigs(areaID)
+		if err != nil {
+			return nil, err
+		}
+
 	}
 
 	if len(configs) == 0 {
@@ -380,6 +387,10 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 
 	schedulerURLs := make(map[string][]string)
 	for _, config := range configs {
+		if _, ok := exculdeAreas[config.AreaID]; ok {
+			continue
+		}
+
 		urls, ok := schedulerURLs[config.AreaID]
 		if !ok {
 			urls = make([]string, 0)
@@ -393,8 +404,12 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		return &api.AccessPoint{AreaID: areaID, SchedulerURLs: make([]string, 0)}, nil
 	}
 
+	var urls []string
+	for _, schedulers := range schedulerURLs {
+		urls = schedulers
+	}
 	// get scheduler configs of first areaID
-	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: schedulerURLs[configs[0].AreaID]}, nil
+	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: urls}, nil
 }
 
 // GetCandidateIP retrieves ip of candidate
@@ -540,4 +555,13 @@ func (l *Locator) GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (st
 	wg.Wait()
 
 	return schedulerURL, nil
+}
+
+func convertAreasToMap(areas []string) map[string]struct{} {
+	areaMap := make(map[string]struct{})
+	for _, area := range areas {
+		areaMap[area] = struct{}{}
+	}
+
+	return areaMap
 }

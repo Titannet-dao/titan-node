@@ -178,7 +178,7 @@ var runCmd = &cli.Command{
 		}
 		defer udpPacketConn.Close() //nolint:errcheck  // ignore error
 
-		go startUDPServer(udpPacketConn, handler, locatorCfg) //nolint:errcheck
+		go startHTTP3Server(udpPacketConn, handler, locatorCfg) //nolint:errcheck
 
 		// Serve the RPC.
 		rpcStopper, err := node.ServeRPC(handler, "titan-locator", locatorCfg.ListenAddress)
@@ -199,9 +199,9 @@ var runCmd = &cli.Command{
 	},
 }
 
-func startUDPServer(conn net.PacketConn, handler http.Handler, locatorCfg *config.LocatorCfg) error {
+func startHTTP3Server(conn net.PacketConn, handler http.Handler, locatorCfg *config.LocatorCfg) error {
 	var tlsConfig *tls.Config
-	if locatorCfg.InsecureSkipVerify {
+	if len(locatorCfg.CertificatePath) == 0 && len(locatorCfg.PrivateKeyPath) == 0 {
 		config, err := defaultTLSConfig()
 		if err != nil {
 			log.Errorf("startUDPServer, defaultTLSConfig error:%s", err.Error())
@@ -209,7 +209,7 @@ func startUDPServer(conn net.PacketConn, handler http.Handler, locatorCfg *confi
 		}
 		tlsConfig = config
 	} else {
-		cert, err := tls.LoadX509KeyPair(locatorCfg.CaCertificatePath, locatorCfg.PrivateKeyPath)
+		cert, err := tls.LoadX509KeyPair(locatorCfg.CertificatePath, locatorCfg.PrivateKeyPath)
 		if err != nil {
 			log.Errorf("startUDPServer, LoadX509KeyPair error:%s", err.Error())
 			return err
@@ -218,6 +218,7 @@ func startUDPServer(conn net.PacketConn, handler http.Handler, locatorCfg *confi
 		tlsConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			Certificates:       []tls.Certificate{cert},
+			NextProtos:         []string{"h2", "h3"},
 			InsecureSkipVerify: false,
 		}
 	}

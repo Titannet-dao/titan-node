@@ -76,14 +76,30 @@ func (n *SQLDB) UpdateReplicasStatusToFailed(hash string) error {
 
 // SaveReplicasStatus inserts or updates replicas status
 func (n *SQLDB) SaveReplicasStatus(infos []*types.ReplicaInfo) error {
-	query := fmt.Sprintf(
-		`INSERT INTO %s (hash, node_id, status, is_candidate) 
+	tx, err := n.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != sql.ErrTxDone {
+			log.Errorf("SaveReplicasStatus Rollback err:%s", err.Error())
+		}
+	}()
+
+	for _, info := range infos {
+		query := fmt.Sprintf(
+			`INSERT INTO %s (hash, node_id, status, is_candidate) 
 				VALUES (:hash, :node_id, :status, :is_candidate) 
-				ON DUPLICATE KEY UPDATE status=VALUES(status)`, replicaInfoTable)
+				ON DUPLICATE KEY UPDATE status=:status`, replicaInfoTable)
 
-	_, err := n.db.NamedExec(query, infos)
-
-	return err
+		_, err := tx.NamedExec(query, info)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UpdateAssetInfo update asset information

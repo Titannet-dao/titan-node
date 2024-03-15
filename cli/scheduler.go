@@ -19,6 +19,7 @@ var SchedulerCMDs = []*cli.Command{
 	startElectionCmd,
 	// other
 	edgeUpdaterCmd,
+	electValidatorsCmd,
 }
 
 var (
@@ -63,9 +64,9 @@ var (
 
 	expirationDateFlag = &cli.StringFlag{
 		Name:        "expiration-date",
-		Usage:       "Set the asset expiration, format with '2006-1-2 15:04:05' layout.",
+		Usage:       "Set the asset expiration, format with '2006-01-02 15:04:05' layout.",
 		Value:       "",
-		DefaultText: "now + 7 days",
+		DefaultText: "now + 360 days",
 	}
 
 	dateFlag = &cli.StringFlag{
@@ -132,6 +133,36 @@ var startElectionCmd = &cli.Command{
 		defer closer()
 
 		return schedulerAPI.TriggerElection(ctx)
+	},
+}
+
+var electValidatorsCmd = &cli.Command{
+	Name:  "elect",
+	Usage: "elect validators",
+	Flags: []cli.Flag{
+		&cli.StringSliceFlag{
+			Name:  "nodes",
+			Usage: "node id list",
+			Value: &cli.StringSlice{},
+		},
+	},
+	Before: func(cctx *cli.Context) error {
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		nodeIDs := cctx.StringSlice("nodes")
+		if len(nodeIDs) == 0 {
+			return nil
+		}
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.ElectValidators(ctx, nodeIDs)
 	},
 }
 

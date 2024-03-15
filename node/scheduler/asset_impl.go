@@ -311,6 +311,7 @@ func (s *Scheduler) AddAWSData(ctx context.Context, list []types.AWSDataInfo) er
 }
 
 func (s *Scheduler) SwitchFillDiskTimer(ctx context.Context, open bool) error {
+	log.Infof("SwitchFillDiskTimer open:%v", open)
 	if open {
 		s.AssetManager.StartFillDiskTimer()
 	} else {

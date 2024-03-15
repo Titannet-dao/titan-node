@@ -36,7 +36,7 @@ func failedCoolDown(ctx statemachine.Context, info AssetPullingInfo) error {
 
 // handleSeedSelect handles the selection of seed nodes for asset pull
 func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle select seed: %s", info.CID)
+	log.Debugf("handle select seed: %s", info.Hash)
 
 	if len(info.CandidateReplicaSucceeds) >= seedReplicaCount {
 		// The number of candidate node replicas has reached the requirement
@@ -45,7 +45,7 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 
 	nodes := make(map[string]*node.Node)
 	if info.SeedNodeID != "" {
-		cNode := m.nodeMgr.GetNode(info.SeedNodeID)
+		cNode := m.nodeMgr.GetCandidateNode(info.SeedNodeID)
 		if cNode == nil {
 			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", info.SeedNodeID)})
 		}
@@ -83,7 +83,7 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 
 // handleSeedPulling handles the asset pulling process of seed nodes
 func (m *Manager) handleSeedPulling(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle seed pulling, %s", info.CID)
+	log.Debugf("handle seed pulling, %s", info.Hash)
 
 	if len(info.CandidateReplicaSucceeds) >= seedReplicaCount {
 		return ctx.Send(PullSucceed{})
@@ -98,14 +98,14 @@ func (m *Manager) handleSeedPulling(ctx statemachine.Context, info AssetPullingI
 
 // handleUploadInit handles the upload init
 func (m *Manager) handleUploadInit(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle upload init: %s, nodeID: %s", info.CID, info.SeedNodeID)
+	log.Debugf("handle upload init: %s, nodeID: %s", info.Hash, info.SeedNodeID)
 
 	if len(info.CandidateReplicaSucceeds) >= seedReplicaCount {
 		// The number of candidate node replicas has reached the requirement
 		return ctx.Send(SkipStep{})
 	}
 
-	cNode := m.nodeMgr.GetNode(info.SeedNodeID)
+	cNode := m.nodeMgr.GetCandidateNode(info.SeedNodeID)
 	if cNode == nil {
 		return ctx.Send(SelectFailed{})
 	}
@@ -127,7 +127,7 @@ func (m *Manager) handleUploadInit(ctx statemachine.Context, info AssetPullingIn
 
 // handleSeedUploading handles the asset upload process of seed nodes
 func (m *Manager) handleSeedUploading(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle seed upload, %s", info.CID)
+	log.Debugf("handle seed upload, %s", info.Hash)
 
 	if len(info.CandidateReplicaSucceeds) >= seedReplicaCount {
 		return ctx.Send(PullSucceed{})
@@ -142,7 +142,7 @@ func (m *Manager) handleSeedUploading(ctx statemachine.Context, info AssetPullin
 
 // handleCandidatesSelect handles the selection of candidate nodes for asset pull
 func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle candidates select, %s", info.CID)
+	log.Debugf("handle candidates select, %s", info.Hash)
 
 	sources := m.getDownloadSources(info.Hash.String())
 	if len(sources) < 1 {
@@ -200,7 +200,7 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 
 // handleCandidatesPulling handles the asset pulling process of candidate nodes
 func (m *Manager) handleCandidatesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle candidates pulling,cid: %s, hash:%s", info.CID, info.Hash.String())
+	log.Debugf("handle candidates pulling,cid: %s, hash:%s , waiting:%d", info.CID, info.Hash.String(), info.CandidateWaitings)
 
 	if int64(len(info.CandidateReplicaSucceeds)) >= info.CandidateReplicas {
 		err := m.DeleteReplenishBackup(info.Hash.String())
@@ -234,7 +234,7 @@ func (m *Manager) getCurBandwidthUp(nodes []string) int64 {
 
 // handleEdgesSelect handles the selection of edge nodes for asset pull
 func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle edges select , %s", info.CID)
+	log.Debugf("handle edges select , %s", info.Hash)
 
 	needCount := info.EdgeReplicas - int64(len(info.EdgeReplicaSucceeds))
 
@@ -297,7 +297,7 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 // handleEdgesPulling handles the asset pulling process of edge nodes
 func (m *Manager) handleEdgesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
 	needBandwidth := info.Bandwidth - m.getCurBandwidthUp(info.EdgeReplicaSucceeds)
-	log.Debugf("handle edges pulling, %s ; %d>=%d , %d", info.CID, int64(len(info.EdgeReplicaSucceeds)), info.EdgeReplicas, needBandwidth)
+	log.Debugf("handle edges pulling, %s ; %d>=%d , %d", info.Hash, int64(len(info.EdgeReplicaSucceeds)), info.EdgeReplicas, needBandwidth)
 
 	if int64(len(info.EdgeReplicaSucceeds)) >= info.EdgeReplicas && needBandwidth <= 0 {
 		return ctx.Send(PullSucceed{})
@@ -312,7 +312,7 @@ func (m *Manager) handleEdgesPulling(ctx statemachine.Context, info AssetPulling
 
 // handleServicing asset pull completed and in service status
 func (m *Manager) handleServicing(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Infof("handle servicing: %s", info.CID)
+	log.Infof("handle servicing: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
 
 	// remove fail replicas
@@ -324,7 +324,7 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 	m.stopAssetTimeoutCounting(info.Hash.String())
 
 	if info.RetryCount >= int64(MaxRetryCount) {
-		log.Infof("handle pulls failed: %s, retry count: %d", info.CID, info.RetryCount)
+		log.Infof("handle pulls failed: %s, retry count: %d", info.Hash.String(), info.RetryCount)
 
 		err := m.DeleteReplenishBackup(info.Hash.String())
 		if err != nil {
@@ -334,7 +334,7 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 		return nil
 	}
 
-	log.Debugf("handle pulls failed: %s, retries: %d", info.CID, info.RetryCount)
+	log.Debugf("handle pulls failed: %s, retries: %d", info.Hash.String(), info.RetryCount)
 
 	if err := failedCoolDown(ctx, info); err != nil {
 		return err
@@ -344,14 +344,14 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 }
 
 func (m *Manager) handleUploadFailed(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Infof("handle upload fail: %s", info.CID)
+	log.Infof("handle upload fail: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
 
 	return nil
 }
 
 func (m *Manager) handleRemove(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Infof("handle remove: %s", info.CID)
+	log.Infof("handle remove: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
 	defer m.AssetRemoveDone(info.Hash.String())
 
@@ -360,7 +360,7 @@ func (m *Manager) handleRemove(ctx statemachine.Context, info AssetPullingInfo) 
 
 	cInfos, err := m.LoadReplicasByStatus(hash, types.ReplicaStatusAll)
 	if err != nil {
-		return xerrors.Errorf("RemoveAsset %s LoadAssetReplicas err:%s", info.CID, err.Error())
+		return xerrors.Errorf("RemoveAsset %s LoadAssetReplicas err:%s", info.Hash, err.Error())
 	}
 
 	// node info
@@ -376,7 +376,7 @@ func (m *Manager) handleRemove(ctx statemachine.Context, info AssetPullingInfo) 
 	for _, user := range users {
 		err = m.DeleteAssetUser(hash, user)
 		if err != nil {
-			log.Errorf("DeleteAssetUser: %s", info.CID)
+			log.Errorf("DeleteAssetUser: %s", info.Hash)
 		}
 	}
 

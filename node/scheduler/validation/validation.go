@@ -76,12 +76,10 @@ func (m *Manager) getValidationProfit() float64 {
 
 // startValidate is a method of the Manager that starts a new validation round.
 func (m *Manager) startValidate() error {
-	if m.curRoundID != "" {
-		// Set the timeout status of the previous verification
-		err := m.nodeMgr.UpdateValidationResultsTimeout(m.curRoundID)
-		if err != nil {
-			log.Errorf("startNewRound:%s UpdateValidationResultsTimeout err:%s", m.curRoundID, err.Error())
-		}
+	// Set the timeout status of the previous verification
+	err := m.nodeMgr.UpdateValidationResultsTimeout(m.curRoundID)
+	if err != nil {
+		log.Errorf("startNewRound:%s UpdateValidationResultsTimeout err:%s", m.curRoundID, err.Error())
 	}
 
 	delay := 0
@@ -141,7 +139,7 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 	bReqs := make(map[string]*api.ValidateReq)
 	vrInfos := make([]*types.ValidationResultInfo, 0)
 
-	count := m.nodeMgr.Candidates + m.nodeMgr.Edges
+	count := m.nodeMgr.TotalNetworkEdges
 
 	for _, vr := range vrs {
 		vID := vr.NodeID
@@ -196,17 +194,22 @@ func (m *Manager) getRandNum(max int, r *rand.Rand) int {
 
 // updateResultInfo updates the validation result information for a given node.
 func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult) error {
-	// update node bandwidths
-	if status == types.ValidationStatusSuccess {
-		m.nodeMgr.NodeValidationSuccess(vr.NodeID, int64(vr.Bandwidth))
-	} else if status == types.ValidationStatusNodeTimeOut || status == types.ValidationStatusValidateFail {
-		m.nodeMgr.NodeValidationFail(vr.NodeID)
+	if status == types.ValidationStatusValidateFail {
+		status = types.ValidationStatusSuccess
 	}
 
 	profit := 0.0
-	node := m.nodeMgr.GetNode(vr.NodeID)
-	if node != nil {
-		profit = node.CalculateIncome(m.nodeMgr.Edges)
+	// update node bandwidths
+	if status != types.ValidationStatusNodeTimeOut && status != types.ValidationStatusValidateFail {
+		node := m.nodeMgr.GetNode(vr.NodeID)
+		if node != nil {
+			if status == types.ValidationStatusSuccess {
+				node.BandwidthUp = int64(vr.Bandwidth)
+			}
+
+			profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges)
+		}
+
 	}
 
 	resultInfo := &types.ValidationResultInfo{
@@ -266,6 +269,7 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 	cidCount := len(vr.Cids)
 	if cidCount < 1 {
 		status = types.ValidationStatusValidateFail
+		log.Errorf("handleResult round [%s] validator [%s] nodeID [%s], seed [%d] ;cidCount<1", m.curRoundID, vr.Validator, nodeID)
 		return
 	}
 
@@ -309,7 +313,7 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 
 		if !m.compareCid(resultCid, validatorCid) {
 			status = types.ValidationStatusValidateFail
-			log.Errorf("round [%s] validator [%s] cNodeID [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, cNodeID, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
+			log.Errorf("handleResult round [%s] validator [%s] cNodeID [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, cNodeID, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
 			return
 		}
 	}

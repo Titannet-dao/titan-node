@@ -87,9 +87,9 @@ func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey string, 
 		return nil, xerrors.Errorf("Node %s aready exist", nodeID)
 	}
 
-	if count, err := s.db.TodayRegisterCount(ip); err != nil {
-		return nil, xerrors.Errorf("TodayRegisterCount %w", err)
-	} else if count >= s.SchedulerCfg.MaxNumberOfSameDayRegistrations &&
+	if count, err := s.db.RegisterCount(ip); err != nil {
+		return nil, xerrors.Errorf("RegisterCount %w", err)
+	} else if count >= s.SchedulerCfg.MaxNumberOfRegistrations &&
 		!isInIPWhitelist(ip, s.SchedulerCfg.IPWhitelist) {
 		return nil, xerrors.New("today's registrations exceeded the number")
 	}
@@ -331,15 +331,13 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		nodeInfo.Status = nodeStatus(node)
 		nodeInfo.NATType = node.NATType.String()
 		nodeInfo.Type = node.Type
-		nodeInfo.ExternalIP = node.Info.ExternalIP
 		nodeInfo.MemoryUsage = node.MemoryUsage
 		nodeInfo.CPUUsage = node.CPUUsage
 		nodeInfo.DiskUsage = node.DiskUsage
 		nodeInfo.BandwidthDown = node.BandwidthDown
 		nodeInfo.BandwidthUp = node.BandwidthUp
-		nodeInfo.IoSystem = node.Info.IoSystem
-		nodeInfo.DiskType = node.Info.DiskType
-		nodeInfo.IncomeIncr = node.Info.IncomeIncr
+		nodeInfo.ExternalIP = node.ExternalIP
+		nodeInfo.IncomeIncr = node.IncomeIncr
 
 		log.Debugf("%s node select codes:%v", nodeID, node.SelectWeights())
 	}
@@ -389,15 +387,13 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 			nodeInfo.Status = nodeStatus(node)
 			nodeInfo.NATType = node.NATType.String()
 			nodeInfo.Type = node.Type
-			nodeInfo.ExternalIP = node.Info.ExternalIP
 			nodeInfo.MemoryUsage = node.MemoryUsage
 			nodeInfo.CPUUsage = node.CPUUsage
 			nodeInfo.DiskUsage = node.DiskUsage
 			nodeInfo.BandwidthDown = node.BandwidthDown
 			nodeInfo.BandwidthUp = node.BandwidthUp
-			nodeInfo.IoSystem = node.Info.IoSystem
-			nodeInfo.DiskType = node.Info.DiskType
-			nodeInfo.IncomeIncr = node.Info.IncomeIncr
+			nodeInfo.ExternalIP = node.ExternalIP
+			nodeInfo.IncomeIncr = node.IncomeIncr
 		}
 
 		_, exist := validator[nodeInfo.NodeID]
@@ -535,6 +531,15 @@ func (s *Scheduler) GetEdgeDownloadInfos(ctx context.Context, cid string) (*type
 	return ret, nil
 }
 
+func (s *Scheduler) GetNodeToken(ctx context.Context, nodeID string) (string, error) {
+	node := s.NodeManager.GetNode(nodeID)
+	if node == nil {
+		return "", xerrors.Errorf("node %s not find ", nodeID)
+	}
+
+	return node.GetToken(), nil
+}
+
 func (s *Scheduler) getEdgeDownloadRatio() float64 {
 	return s.SchedulerCfg.EdgeDownloadRatio
 }
@@ -557,14 +562,21 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 	workloadRecords := make([]*types.WorkloadRecord, 0)
 
 	for _, rInfo := range replicas {
-		if !rInfo.IsCandidate {
+		// if !rInfo.IsCandidate {
+		// 	continue
+		// }
+
+		nodeID := rInfo.NodeID
+		cNode := s.NodeManager.GetNode(nodeID)
+		if cNode == nil {
 			continue
 		}
 
-		nodeID := rInfo.NodeID
-		cNode := s.NodeManager.GetCandidateNode(nodeID)
-		if cNode == nil {
-			continue
+		// edge
+		if cNode.Type != types.NodeCandidate {
+			if cNode.NATType != types.NatTypeNo || cNode.ExternalIP == "" {
+				continue
+			}
 		}
 
 		token, tkPayload, err := cNode.Token(cid, uuid.NewString(), titanRsa, s.NodeManager.PrivateKey)
@@ -764,26 +776,31 @@ func (s *Scheduler) UpdateBandwidths(ctx context.Context, bandwidthDown, bandwid
 // DownloadDataResult node download data result
 func (s *Scheduler) DownloadDataResult(ctx context.Context, bucket, cid string, size int64) error {
 	nodeID := handler.GetNodeID(ctx)
-	node := s.NodeManager.GetNode(nodeID)
-	if node == nil {
-		return xerrors.Errorf("node %s not exists", nodeID)
-	}
 
-	if cid == "" {
-		return s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: false})
-	}
+	log.Infof("DownloadDataResult %s : %s : %s ", nodeID, cid, bucket)
 
-	err := s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: true})
-	if err != nil {
-		return err
-	}
+	return nil
 
-	info, err := s.db.LoadAWSData(bucket)
-	if err != nil {
-		return err
-	}
+	// node := s.NodeManager.GetCandidateNode(nodeID)
+	// if node == nil {
+	// 	return xerrors.Errorf("node %s not exists", nodeID)
+	// }
 
-	return s.AssetManager.CreateBaseAsset(cid, nodeID, size, int64(info.Replicas))
+	// if cid == "" {
+	// 	return s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: false})
+	// }
+
+	// err := s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: true})
+	// if err != nil {
+	// 	return err
+	// }
+
+	// info, err := s.db.LoadAWSData(bucket)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// return s.AssetManager.CreateBaseAsset(cid, nodeID, size, int64(info.Replicas))
 }
 
 // GetCandidateNodeIP get candidate ip for locator
@@ -836,7 +853,7 @@ func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, e
 		if len(externalURL) == 0 {
 			externalURL = fmt.Sprintf("http://%s", n.RemoteAddr)
 		}
-		list = append(list, &types.NodeIPInfo{NodeID: n.NodeID, IP: n.Info.ExternalIP, ExternalURL: externalURL})
+		list = append(list, &types.NodeIPInfo{NodeID: n.NodeID, IP: n.ExternalIP, ExternalURL: externalURL})
 	}
 
 	return list, nil

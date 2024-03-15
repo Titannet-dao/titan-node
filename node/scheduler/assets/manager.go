@@ -34,7 +34,7 @@ const (
 	// Interval to check candidate backup of asset (Unit:Minute)
 	checkCandidateBackupInterval = 10 * time.Minute
 	// Maximum number of replicas per asset
-	assetEdgeReplicasLimit = 500
+	assetEdgeReplicasLimit = 10000
 	// The number of retries to select the pull asset node
 	selectNodeRetryLimit = 3
 	// If the node disk size is greater than this value, pulling will not continue
@@ -594,7 +594,7 @@ func (m *Manager) RemoveAsset(hash string, isWait bool) error {
 func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult) {
 	haveChange := false
 	for _, progress := range result.Progresses {
-		log.Debugf("updateAssetPullResults node_id: %s, status: %d, block:%d/%d, size: %d/%d, cid: %s ", nodeID, progress.Status, progress.DoneBlocksCount, progress.BlocksCount, progress.DoneSize, progress.Size, progress.CID)
+		log.Infof("updateAssetPullResults node_id: %s, status: %d, block:%d/%d, size: %d/%d, cid: %s , msg:%s", nodeID, progress.Status, progress.DoneBlocksCount, progress.BlocksCount, progress.DoneSize, progress.Size, progress.CID, progress.Msg)
 
 		hash, err := cidutil.CIDToHash(progress.CID)
 		if err != nil {
@@ -838,6 +838,7 @@ func (m *Manager) saveReplicaInformation(nodes map[string]*node.Node, hash strin
 	replicaInfos := make([]*types.ReplicaInfo, 0)
 
 	for _, node := range nodes {
+		log.Infof("saveReplicaInformation %s : %s", hash, node.NodeID)
 		replicaInfos = append(replicaInfos, &types.ReplicaInfo{
 			NodeID:      node.NodeID,
 			Status:      types.ReplicaStatusWaiting,
@@ -865,7 +866,7 @@ func (m *Manager) getDownloadSources(hash string) []*types.CandidateDownloadInfo
 		}
 
 		if cNode.Type != types.NodeCandidate {
-			if cNode.NATType != types.NatTypeNo || cNode.Info.ExternalIP == "" {
+			if cNode.NATType != types.NatTypeNo || cNode.ExternalIP == "" {
 				continue
 			}
 		}
@@ -968,7 +969,7 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 		}
 
 		// Calculate node residual capacity
-		residual := (100 - node.DiskUsage) * node.Info.DiskSpace
+		residual := (100 - node.DiskUsage) * node.DiskSpace
 		if residual <= size {
 			log.Debugf("node %s disk residual %.2f", nodeID, residual)
 			return false
@@ -993,25 +994,26 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 
 	// If count is greater or equal to the difference between total edge nodes and the filterNodes length,
 	// choose all unfiltered nodes
-	if count >= m.nodeMgr.Edges-len(filterNodes) {
-		// choose all
-		nodes := m.nodeMgr.GetAllEdgeNode()
+	// if count >= m.nodeMgr.Edges-len(filterNodes) {
+	// choose all
+	nodes := m.nodeMgr.GetAllEdgeNode()
 
-		for _, node := range nodes {
-			if selectNodes(node) {
-				break
-			}
-		}
-	} else {
-		// choose random
-		for i := 0; i < count*selectNodeRetryLimit; i++ {
-			node, rNum := m.nodeMgr.GetRandomEdge()
-			str = fmt.Sprintf("%s%d,", str, rNum)
-			if selectNodes(node) {
-				break
-			}
+	for _, node := range nodes {
+		if selectNodes(node) {
+			break
 		}
 	}
+	// }
+	// else {
+	// 	// choose random
+	// 	for i := 0; i < count*selectNodeRetryLimit; i++ {
+	// 		node, rNum := m.nodeMgr.GetRandomEdge()
+	// 		str = fmt.Sprintf("%s%d,", str, rNum)
+	// 		if selectNodes(node) {
+	// 			break
+	// 		}
+	// 	}
+	// }
 
 	return selectMap, str
 }

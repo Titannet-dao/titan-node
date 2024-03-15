@@ -49,6 +49,8 @@ type assetPuller struct {
 
 	workloadReports map[string]*workloadReport
 	startTime       time.Time
+
+	errMsgs []*fetcher.ErrMsg
 }
 
 type pullerOptions struct {
@@ -85,6 +87,7 @@ func newAssetPuller(opts *pullerOptions) (*assetPuller, error) {
 		timeout:         opts.timeout,
 		retry:           opts.retry,
 		startTime:       time.Now(),
+		errMsgs:         make([]*fetcher.ErrMsg, 0),
 	}, nil
 }
 
@@ -165,10 +168,14 @@ func (ap *assetPuller) pullBlocks(cids []string) (*pulledResult, error) {
 
 	ap.cancel = cancel
 
-	workloadReports, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
+	errMsgs, workloadReports, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
 	if err != nil {
 		log.Errorf("fetch blocks err: %s", err.Error())
 		return nil, err
+	}
+
+	if len(errMsgs) > 0 {
+		ap.errMsgs = append(ap.errMsgs, errMsgs...)
 	}
 
 	ap.mergeWorkloadReports(workloadReports)
@@ -253,11 +260,16 @@ func (ap *assetPuller) retryFetchBlocks(cids []string) ([]blocks.Block, error) {
 
 	ap.cancel = cancel
 
-	workloadReports, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
+	errMsgs, workloadReports, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
 	if err != nil {
 		log.Errorf("retry fetch blocks err %s", err.Error())
 		return nil, err
 	}
+
+	if len(errMsgs) > 0 {
+		ap.errMsgs = append(ap.errMsgs, errMsgs...)
+	}
+
 	ap.mergeWorkloadReports(workloadReports)
 	return blks, nil
 }
