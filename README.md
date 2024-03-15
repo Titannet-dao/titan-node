@@ -18,7 +18,11 @@ Titan Network's story begins in the middle of 2021 as the first project to build
 
 [**安装赚取收益**](https://titannet.gitbook.io/titan-network-cn/huygens-testnet/an-zhuang-cheng-xu-zhuan-qu)
 
+## Dashboard
+[**Huygens Testnet**](https://test1.titannet.io/)
+
 ## Docs
 [**EN**](https://titannet.gitbook.io/titan-network-en)
 
 [**中文**](https://titannet.gitbook.io/titan-network-cn)
+
