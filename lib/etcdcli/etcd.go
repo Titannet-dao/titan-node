@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -19,6 +20,9 @@ const (
 	masterAliveDuration = 60 * 5 // Second
 
 	masterName = "/master/%s/%s"
+
+	edgeCountKey         = "/edgeCount"
+	edgeCountKeyDuration = 60 * 20 // Second
 )
 
 // Client etcd client
@@ -54,6 +58,70 @@ func New(addrs []string) (*Client, error) {
 	}
 
 	return client, nil
+}
+
+func (c *Client) PutEdgeCount(serverID string, count int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	leaseResp, err := c.cli.Grant(ctx, edgeCountKeyDuration)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.cli.Put(ctx, fmt.Sprintf("%s/%s", edgeCountKey, serverID), strconv.Itoa(count), clientv3.WithLease(leaseResp.ID))
+	return err
+}
+
+func (c *Client) getEdgeCount(key string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	resp, err := c.cli.Get(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, kv := range resp.Kvs {
+		retrievedValue, err := strconv.Atoi(string(kv.Value))
+		if err != nil {
+			return 0, err
+		}
+
+		return retrievedValue, nil
+	}
+
+	return 0, nil
+}
+
+func (c *Client) GetEdgeCounts(selfServerID string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	resp, err := c.cli.Get(ctx, edgeCountKey, clientv3.WithPrefix())
+	if err != nil {
+		return 0, err
+	}
+
+	var keys []string
+	for _, kv := range resp.Kvs {
+		keys = append(keys, string(kv.Key))
+	}
+
+	total := 0
+	for _, key := range keys {
+		// fmt.Printf("GetEdgeCounts key %s \n", key)
+		if key != fmt.Sprintf("%s/%s", edgeCountKey, selfServerID) {
+			count, err := c.getEdgeCount(key)
+			if err != nil {
+				// fmt.Printf("GetEdgeCounts %s err: %s \n", key, err.Error())
+				continue
+			}
+			total += count
+		}
+	}
+
+	return total, nil
 }
 
 // ServerRegister register to etcd , If already register in, return an error

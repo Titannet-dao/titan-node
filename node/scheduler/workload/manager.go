@@ -21,8 +21,8 @@ const (
 	workloadInterval = 5 * time.Minute
 	confirmationTime = 70 * time.Second
 
-	// Process 10000 pieces of workload result data at a time
-	vWorkloadLimit = 10000
+	// Process 500 pieces of workload result data at a time
+	vWorkloadLimit = 500
 )
 
 // Manager node workload
@@ -131,7 +131,7 @@ func (m *Manager) handleWorkloadResults() {
 	if len(removeIDs) > 0 {
 		err = m.RemoveInvalidWorkloadResult(removeIDs)
 		if err != nil {
-			log.Errorf("RemoveInvalidWorkloadResult err:%s", err.Error())
+			log.Errorf("RemoveInvalidWorkloadResult %d err:%s", len(removeIDs), err.Error())
 		}
 	}
 }

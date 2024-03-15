@@ -28,7 +28,7 @@ func NewCandidateFetcher(httpClient *http.Client) *CandidateFetcher {
 }
 
 // FetchBlocks fetches blocks for the given cids and candidate download info
-func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*types.WorkloadReport, []blocks.Block, error) {
+func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.WorkloadReport, []blocks.Block, error) {
 	return c.retrieveBlocks(ctx, cids, dss)
 }
 
@@ -87,15 +87,16 @@ func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource 
 }
 
 // retrieveBlocks retrieves multiple blocks using the given cids and candidate download info
-func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*types.WorkloadReport, []blocks.Block, error) {
+func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.WorkloadReport, []blocks.Block, error) {
 	if len(dss) == 0 {
-		return nil, nil, fmt.Errorf("download infos can not empty")
+		return nil, nil, nil, fmt.Errorf("download infos can not empty")
 	}
 
 	workloadReports := make([]*types.WorkloadReport, 0, len(cids))
 	blks := make([]blocks.Block, 0, len(cids))
 	lock := &sync.Mutex{}
 
+	errMsgs := make([]*ErrMsg, 0)
 	var wg sync.WaitGroup
 
 	for index, cid := range cids {
@@ -110,7 +111,7 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, ds
 			startTime := time.Now()
 			b, err := c.fetchSingleBlock(ctx, ds, cidStr)
 			if err != nil {
-				log.Errorf("fetch single block error:%s, cid:%s", err.Error(), cidStr)
+				errMsgs = append(errMsgs, &ErrMsg{Cid: cidStr, Source: ds.NodeID, Msg: err.Error()})
 				return
 			}
 
@@ -132,10 +133,10 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, ds
 	wg.Wait()
 
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return nil, blks, ctx.Err()
+		return errMsgs, nil, blks, ctx.Err()
 	}
 
-	return workloadReports, blks, nil
+	return errMsgs, workloadReports, blks, nil
 }
 
 func encode(esc *types.Token) (*bytes.Buffer, error) {

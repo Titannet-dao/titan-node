@@ -830,8 +830,8 @@ var signCmd = &cli.Command{
 
 var bindCmd = &cli.Command{
 	Name:      "bind",
-	Usage:     "sign with the hash",
-	UsageText: "sign your-hash-here",
+	Usage:     "bind with the hash",
+	UsageText: "bind your-hash-here https://your-web-server-api",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "hash",

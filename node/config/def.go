@@ -149,6 +149,7 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		AssetPullTaskLimit:      100,
 		UploadAssetReplicaCount: 20,
 		UploadAssetExpiration:   150,
+		IPLimit:                 5,
 		NodeScoreLevel: map[string][]int{
 			"A": {90, 100},
 			"B": {50, 89},
@@ -167,7 +168,7 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		Weight:                   100,
 		MaxAPIKey:                5,
 		// Maximum number of node registrations for the same IP on the same day
-		MaxNumberOfSameDayRegistrations: 10,
+		MaxNumberOfRegistrations: 5,
 	}
 }
 

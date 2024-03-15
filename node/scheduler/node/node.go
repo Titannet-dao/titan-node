@@ -25,7 +25,6 @@ import (
 
 // Node represents an Edge or Candidate node
 type Node struct {
-	Info   *types.NodeInfo
 	NodeID string
 
 	*API
@@ -57,6 +56,10 @@ type Node struct {
 	DeactivateTime int64
 
 	IsPrivateMinioOnly bool
+
+	ExternalIP string
+	IncomeIncr float64
+	DiskSpace  float64
 }
 
 // API represents the node API
@@ -179,6 +182,11 @@ func (n *Node) SetToken(t string) {
 	n.token = t
 }
 
+// GetToken get the token of the node
+func (n *Node) GetToken() string {
+	return n.token
+}
+
 // TCPAddr returns the tcp address of the node
 func (n *Node) TCPAddr() string {
 	index := strings.Index(n.RemoteAddr, ":")
@@ -256,12 +264,14 @@ func (n *Node) CalculateIncome(nodeCount int) float64 {
 	mx := weighting(nodeCount)
 	mbn := mb * mn * mx
 
-	s := bToGB(n.DiskUsage * n.Info.DiskSpace)
+	ds := (n.DiskUsage / 100) * n.DiskSpace
+	s := bToGB(ds * 12.5)
+
 	ms := mx * min(s, 2000) * (0.1 + float64(1/max(min(s, 2000), 10)))
 
 	poa := mbn + ms
 	poa = math.Round(poa*1000000) / 1000000
-	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] DiskSpace:[%.2f*%.2f=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] ", n.NodeID, n.BandwidthUp, n.NATType, mn, n.Info.DiskSpace, n.Info.DiskUsage, s, poa, mbn, ms)
+	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] DiskSpace:[%.2f*%.2f=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] mx:[%.1f]", n.NodeID, n.BandwidthUp, n.NATType, mn, n.DiskSpace, n.DiskUsage, s, poa, mbn, ms, mx)
 
 	return poa
 }
@@ -344,8 +354,8 @@ func weighting(num int) float64 {
 }
 
 // Increase every 5 seconds
-func (n *Node) CalculateMCx() float64 {
-	return 0.00289
+func (n *Node) CalculateMCx(count int) float64 {
+	return 0.00289 * weighting(count)
 	// mMbw := bToGB(float64(n.BandwidthUp))
 	// mMsw := bToGB(n.DiskUsage * n.Info.DiskSpace)
 	// if mMsw > 1 {

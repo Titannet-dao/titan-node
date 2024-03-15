@@ -118,9 +118,15 @@ func (n *SQLDB) UpdateNodeUploadTraffic(nodeID string, incSize int64) error {
 
 // UpdateValidationResultsTimeout sets the validation results' status as timeout.
 func (n *SQLDB) UpdateValidationResultsTimeout(roundID string) error {
-	query := fmt.Sprintf(`UPDATE %s SET status=?, end_time=NOW() WHERE round_id=? AND status=?`, validationResultTable)
-	_, err := n.db.Exec(query, types.ValidationStatusValidatorTimeOut, roundID, types.ValidationStatusCreate)
-	return err
+	if roundID != "" {
+		query := fmt.Sprintf(`UPDATE %s SET status=?, end_time=NOW() WHERE round_id=? AND status=?`, validationResultTable)
+		_, err := n.db.Exec(query, types.ValidationStatusValidatorTimeOut, roundID, types.ValidationStatusCreate)
+		return err
+	} else {
+		query := fmt.Sprintf(`UPDATE %s SET status=?, end_time=NOW() WHERE status=?`, validationResultTable)
+		_, err := n.db.Exec(query, types.ValidationStatusValidatorTimeOut, types.ValidationStatusCreate)
+		return err
+	}
 }
 
 // LoadValidationResultInfos load validation results.
@@ -369,13 +375,10 @@ func (n *SQLDB) NodeExists(nodeID string, nodeType types.NodeType) error {
 }
 
 // TodayRegisterCount get the number of registrations for this ip today
-func (n *SQLDB) TodayRegisterCount(ip string) (int, error) {
-	now := time.Now()
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
+func (n *SQLDB) RegisterCount(ip string) (int, error) {
 	var count int
-	cQuery := fmt.Sprintf(`SELECT count(*) FROM %s WHERE ip=? AND created_time >=?`, nodeRegisterTable)
-	err := n.db.Get(&count, cQuery, ip, midnight)
+	cQuery := fmt.Sprintf(`SELECT count(*) FROM %s WHERE ip=?`, nodeRegisterTable)
+	err := n.db.Get(&count, cQuery, ip)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			return 0, err

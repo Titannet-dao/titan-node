@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	defaultExpireDays     = 7
+	defaultExpireDays     = 360
 	defaultExpiration     = time.Duration(defaultExpireDays) * time.Hour * 24
 	defaultDateTimeLayout = "2006-01-02 15:04:05"
 )
@@ -75,10 +75,12 @@ var addAWSDataCmd = &cli.Command{
 			Name:  "path",
 			Usage: "aws data path",
 		},
+		cidFlag,
 		replicaCountFlag,
 	},
 	Action: func(cctx *cli.Context) error {
 		bucket := cctx.String("bucket")
+		cid := cctx.String("cid")
 		path := cctx.String("path")
 		replica := cctx.Int("replica-count")
 
@@ -115,7 +117,7 @@ var addAWSDataCmd = &cli.Command{
 		if bucket != "" {
 			bucket = replacer.Replace(bucket)
 
-			list = append(list, types.AWSDataInfo{Bucket: bucket, Replicas: replica})
+			list = append(list, types.AWSDataInfo{Bucket: bucket, Replicas: replica, Cid: cid})
 		}
 
 		if len(list) == 0 {
@@ -385,6 +387,7 @@ var listAssetRecordCmd = &cli.Command{
 			tablewriter.Col("State"),
 			tablewriter.Col("Blocks"),
 			tablewriter.Col("Size"),
+			tablewriter.Col("Replicas"),
 			tablewriter.Col("CreatedTime"),
 			tablewriter.Col("Expiration"),
 			tablewriter.NewLineCol("Processes"),
@@ -402,6 +405,7 @@ var listAssetRecordCmd = &cli.Command{
 				"State":       colorState(info.State),
 				"Blocks":      info.TotalBlocks,
 				"Size":        units.BytesSize(float64(info.TotalSize)),
+				"Replicas":    info.NeedEdgeReplica,
 				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
 				"Expiration":  info.Expiration.Format(defaultDateTimeLayout),
 			}

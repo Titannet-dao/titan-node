@@ -22,7 +22,7 @@ func (n *SQLDB) SaveAWSData(infos []types.AWSDataInfo) error {
 	}()
 
 	for _, info := range infos {
-		sqlString := fmt.Sprintf(`INSERT INTO %s (bucket, replicas) VALUES (:bucket, :replicas) `, awsDataTable)
+		sqlString := fmt.Sprintf(`INSERT INTO %s (bucket, replicas, cid) VALUES (:bucket, :replicas, :cid) `, awsDataTable)
 		_, err := tx.NamedExec(sqlString, info)
 		if err != nil {
 			return err

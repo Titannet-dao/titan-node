@@ -304,6 +304,8 @@ type NodeAPIStruct struct {
 
 		GetNodeOnlineState func(p0 context.Context) (bool, error) `perm:"edge"`
 
+		GetNodeToken func(p0 context.Context, p1 string) (string, error) `perm:"admin"`
+
 		GetOnlineNodeCount func(p0 context.Context, p1 types.NodeType) (int, error) `perm:"web,admin"`
 
 		NatPunch func(p0 context.Context, p1 *types.NatPunchReq) (error) `perm:"default"`
@@ -350,6 +352,8 @@ type SchedulerStruct struct {
 	Internal struct {
 
 		DeleteEdgeUpdateConfig func(p0 context.Context, p1 int) (error) `perm:"admin"`
+
+		ElectValidators func(p0 context.Context, p1 []string) (error) `perm:"admin"`
 
 		GetEdgeUpdateConfigs func(p0 context.Context) (map[int]*EdgeUpdateConfig, error) `perm:"edge"`
 
@@ -1309,6 +1313,17 @@ func (s *NodeAPIStub) GetNodeOnlineState(p0 context.Context) (bool, error) {
 	return false, ErrNotSupported
 }
 
+func (s *NodeAPIStruct) GetNodeToken(p0 context.Context, p1 string) (string, error) {
+	if s.Internal.GetNodeToken == nil {
+		return "", ErrNotSupported
+	}
+	return s.Internal.GetNodeToken(p0, p1)
+}
+
+func (s *NodeAPIStub) GetNodeToken(p0 context.Context, p1 string) (string, error) {
+	return "", ErrNotSupported
+}
+
 func (s *NodeAPIStruct) GetOnlineNodeCount(p0 context.Context, p1 types.NodeType) (int, error) {
 	if s.Internal.GetOnlineNodeCount == nil {
 		return 0, ErrNotSupported
@@ -1463,6 +1478,17 @@ func (s *SchedulerStruct) DeleteEdgeUpdateConfig(p0 context.Context, p1 int) (er
 }
 
 func (s *SchedulerStub) DeleteEdgeUpdateConfig(p0 context.Context, p1 int) (error) {
+	return ErrNotSupported
+}
+
+func (s *SchedulerStruct) ElectValidators(p0 context.Context, p1 []string) (error) {
+	if s.Internal.ElectValidators == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.ElectValidators(p0, p1)
+}
+
+func (s *SchedulerStub) ElectValidators(p0 context.Context, p1 []string) (error) {
 	return ErrNotSupported
 }
 

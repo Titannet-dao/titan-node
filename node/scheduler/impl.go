@@ -34,11 +34,18 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
-	"github.com/Filecoin-Titan/titan/node/scheduler/sync"
+	sSync "github.com/Filecoin-Titan/titan/node/scheduler/sync"
 	"golang.org/x/xerrors"
 )
 
 var log = logging.Logger("scheduler")
+
+const (
+	cpuLimit         = 140
+	memoryLimit      = 2250 * units.GiB
+	diskSpaceLimit   = 500 * units.TiB
+	bandwidthUpLimit = 200 * units.MiB
+)
 
 // Scheduler represents a scheduler node in a distributed system.
 type Scheduler struct {
@@ -52,7 +59,7 @@ type Scheduler struct {
 	ValidationMgr          *validation.Manager
 	AssetManager           *assets.Manager
 	NatManager             *nat.Manager
-	DataSync               *sync.DataSync
+	DataSync               *sSync.DataSync
 	SchedulerCfg           *config.SchedulerCfg
 	SetSchedulerConfigFunc dtypes.SetSchedulerConfigFunc
 	GetSchedulerConfigFunc dtypes.GetSchedulerConfigFunc
@@ -79,13 +86,29 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		cNode = node.New()
 		alreadyConnect = false
 	}
+
+	if cNode.ExternalIP != "" {
+		s.NodeManager.RemoveNodeIP(nodeID, cNode.ExternalIP)
+	}
+
+	externalIP, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return xerrors.Errorf("SplitHostPort err:%s", err.Error())
+	}
+
+	if !s.NodeManager.CheckNodeIP(nodeID, externalIP) {
+		return xerrors.Errorf("%s The number of IPs exceeds the limit", externalIP)
+	}
+
 	cNode.SetToken(opts.Token)
 	cNode.RemoteAddr = remoteAddr
 	cNode.ExternalURL = opts.ExternalURL
+	cNode.TCPPort = opts.TcpServerPort
+	cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
 	log.Infof("node connected %s, address:%s", nodeID, remoteAddr)
 
-	err := cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
+	err = cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
 	if err != nil {
 		return xerrors.Errorf("nodeConnect ConnectRPC err:%s", err.Error())
 	}
@@ -96,6 +119,13 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		if err != nil {
 			log.Errorf("nodeConnect NodeInfo err:%s", err.Error())
 			return err
+		}
+
+		if nodeType == types.NodeEdge {
+			err = checkNodeParameters(&nodeInfo)
+			if err != nil {
+				return err
+			}
 		}
 
 		if nodeID != nodeInfo.NodeID {
@@ -115,11 +145,16 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		if err != nil {
 			return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
 		}
+		cNode.PublicKey = publicKey
 
 		oldInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
 		if err != nil && err != sql.ErrNoRows {
 			return xerrors.Errorf("load node online duration %s err : %s", nodeID, err.Error())
 		}
+
+		nodeInfo.ExternalIP = externalIP
+
+		nodeInfo.BandwidthUp = units.MiB
 
 		if oldInfo != nil {
 			// init node info
@@ -134,17 +169,8 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 				return xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
 			}
 		}
-		nodeInfo.ExternalIP, _, err = net.SplitHostPort(remoteAddr)
-		if err != nil {
-			return xerrors.Errorf("SplitHostPort err:%s", err.Error())
-		}
 
-		// init value
-		cNode.PublicKey = publicKey
-		cNode.TCPPort = opts.TcpServerPort
-		cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
-
-		err = s.NodeManager.NodeOnline(cNode, checkNodeParameters(&nodeInfo))
+		err = s.NodeManager.NodeOnline(cNode, &nodeInfo)
 		if err != nil {
 			log.Errorf("nodeConnect err:%s,nodeID:%s", err.Error(), nodeID)
 			return err
@@ -160,24 +186,28 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	return nil
 }
 
-func checkNodeParameters(nodeInfo *types.NodeInfo) *types.NodeInfo {
-	if nodeInfo.DiskSpace > units.PiB {
-		nodeInfo.DiskSpace = units.PiB
+func checkNodeParameters(nodeInfo *types.NodeInfo) error {
+	if nodeInfo.DiskSpace > diskSpaceLimit {
+		return xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.DiskSpace)
 	}
 
-	if nodeInfo.BandwidthDown > units.TB {
-		nodeInfo.BandwidthDown = units.TB
+	// if nodeInfo.BandwidthDown > bandwidthLimit {
+	// 	return xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%d]", nodeInfo.NodeID, nodeInfo.BandwidthDown)
+	// }
+
+	if nodeInfo.BandwidthUp > bandwidthUpLimit {
+		return xerrors.Errorf("checkNodeParameters [%s] BandwidthUp [%d]", nodeInfo.NodeID, nodeInfo.BandwidthUp)
 	}
 
-	if nodeInfo.BandwidthUp > units.TB {
-		nodeInfo.BandwidthUp = units.TB
+	if nodeInfo.Memory > memoryLimit {
+		return xerrors.Errorf("checkNodeParameters [%s] Memory [%.2f]", nodeInfo.NodeID, nodeInfo.Memory)
 	}
 
-	if nodeInfo.Memory > units.TiB {
-		nodeInfo.Memory = units.TiB
+	if nodeInfo.CPUCores > cpuLimit {
+		return xerrors.Errorf("checkNodeParameters [%s] CPUCores [%d]", nodeInfo.NodeID, nodeInfo.CPUCores)
 	}
 
-	return nodeInfo
+	return nil
 }
 
 // NodeValidationResult processes the validation result for a node
@@ -324,4 +354,13 @@ func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, 
 // GetWorkloadRecord retrieves workload result.
 func (s *Scheduler) GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) {
 	return s.NodeManager.LoadWorkloadRecord(tokenID)
+}
+
+// ElectValidators elect validators
+func (s *Scheduler) ElectValidators(ctx context.Context, nodeIDs []string) error {
+	if len(nodeIDs) == 0 {
+		return nil
+	}
+
+	return s.ValidationMgr.CompulsoryElection(nodeIDs)
 }

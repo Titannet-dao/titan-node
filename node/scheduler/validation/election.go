@@ -63,6 +63,29 @@ func (m *Manager) elect() error {
 	return m.nodeMgr.UpdateValidators(validators, m.nodeMgr.ServerID)
 }
 
+func (m *Manager) CompulsoryElection(validators []string) error {
+	list, _ := m.nodeMgr.GetAllValidCandidateNodes()
+
+	validatables := make([]string, 0)
+	for _, nid := range list {
+		isV := false
+
+		for _, nid2 := range validators {
+			if nid == nid2 {
+				isV = true
+			}
+		}
+
+		if !isV {
+			validatables = append(validatables, nid)
+		}
+	}
+
+	m.ResetValidatorGroup(validators, validatables)
+
+	return m.nodeMgr.UpdateValidators(validators, m.nodeMgr.ServerID)
+}
+
 // StartElection triggers an election manually.
 func (m *Manager) StartElection() {
 	// TODO need to add restrictions to disallow frequent calls?

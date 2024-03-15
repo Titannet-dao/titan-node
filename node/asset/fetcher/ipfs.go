@@ -42,7 +42,7 @@ func NewIPFSClient(ipfsAPIURL string) *IPFSClient {
 }
 
 // FetchBlocks retrieves blocks from IPFSClient using the provided context, CIDs, and download info
-func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, downloadSources []*types.CandidateDownloadInfo) ([]*types.WorkloadReport, []blocks.Block, error) {
+func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, downloadSources []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.WorkloadReport, []blocks.Block, error) {
 	return ipfs.retrieveBlocks(ctx, cids)
 }
 
@@ -62,10 +62,11 @@ func (ipfs *IPFSClient) retrieveBlock(ctx context.Context, cidStr string) (block
 }
 
 // retrieveBlocks gets multiple blocks from IPFSClient using the provided context and CIDs
-func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]*types.WorkloadReport, []blocks.Block, error) {
+func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]*ErrMsg, []*types.WorkloadReport, []blocks.Block, error) {
 	blks := make([]blocks.Block, 0, len(cids))
 	blksLock := &sync.Mutex{}
 
+	errMsgs := make([]*ErrMsg, 0)
 	var wg sync.WaitGroup
 
 	for _, cid := range cids {
@@ -76,7 +77,7 @@ func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]*t
 
 			b, err := ipfs.retrieveBlock(ctx, cid)
 			if err != nil {
-				log.Errorf("getBlock error: %s, cid: %s", err.Error(), cid)
+				errMsgs = append(errMsgs, &ErrMsg{Cid: cid, Source: "ipfs", Msg: err.Error()})
 				return
 			}
 
@@ -88,10 +89,10 @@ func (ipfs *IPFSClient) retrieveBlocks(ctx context.Context, cids []string) ([]*t
 	wg.Wait()
 
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return nil, blks, ctx.Err()
+		return errMsgs, nil, blks, ctx.Err()
 	}
 
-	return nil, blks, nil
+	return errMsgs, nil, blks, nil
 }
 
 // createBlock creates a new block with the specified CID and data
