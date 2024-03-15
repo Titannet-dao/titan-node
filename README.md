@@ -8,14 +8,17 @@
 Titan Network's story begins in the middle of 2021 as the first project to build the retrieval layer and CDN solution for Filecoin. In early 2022, Titan Network was awarded one of the largest grants of $1 Million from the Protocol Labs to develop the tooling for the ecosystem. Together with delivering milestones for the grant, the Titan team realized there is a greater potential for utilizing idle resources on the community side beyond just the provision of a hot storage layer. Ever since then, the team has been dedicating themselves to building a full-resource DePIN network and has received recognition both from the Filecoin ecosystem and leading Web3 startup programs like HK Cyberport. 
 
 ## Join the Community
-[Telegram](https://t.me/titannet_dao)
+[**Telegram**](https://t.me/titannet_dao)
 
-[Twitter](https://twitter.com/Titannet_dao)
+[**Twitter**](https://twitter.com/Titannet_dao)
 
-## Building & Documentation
+## Run L2-Edge Node
 
-[Build & Run scheduler](documentation/en/build_run_scheduler.md)
+[**Install and Earn**](https://titannet.gitbook.io/titan-network-en/huygens-testnet/installation-and-earnings)
 
-[Build & Run nodes](documentation/en/build_run_nodes.md)
+[**安装赚取收益**](https://titannet.gitbook.io/titan-network-cn/huygens-testnet/an-zhuang-cheng-xu-zhuan-qu)
 
-[Documentation](documentation/)
+## Docs
+[**EN**](https://titannet.gitbook.io/titan-network-en)
+
+[**中文**](https://titannet.gitbook.io/titan-network-cn)
