@@ -27,6 +27,7 @@ type NodeDynamicInfo struct {
 	CPUUsage        float64
 	MemoryUsage     float64
 	Status          NodeStatus
+	TitanDiskUsage  float64
 	IncomeIncr      float64   // Base points increase every half hour (30 minute)
 	OnlineDuration  int       `db:"online_duration"` // unit:Minute
 	Profit          float64   `db:"profit"`
@@ -43,21 +44,23 @@ type NodeInfo struct {
 	ExternalIP string
 	InternalIP string
 
-	FirstTime      time.Time       `db:"first_login_time"`
-	BandwidthUp    int64           `json:"bandwidth_up" db:"bandwidth_up"`
-	BandwidthDown  int64           `json:"bandwidth_down" db:"bandwidth_down"`
-	DiskSpace      float64         `json:"disk_space" form:"diskSpace" gorm:"column:disk_space;comment:;" db:"disk_space"`
-	SystemVersion  string          `json:"system_version" form:"systemVersion" gorm:"column:system_version;comment:;" db:"system_version"`
-	DiskType       string          `json:"disk_type" form:"diskType" gorm:"column:disk_type;comment:;" db:"disk_type"`
-	IoSystem       string          `json:"io_system" form:"ioSystem" gorm:"column:io_system;comment:;" db:"io_system"`
-	NodeName       string          `json:"node_name" form:"nodeName" gorm:"column:node_name;comment:;" db:"node_name"`
-	Memory         float64         `json:"memory" form:"memory" gorm:"column:memory;comment:;" db:"memory"`
-	CPUCores       int             `json:"cpu_cores" form:"cpuCores" gorm:"column:cpu_cores;comment:;" db:"cpu_cores"`
-	MacLocation    string          `json:"mac_location" form:"macLocation" gorm:"column:mac_location;comment:;" db:"mac_location"`
-	NATType        string          `db:"nat_type"`
-	PortMapping    string          `db:"port_mapping"`
-	SchedulerID    dtypes.ServerID `db:"scheduler_sid"`
-	DeactivateTime int64           `db:"deactivate_time"`
+	FirstTime          time.Time       `db:"first_login_time"`
+	BandwidthUp        int64           `json:"bandwidth_up" db:"bandwidth_up"`
+	BandwidthDown      int64           `json:"bandwidth_down" db:"bandwidth_down"`
+	DiskSpace          float64         `json:"disk_space" form:"diskSpace" gorm:"column:disk_space;comment:;" db:"disk_space"`
+	AvailableDiskSpace float64         `json:"available_disk_space" form:"availableDiskSpace" gorm:"column:available_disk_space;comment:;" db:"available_disk_space"`
+	SystemVersion      string          `json:"system_version" form:"systemVersion" gorm:"column:system_version;comment:;" db:"system_version"`
+	DiskType           string          `json:"disk_type" form:"diskType" gorm:"column:disk_type;comment:;" db:"disk_type"`
+	IoSystem           string          `json:"io_system" form:"ioSystem" gorm:"column:io_system;comment:;" db:"io_system"`
+	NodeName           string          `json:"node_name" form:"nodeName" gorm:"column:node_name;comment:;" db:"node_name"`
+	Memory             float64         `json:"memory" form:"memory" gorm:"column:memory;comment:;" db:"memory"`
+	CPUCores           int             `json:"cpu_cores" form:"cpuCores" gorm:"column:cpu_cores;comment:;" db:"cpu_cores"`
+	MacLocation        string          `json:"mac_location" form:"macLocation" gorm:"column:mac_location;comment:;" db:"mac_location"`
+	NATType            string          `db:"nat_type"`
+	PortMapping        string          `db:"port_mapping"`
+	SchedulerID        dtypes.ServerID `db:"scheduler_sid"`
+	DeactivateTime     int64           `db:"deactivate_time"`
+	CPUInfo            string          `json:"cpu_info" form:"cpuInfo" gorm:"column:cpu_info;comment:;" db:"cpu_info"`
 
 	NodeDynamicInfo
 }
@@ -310,6 +313,9 @@ const (
 	ValidationStatusLoadDBErr
 	// ValidationStatusCIDToHashErr is the validation status when there is an error converting a CID to a hash.
 	ValidationStatusCIDToHashErr
+
+	// ValidationStatusOther
+	ValidationStatusOther
 )
 
 // TokenPayload payload of token

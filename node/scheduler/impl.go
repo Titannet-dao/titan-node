@@ -121,7 +121,20 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 			return err
 		}
 
-		if nodeType == types.NodeEdge {
+		if nodeInfo.AvailableDiskSpace <= 0 {
+			nodeInfo.AvailableDiskSpace = 2 * units.GiB
+		}
+
+		if nodeType == types.NodeCandidate {
+			isValidator, err := s.db.IsValidator(nodeID)
+			if err != nil {
+				return xerrors.Errorf("nodeConnect IsValidator err:%s", err.Error())
+			}
+
+			if isValidator {
+				nodeType = types.NodeValidator
+			}
+		} else {
 			err = checkNodeParameters(&nodeInfo)
 			if err != nil {
 				return err
@@ -153,7 +166,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		}
 
 		nodeInfo.ExternalIP = externalIP
-
 		nodeInfo.BandwidthUp = units.MiB
 
 		if oldInfo != nil {
@@ -163,7 +175,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 			nodeInfo.BandwidthDown = oldInfo.BandwidthDown
 			nodeInfo.BandwidthUp = oldInfo.BandwidthUp
 			nodeInfo.DeactivateTime = oldInfo.DeactivateTime
-			nodeInfo.DiskUsage = oldInfo.DiskUsage
 
 			if oldInfo.DeactivateTime > 0 && oldInfo.DeactivateTime < time.Now().Unix() {
 				return xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
@@ -187,23 +198,31 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 }
 
 func checkNodeParameters(nodeInfo *types.NodeInfo) error {
-	if nodeInfo.DiskSpace > diskSpaceLimit {
+	if nodeInfo.DiskSpace > diskSpaceLimit || nodeInfo.DiskSpace < 0 {
 		return xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.DiskSpace)
 	}
 
-	// if nodeInfo.BandwidthDown > bandwidthLimit {
-	// 	return xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%d]", nodeInfo.NodeID, nodeInfo.BandwidthDown)
+	if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace || nodeInfo.AvailableDiskSpace < 0 {
+		return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] > DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, nodeInfo.DiskSpace)
+	}
+
+	// if nodeInfo.AvailableDiskSpace < float64(tDiskUsage) {
+	// 	return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] < tDiskUsage [%d]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, tDiskUsage)
 	// }
 
-	if nodeInfo.BandwidthUp > bandwidthUpLimit {
+	if nodeInfo.BandwidthDown < 0 {
+		return xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%d]", nodeInfo.NodeID, nodeInfo.BandwidthDown)
+	}
+
+	if nodeInfo.BandwidthUp > bandwidthUpLimit || nodeInfo.BandwidthUp < 0 {
 		return xerrors.Errorf("checkNodeParameters [%s] BandwidthUp [%d]", nodeInfo.NodeID, nodeInfo.BandwidthUp)
 	}
 
-	if nodeInfo.Memory > memoryLimit {
+	if nodeInfo.Memory > memoryLimit || nodeInfo.Memory < 0 {
 		return xerrors.Errorf("checkNodeParameters [%s] Memory [%.2f]", nodeInfo.NodeID, nodeInfo.Memory)
 	}
 
-	if nodeInfo.CPUCores > cpuLimit {
+	if nodeInfo.CPUCores > cpuLimit || nodeInfo.CPUCores < 0 {
 		return xerrors.Errorf("checkNodeParameters [%s] CPUCores [%d]", nodeInfo.NodeID, nodeInfo.CPUCores)
 	}
 
@@ -338,7 +357,7 @@ func (s *Scheduler) SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) e
 		return xerrors.Errorf("decrypt error: %w", err)
 	}
 
-	return s.WorkloadManager.HandleNodeWorkload(data, node)
+	return s.WorkloadManager.PushResult(data, node)
 }
 
 // GetWorkloadRecords retrieves a list of workload results.

@@ -48,7 +48,7 @@ func ConfigCandidate(c interface{}) Option {
 
 	return Options(
 		Override(new(*config.CandidateCfg), cfg),
-		Override(new(*device.Device), modules.NewDevice(cfg.BandwidthUp, cfg.BandwidthDown)),
+		Override(new(*device.Device), modules.NewDevice(&cfg.CPU, &cfg.Memory, &cfg.Storage, &cfg.Bandwidth)),
 		Override(new(dtypes.NodeMetadataPath), dtypes.NodeMetadataPath(cfg.MetadataPath)),
 		Override(new(*config.MinioConfig), &cfg.MinioConfig),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),

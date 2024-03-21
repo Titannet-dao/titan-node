@@ -267,3 +267,30 @@ func (a *Asset) progress(root cid.Cid) (*types.AssetPullProgress, error) {
 	}
 	return nil, xerrors.Errorf("unknown asset %s status %d", root.String(), status)
 }
+
+func (a *Asset) GetAssetView(ctx context.Context) (*types.AssetView, error) {
+	topHash, err := a.mgr.GetTopHash(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bucketHashes, err := a.mgr.GetBucketHashes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.AssetView{TopHash: topHash, BucketHashes: bucketHashes}, nil
+}
+
+func (a *Asset) GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, error) {
+	cids, err := a.mgr.Storage.GetAssetsInBucket(ctx, uint32(bucketID))
+	if err != nil {
+		return nil, err
+	}
+
+	hashes := make([]string, 0)
+	for _, cid := range cids {
+		hashes = append(hashes, cid.Hash().String())
+	}
+	return hashes, nil
+}

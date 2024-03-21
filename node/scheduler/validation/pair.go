@@ -3,8 +3,8 @@ package validation
 import (
 	"math"
 	"math/rand"
-	"time"
 
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/docker/go-units"
 )
 
@@ -105,6 +105,42 @@ func (b *ValidatableGroup) removeNode(nodeID string) {
 	b.sumBwUp -= bwUp
 }
 
+func (m *Manager) resetGroup() {
+	m.validationPairLock.Lock()
+	defer m.validationPairLock.Unlock()
+
+	m.unpairedGroup = newValidatableGroup()
+	edges := m.nodeMgr.GetAllEdgeNode()
+	for _, node := range edges {
+		m.unpairedGroup.addNode(node.NodeID, node.BandwidthUp)
+	}
+
+	// init
+	m.validatableGroups = make([]*ValidatableGroup, 0)
+	m.vWindows = make([]*VWindow, 0)
+
+	_, candidates := m.nodeMgr.GetAllValidCandidateNodes()
+	for _, node := range candidates {
+		if node.Type != types.NodeValidator {
+			continue
+		}
+
+		bwDn := float64(node.BandwidthDown)
+		count := int(math.Floor((bwDn * bandwidthRatio) / m.getValidatorBaseBwDn()))
+		if count < 1 {
+			count = 1
+		}
+
+		for i := 0; i < count; i++ {
+			vr := newVWindow(node.NodeID)
+			m.vWindows = append(m.vWindows, vr)
+
+			bg := newValidatableGroup()
+			m.validatableGroups = append(m.validatableGroups, bg)
+		}
+	}
+}
+
 // ResetValidatorGroup clears and initializes the validator and validatable groups
 func (m *Manager) ResetValidatorGroup(validators, validatables []string) {
 	m.validationPairLock.Lock()
@@ -153,92 +189,92 @@ func (m *Manager) ResetValidatorGroup(validators, validatables []string) {
 	}
 }
 
-// adds a validator window to the manager with the specified node ID and bandwidth down
-func (m *Manager) addValidator(nodeID string, bwDn int64) {
-	m.validationPairLock.Lock()
-	defer m.validationPairLock.Unlock()
+// // adds a validator window to the manager with the specified node ID and bandwidth down
+// func (m *Manager) addValidator(nodeID string, bwDn int64) {
+// 	m.validationPairLock.Lock()
+// 	defer m.validationPairLock.Unlock()
 
-	count := int(math.Floor((float64(bwDn) * bandwidthRatio) / m.getValidatorBaseBwDn()))
-	if count < 1 {
-		count = 1
-	}
+// 	count := int(math.Floor((float64(bwDn) * bandwidthRatio) / m.getValidatorBaseBwDn()))
+// 	if count < 1 {
+// 		count = 1
+// 	}
 
-	// Do not process if node present
-	for _, v := range m.vWindows {
-		if v.NodeID == nodeID {
-			return
-		}
-	}
+// 	// Do not process if node present
+// 	for _, v := range m.vWindows {
+// 		if v.NodeID == nodeID {
+// 			return
+// 		}
+// 	}
 
-	for i := 0; i < count; i++ {
-		vr := newVWindow(nodeID)
-		m.vWindows = append(m.vWindows, vr)
+// 	for i := 0; i < count; i++ {
+// 		vr := newVWindow(nodeID)
+// 		m.vWindows = append(m.vWindows, vr)
 
-		bg := newValidatableGroup()
-		m.validatableGroups = append(m.validatableGroups, bg)
-	}
-}
+// 		bg := newValidatableGroup()
+// 		m.validatableGroups = append(m.validatableGroups, bg)
+// 	}
+// }
 
-// removes the validator window with the specified node ID from the manager
-func (m *Manager) removeValidator(nodeID string) {
-	m.validationPairLock.Lock()
-	defer m.validationPairLock.Unlock()
+// // removes the validator window with the specified node ID from the manager
+// func (m *Manager) removeValidator(nodeID string) {
+// 	m.validationPairLock.Lock()
+// 	defer m.validationPairLock.Unlock()
 
-	var indexes []int
-	for i, v := range m.vWindows {
-		if v.NodeID == nodeID {
-			indexes = append(indexes, i)
-		}
-	}
+// 	var indexes []int
+// 	for i, v := range m.vWindows {
+// 		if v.NodeID == nodeID {
+// 			indexes = append(indexes, i)
+// 		}
+// 	}
 
-	if len(indexes) == 0 {
-		return
-	}
+// 	if len(indexes) == 0 {
+// 		return
+// 	}
 
-	// update validator windows
-	start := indexes[0]
-	end := indexes[len(indexes)-1] + 1 // does not contain end , need to ++
+// 	// update validator windows
+// 	start := indexes[0]
+// 	end := indexes[len(indexes)-1] + 1 // does not contain end , need to ++
 
-	s1 := m.vWindows[:start]
-	s2 := m.vWindows[end:]
+// 	s1 := m.vWindows[:start]
+// 	s2 := m.vWindows[end:]
 
-	m.vWindows = append(s1, s2...)
+// 	m.vWindows = append(s1, s2...)
 
-	// update validatableGroups
-	rIndex := len(m.validatableGroups) - len(indexes)
-	removeGroups := m.validatableGroups[rIndex:]
+// 	// update validatableGroups
+// 	rIndex := len(m.validatableGroups) - len(indexes)
+// 	removeGroups := m.validatableGroups[rIndex:]
 
-	m.validatableGroups = m.validatableGroups[:rIndex]
+// 	m.validatableGroups = m.validatableGroups[:rIndex]
 
-	// add validatable nodes to unpairedGroup
-	for _, group := range removeGroups {
-		m.unpairedGroup.addNodes(group.nodes)
-	}
-}
+// 	// add validatable nodes to unpairedGroup
+// 	for _, group := range removeGroups {
+// 		m.unpairedGroup.addNodes(group.nodes)
+// 	}
+// }
 
-// adds a validatable node to unpairedGroup with the specified node ID and bandwidth up
-func (m *Manager) addValidatableNode(nodeID string, bandwidthUp int64) {
-	m.unpairedGroup.addNode(nodeID, bandwidthUp)
-}
+// // adds a validatable node to unpairedGroup with the specified node ID and bandwidth up
+// func (m *Manager) addValidatableNode(nodeID string, bandwidthUp int64) {
+// 	m.unpairedGroup.addNode(nodeID, bandwidthUp)
+// }
 
-// removes the validatable node with the specified node ID from the manager
-func (m *Manager) removeValidatableNode(nodeID string) {
-	m.validationPairLock.Lock()
-	defer m.validationPairLock.Unlock()
+// // removes the validatable node with the specified node ID from the manager
+// func (m *Manager) removeValidatableNode(nodeID string) {
+// 	m.validationPairLock.Lock()
+// 	defer m.validationPairLock.Unlock()
 
-	if _, exist := m.unpairedGroup.nodes[nodeID]; exist {
-		m.unpairedGroup.removeNode(nodeID)
-	}
+// 	if _, exist := m.unpairedGroup.nodes[nodeID]; exist {
+// 		m.unpairedGroup.removeNode(nodeID)
+// 	}
 
-	for _, bg := range m.validatableGroups {
-		bwUp, exist := bg.nodes[nodeID]
-		if exist {
-			bg.sumBwUp -= bwUp
-			delete(bg.nodes, nodeID)
-			return
-		}
-	}
-}
+// 	for _, bg := range m.validatableGroups {
+// 		bwUp, exist := bg.nodes[nodeID]
+// 		if exist {
+// 			bg.sumBwUp -= bwUp
+// 			delete(bg.nodes, nodeID)
+// 			return
+// 		}
+// 	}
+// }
 
 // divides the validatable nodes in the manager into groups with similar average bandwidth
 func (m *Manager) divideIntoGroups() {
@@ -297,7 +333,6 @@ func (m *Manager) PairValidatorsAndValidatableNodes() []*VWindow {
 		return nil
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(m.validatableGroups), func(i, j int) {
 		m.validatableGroups[i], m.validatableGroups[j] = m.validatableGroups[j], m.validatableGroups[i]
 	})

@@ -256,12 +256,12 @@ func (n *SQLDB) UpdateValidatorInfo(serverID dtypes.ServerID, nodeID string) err
 // SaveNodeInfo Insert or update node info
 func (n *SQLDB) SaveNodeInfo(info *types.NodeInfo) error {
 	query := fmt.Sprintf(
-		`INSERT INTO %s (node_id, mac_location, cpu_cores, memory, node_name,
+		`INSERT INTO %s (node_id, mac_location, cpu_cores, memory, node_name, cpu_info, available_disk_space,
 			    disk_type, io_system, system_version, nat_type, disk_space, bandwidth_up, bandwidth_down, scheduler_sid) 
-				VALUES (:node_id, :mac_location, :cpu_cores, :memory, :node_name,
+				VALUES (:node_id, :mac_location, :cpu_cores, :memory, :node_name, :cpu_info, :available_disk_space,
 				:disk_type, :io_system, :system_version, :nat_type, :disk_space, :bandwidth_up, :bandwidth_down, :scheduler_sid) 
 				ON DUPLICATE KEY UPDATE node_id=:node_id, scheduler_sid=:scheduler_sid, system_version=:system_version, cpu_cores=:cpu_cores,
-				memory=:memory, node_name=:node_name, disk_space=:disk_space`, nodeInfoTable)
+				memory=:memory, node_name=:node_name, disk_space=:disk_space, cpu_info=:cpu_info, available_disk_space=:available_disk_space`, nodeInfoTable)
 
 	_, err := n.db.NamedExec(query, info)
 	return err

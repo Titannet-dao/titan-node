@@ -23,6 +23,8 @@ const (
 
 	// Process 500 pieces of workload result data at a time
 	vWorkloadLimit = 500
+
+	handlerWorkers = 50
 )
 
 // Manager node workload
@@ -31,6 +33,8 @@ type Manager struct {
 	leadershipMgr *leadership.Manager
 	nodeMgr       *node.Manager
 	*db.SQLDB
+
+	resultQueue chan *WorkloadResult
 }
 
 // NewManager return new node manager instance
@@ -43,8 +47,31 @@ func NewManager(sdb *db.SQLDB, configFunc dtypes.GetSchedulerConfigFunc, lmgr *l
 	}
 
 	go manager.startHandleWorkloadResults()
+	manager.handleResults()
 
 	return manager
+}
+
+type WorkloadResult struct {
+	data []byte
+	node *node.Node
+}
+
+func (m *Manager) PushResult(data []byte, node *node.Node) error {
+	m.resultQueue <- &WorkloadResult{data: data, node: node}
+
+	return nil
+}
+
+func (m *Manager) handleResults() {
+	for i := 0; i < handlerWorkers; i++ {
+		go func() {
+			for {
+				result := <-m.resultQueue
+				m.HandleNodeWorkload(result.data, result.node)
+			}
+		}()
+	}
 }
 
 func (m *Manager) startHandleWorkloadResults() {

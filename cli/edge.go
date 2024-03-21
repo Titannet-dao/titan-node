@@ -546,15 +546,6 @@ var setConfigCmd = &cli.Command{
 			if cctx.IsSet("area-id") {
 				cfg.AreaID = cctx.String("area-id")
 			}
-			if cctx.IsSet("bandwidth-up") {
-				cfg.BandwidthUp = cctx.Int64("bandwidth-up")
-			}
-			if cctx.IsSet("bandwidth-down") {
-				cfg.BandwidthDown = cctx.Int64("bandwidth-down")
-			}
-			if cctx.IsSet("locator") {
-				cfg.Locator = cctx.Bool("locator")
-			}
 			if cctx.IsSet("certificate-path") {
 				cfg.CertificatePath = cctx.String("certificate-path")
 			}
@@ -661,8 +652,8 @@ var mergeConfigCmd = &cli.Command{
 
 		edgeConfig.Storage = newEdgeConfig.Storage
 		edgeConfig.Memory = newEdgeConfig.Memory
-		edgeConfig.Bandwidth = newEdgeConfig.Bandwidth
 		edgeConfig.CPU = newEdgeConfig.CPU
+		edgeConfig.Bandwidth.BandwidthMB = newEdgeConfig.Bandwidth.BandwidthMB
 
 		configBytes, err := config.GenerateConfigUpdate(edgeConfig, config.DefaultEdgeCfg(), true)
 		if err != nil {

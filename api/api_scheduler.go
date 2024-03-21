@@ -17,6 +17,8 @@ type AssetAPI interface {
 	PullAsset(ctx context.Context, info *types.PullAssetReq) error //perm:web,admin
 	// RemoveAssetRecord removes the asset record with the specified CID from the scheduler
 	RemoveAssetRecord(ctx context.Context, cid string) error //perm:admin
+	// StopAssetRecord stop asset
+	StopAssetRecord(ctx context.Context, cids []string) error //perm:admin
 	// RemoveAssetReplica deletes an asset replica with the specified CID and node from the scheduler
 	RemoveAssetReplica(ctx context.Context, cid, nodeID string) error //perm:admin
 	// GetAssetRecord retrieves the asset record with the specified CID
@@ -59,6 +61,8 @@ type AssetAPI interface {
 	AddAWSData(ctx context.Context, list []types.AWSDataInfo) error //perm:web,admin
 	// SwitchFillDiskTimer  switches the timer between ON and OFF states
 	SwitchFillDiskTimer(ctx context.Context, open bool) error //perm:web,admin
+	// LoadAWSData load data
+	LoadAWSData(ctx context.Context, limit, offset int, isDistribute bool) ([]*types.AWSDataInfo, error) //perm:web,admin
 }
 
 // NodeAPI is an interface for node
@@ -128,6 +132,12 @@ type NodeAPI interface {
 	DownloadDataResult(ctx context.Context, bucket, cid string, size int64) error //perm:edge,candidate
 	// GetNodeToken get node token
 	GetNodeToken(ctx context.Context, nodeID string) (string, error) //perm:admin
+	// CheckIpUsage
+	CheckIpUsage(ctx context.Context, ip string) (bool, error) //perm:admin,web,locator
+	// GetAssetViwe get the asset view of node
+	GetAssetView(ctx context.Context, nodeID string, isFromNode bool) (*types.AssetView, error) //perm:admin
+	// GetAssetInBucket get the assets of the bucket
+	GetAssetsInBucket(ctx context.Context, nodeID string, bucketID int, isFromNode bool) ([]string, error) //perm:admin
 }
 
 // UserAPI is an interface for user

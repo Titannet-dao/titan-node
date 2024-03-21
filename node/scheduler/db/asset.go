@@ -411,6 +411,14 @@ func (n *SQLDB) LoadAssetStateInfo(hash string, serverID dtypes.ServerID) (*type
 	return &info, nil
 }
 
+// UpdateAssetRecordReplicaCount
+func (n *SQLDB) UpdateAssetRecordReplicaCount(cid string, count int) error {
+	query := fmt.Sprintf(`UPDATE %s SET edge_replicas=? WHERE cid=?`, assetRecordTable)
+	_, err := n.db.Exec(query, count, cid)
+
+	return err
+}
+
 // SaveAssetRecord  saves an asset record into the database.
 func (n *SQLDB) SaveAssetRecord(rInfo *types.AssetRecord) error {
 	tx, err := n.db.Beginx()
@@ -427,9 +435,9 @@ func (n *SQLDB) SaveAssetRecord(rInfo *types.AssetRecord) error {
 
 	// asset record
 	query := fmt.Sprintf(
-		`INSERT INTO %s (hash, scheduler_sid, cid, edge_replicas, candidate_replicas, expiration, bandwidth, total_size, created_time) 
-		        VALUES (:hash, :scheduler_sid, :cid, :edge_replicas, :candidate_replicas, :expiration, :bandwidth, :total_size, :created_time)
-				ON DUPLICATE KEY UPDATE scheduler_sid=:scheduler_sid, edge_replicas=:edge_replicas, created_time=:created_time,
+		`INSERT INTO %s (hash, scheduler_sid, cid, edge_replicas, candidate_replicas, expiration, bandwidth, total_size, created_time, note) 
+		        VALUES (:hash, :scheduler_sid, :cid, :edge_replicas, :candidate_replicas, :expiration, :bandwidth, :total_size, :created_time, :note)
+				ON DUPLICATE KEY UPDATE scheduler_sid=:scheduler_sid, edge_replicas=:edge_replicas, created_time=:created_time, note=:note,
 				candidate_replicas=:candidate_replicas, expiration=:expiration, bandwidth=:bandwidth, total_size=:total_size`, assetRecordTable)
 	_, err = tx.NamedExec(query, rInfo)
 	if err != nil {

@@ -25,7 +25,6 @@ var nodeCmds = &cli.Command{
 		listNodeCmd,
 		deactivateCmd,
 		unDeactivateCmd,
-		list2NodeCmd,
 	},
 }
 
@@ -150,71 +149,6 @@ var listNodeCmd = &cli.Command{
 	},
 }
 
-var list2NodeCmd = &cli.Command{
-	Name:  "list2",
-	Usage: "list node",
-	Flags: []cli.Flag{},
-	Action: func(cctx *cli.Context) error {
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		offset := 0
-		limit := 20
-
-		str := ""
-		for {
-			r, err := schedulerAPI.GetNodeList(ctx, offset, limit)
-			if err != nil {
-				return err
-			}
-
-			l := len(r.Data)
-
-			for w := 0; w < l; w++ {
-				info := r.Data[w]
-
-				prot := "1234"
-				if info.Type == types.NodeCandidate {
-					if info.Status != types.NodeServicing {
-						continue
-					}
-
-					prot = "2345"
-				} else {
-					if info.NATType != types.NatTypeNo.String() {
-						continue
-					}
-				}
-
-				str = fmt.Sprintf("%s%s %s:%s\n", str, info.NodeID, info.ExternalIP, prot)
-			}
-
-			if l < limit {
-				break
-			} else {
-				offset = (offset + limit)
-			}
-		}
-
-		file, err := os.OpenFile("nodes.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
-
-		// 写入数据
-		if _, err := file.WriteString(str); err != nil {
-			log.Fatal(err)
-		}
-
-		return err
-	},
-}
-
 func colorOnline(status types.NodeStatus) string {
 	if status == types.NodeServicing {
 		return color.GreenString(status.String())
@@ -295,6 +229,8 @@ var showNodeInfoCmd = &cli.Command{
 		fmt.Printf("system version: %s \n", info.SystemVersion)
 		fmt.Printf("disk usage: %.4f %s\n", info.DiskUsage, "%")
 		fmt.Printf("disk space: %s \n", units.BytesSize(info.DiskSpace))
+		fmt.Printf("titan disk usage: %s\n", units.BytesSize(info.TitanDiskUsage))
+		fmt.Printf("titan disk space: %s\n", units.BytesSize(info.AvailableDiskSpace))
 		fmt.Printf("fsType: %s \n", info.IoSystem)
 		fmt.Printf("mac: %s \n", info.MacLocation)
 		fmt.Printf("download bandwidth: %s \n", units.BytesSize(float64(info.BandwidthDown)))

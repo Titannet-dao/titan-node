@@ -51,11 +51,17 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 		}
 		nodes[cNode.NodeID] = cNode
 	} else {
-		// find nodes
-		str := ""
-		nodes, str = m.chooseCandidateNodes(seedReplicaCount, info.CandidateReplicaSucceeds)
-		if len(nodes) < 1 {
-			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+		nodeInfo := m.getNodesFromFillAsset(info.CID)
+		if nodeInfo != nil && nodeInfo.candidateList != nil && len(nodeInfo.candidateList) > 0 {
+			seed := nodeInfo.candidateList[0]
+			nodes[seed.NodeID] = seed
+		} else {
+			// find nodes
+			str := ""
+			nodes, str = m.chooseCandidateNodes(seedReplicaCount, info.CandidateReplicaSucceeds)
+			if len(nodes) < 1 {
+				return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+			}
 		}
 	}
 
@@ -160,10 +166,23 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 		return ctx.Send(SkipStep{})
 	}
 
-	// find nodes
-	nodes, str := m.chooseCandidateNodes(int(needCount), info.CandidateReplicaSucceeds)
-	if len(nodes) < 1 {
-		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+	nodes := make(map[string]*node.Node)
+
+	nodeInfo := m.getNodesFromFillAsset(info.CID)
+	if nodeInfo != nil && nodeInfo.candidateList != nil && len(nodeInfo.candidateList) > 1 {
+		ns := nodeInfo.candidateList[1:]
+		for _, n := range ns {
+			nodes[n.NodeID] = n
+		}
+
+		m.removeNodesFromFillAsset(info.CID, true)
+	} else {
+		// find nodes
+		str := ""
+		nodes, str = m.chooseCandidateNodes(int(needCount), info.CandidateReplicaSucceeds)
+		if len(nodes) < 1 {
+			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+		}
 	}
 
 	downloadSources, payloads, err := m.GenerateToken(info.CID, sources, nodes)
@@ -255,10 +274,22 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
-	// find nodes
-	nodes, str := m.chooseEdgeNodes(int(needCount), needBandwidth, info.EdgeReplicaSucceeds, float64(info.Size))
-	if len(nodes) < 1 {
-		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+	nodes := make(map[string]*node.Node)
+
+	nodeInfo := m.getNodesFromFillAsset(info.CID)
+	if nodeInfo != nil && nodeInfo.edgeList != nil && len(nodeInfo.edgeList) > 0 {
+		for _, n := range nodeInfo.edgeList {
+			nodes[n.NodeID] = n
+		}
+
+		m.removeNodesFromFillAsset(info.CID, false)
+	} else {
+		// find nodes
+		str := ""
+		nodes, str = m.chooseEdgeNodes(int(needCount), needBandwidth, info.EdgeReplicaSucceeds, float64(info.Size))
+		if len(nodes) < 1 {
+			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
+		}
 	}
 
 	downloadSources, payloads, err := m.GenerateToken(info.CID, sources, nodes)
@@ -379,6 +410,13 @@ func (m *Manager) handleRemove(ctx statemachine.Context, info AssetPullingInfo) 
 			log.Errorf("DeleteAssetUser: %s", info.Hash)
 		}
 	}
+
+	return nil
+}
+
+func (m *Manager) handleStop(ctx statemachine.Context, info AssetPullingInfo) error {
+	log.Infof("handle remove: %s", info.Hash)
+	m.stopAssetTimeoutCounting(info.Hash.String())
 
 	return nil
 }

@@ -22,7 +22,7 @@ const (
 	masterName = "/master/%s/%s"
 
 	edgeCountKey         = "/edgeCount"
-	edgeCountKeyDuration = 60 * 20 // Second
+	edgeCountKeyDuration = 60 * 6 // Second
 )
 
 // Client etcd client
@@ -108,20 +108,22 @@ func (c *Client) GetEdgeCounts(selfServerID string) (int, error) {
 		keys = append(keys, string(kv.Key))
 	}
 
+	var tErr error
 	total := 0
 	for _, key := range keys {
-		// fmt.Printf("GetEdgeCounts key %s \n", key)
+		fmt.Printf("GetEdgeCounts key %s \n", key)
 		if key != fmt.Sprintf("%s/%s", edgeCountKey, selfServerID) {
 			count, err := c.getEdgeCount(key)
 			if err != nil {
-				// fmt.Printf("GetEdgeCounts %s err: %s \n", key, err.Error())
+				fmt.Printf("GetEdgeCounts %s err: %s \n", key, err.Error())
+				tErr = err
 				continue
 			}
 			total += count
 		}
 	}
 
-	return total, nil
+	return total, tErr
 }
 
 // ServerRegister register to etcd , If already register in, return an error

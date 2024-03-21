@@ -17,7 +17,7 @@ import (
 var log = logging.Logger("node")
 
 const (
-	syncEdgeCountTime = 25 * time.Minute //
+	syncEdgeCountTime = 5 * time.Minute //
 	// keepaliveTime is the interval between keepalive requests
 	keepaliveTime       = 30 * time.Second // seconds
 	calculatePointsTime = 30 * time.Minute
@@ -82,10 +82,6 @@ func (m *Manager) getIPLimit() int {
 }
 
 func (m *Manager) CheckNodeIP(nodeID, ip string) bool {
-	if m.ipLimit == 0 {
-		return true
-	}
-
 	listI, exist := m.nodeIPs.Load(ip)
 	if exist && listI != nil {
 		nodes := listI.([]string)
@@ -112,10 +108,6 @@ func (m *Manager) CheckNodeIP(nodeID, ip string) bool {
 }
 
 func (m *Manager) RemoveNodeIP(nodeID, ip string) {
-	if m.ipLimit == 0 {
-		return
-	}
-
 	listI, exist := m.nodeIPs.Load(ip)
 	if exist && listI != nil {
 		nodes := listI.([]string)
@@ -130,6 +122,12 @@ func (m *Manager) RemoveNodeIP(nodeID, ip string) {
 
 		m.nodeIPs.Store(ip, list)
 	}
+}
+
+func (m *Manager) CheckIPExist(ip string) bool {
+	_, exist := m.nodeIPs.Load(ip)
+
+	return exist
 }
 
 func (m *Manager) syncEdgeCountFromNetwork() {
@@ -177,7 +175,7 @@ func (m *Manager) startNodeKeepaliveTimer() {
 func (m *Manager) startCheckNodeTimer() {
 	now := time.Now()
 
-	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
 	if now.After(nextTime) {
 		nextTime = nextTime.Add(oneDay)
 	}
@@ -267,15 +265,6 @@ func (m *Manager) DistributeNodeWeight(node *Node) {
 		return
 	}
 
-	b, err := m.IsValidator(node.NodeID)
-	if err != nil {
-		log.Errorf("DistributeNodeWeight IsValidator %s err:%s", node.NodeID, err.Error())
-	}
-
-	if b {
-		return
-	}
-
 	score := m.getNodeScoreLevel(node.NodeID)
 	wNum := m.weightMgr.getWeightNum(score)
 	if node.Type == types.NodeCandidate {
@@ -304,7 +293,7 @@ func (m *Manager) nodeKeepalive(node *Node, t time.Time) bool {
 		m.RemoveNodeIP(node.NodeID, node.ExternalIP)
 
 		node.ClientCloser()
-		if node.Type == types.NodeCandidate {
+		if node.Type == types.NodeCandidate || node.Type == types.NodeValidator {
 			m.deleteCandidateNode(node)
 		} else if node.Type == types.NodeEdge {
 			m.deleteEdgeNode(node)
@@ -410,6 +399,10 @@ func (m *Manager) redistributeNodeSelectWeights() {
 			return true
 		}
 
+		if node.Type == types.NodeValidator {
+			return true
+		}
+
 		score := m.getNodeScoreLevel(node.NodeID)
 		wNum := m.weightMgr.getWeightNum(score)
 		node.selectWeights = m.weightMgr.distributeCandidateWeight(node.NodeID, wNum)
@@ -438,6 +431,11 @@ func (m *Manager) GetAllEdgeNode() []*Node {
 
 	m.edgeNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
+
+		if node.IsAbnormal() {
+			return true
+		}
+
 		nodes = append(nodes, node)
 
 		return true
@@ -476,11 +474,13 @@ func (m *Manager) checkNodeDeactivate() {
 	}
 }
 
-func (m *Manager) UpdateNodeDiskUsage(nodeID string) {
+func (m *Manager) UpdateNodeDiskUsage(nodeID string, diskUsage float64) {
 	node := m.GetNode(nodeID)
 	if node == nil {
 		return
 	}
+
+	node.DiskUsage = diskUsage
 
 	size, err := m.LoadReplicaSizeByNodeID(nodeID)
 	if err != nil {
@@ -488,6 +488,11 @@ func (m *Manager) UpdateNodeDiskUsage(nodeID string) {
 		return
 	}
 
-	node.DiskUsage = (float64(size) / node.DiskSpace) * 100
-	log.Infof("LoadReplicaSizeByNodeID %s update:%v", nodeID, node.DiskUsage)
+	node.TitanDiskUsage = float64(size)
+	// if node.DiskSpace <= 0 {
+	// 	node.DiskUsage = 100
+	// } else {
+	// 	node.DiskUsage = (float64(size) / node.DiskSpace) * 100
+	// }
+	log.Infof("LoadReplicaSizeByNodeID %s update:%v", nodeID, node.TitanDiskUsage)
 }

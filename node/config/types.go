@@ -19,7 +19,12 @@ type Storage struct {
 }
 
 type Bandwidth struct {
+	// unit is MB/s
 	BandwidthMB int64
+	// upload file bandwidth, unit is MB/s
+	BandwidthUp int64
+	// download file bandwidth, unit is <B/s
+	BandwidthDown int64
 }
 
 type Memory struct {
@@ -41,12 +46,6 @@ type EdgeCfg struct {
 	AreaID string
 	// used auth when connect to scheduler
 	Secret string
-	// upload file bandwidth, unit is B/s
-	BandwidthUp int64
-	// download file bandwidth, unit is B/s
-	BandwidthDown int64
-	// if true, get scheduler url from locator
-	Locator bool
 	// InsecureSkipVerify http3 client skip tls verify
 	InsecureSkipVerify bool
 	// used for http3 server
@@ -190,5 +189,6 @@ type SchedulerCfg struct {
 	IPWhitelist              []string
 	MaxNumberOfRegistrations int
 
-	IPLimit int
+	IPLimit            int
+	FillAssetEdgeCount int64
 }

@@ -22,4 +22,8 @@ type Asset interface {
 	CreateAsset(ctx context.Context, tokenPayload *types.AuthUserUploadDownloadAsset) (string, error) //perm:admin
 	// PullAssetWithURL download the file locally from the url and save it as car file
 	PullAssetFromAWS(ctx context.Context, bucket, key string) error //perm:admin
+	// GetAssetView get asset view
+	GetAssetView(ctx context.Context) (*types.AssetView, error) //perm:admin
+	// GetAssetsInBucket get assets in bucket
+	GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, error) //perm:admin
 }

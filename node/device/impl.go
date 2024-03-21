@@ -10,20 +10,38 @@ import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/build"
+	"github.com/Filecoin-Titan/titan/node/config"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
 var log = logging.Logger("device")
 
+const (
+	// 1MB/s
+	bandwidthUnit = 1024 * 1024
+	// 1GB/s
+	storageUnit = 1024 * 1024 * 1024
+)
+
 // Device represents a device and its properties
 type Device struct {
-	nodeID        string
-	publicIP      string
-	internalIP    string
-	bandwidthUp   int64
-	bandwidthDown int64
-	storage       Storage
+	nodeID     string
+	publicIP   string
+	internalIP string
+	resources  *Resources
+	storage    Storage
+}
+
+type Resources struct {
+	// CPU Limit cpu usage
+	CPU *config.CPU
+	// Memory Limit memory usage
+	Memory *config.Memory
+	// Storage Limit storage usage
+	Storage *config.Storage
+	// Bandwidth Limit bandwidth usage
+	Bandwidth *config.Bandwidth
 }
 
 // Storage represents a storage system and its properties.
@@ -33,13 +51,12 @@ type Storage interface {
 }
 
 // NewDevice creates a new Device instance with the specified properties.
-func NewDevice(nodeID, internalIP string, bandwidthUp, bandwidthDown int64, storage Storage) *Device {
+func NewDevice(nodeID, internalIP string, res *Resources, storage Storage) *Device {
 	device := &Device{
-		nodeID:        nodeID,
-		internalIP:    internalIP,
-		bandwidthUp:   bandwidthUp,
-		bandwidthDown: bandwidthDown,
-		storage:       storage,
+		nodeID:     nodeID,
+		internalIP: internalIP,
+		resources:  res,
+		storage:    storage,
 	}
 
 	if _, err := cpu.Percent(0, false); err != nil {
@@ -72,8 +89,15 @@ func (device *Device) GetNodeInfo(ctx context.Context) (types.NodeInfo, error) {
 	info.ExternalIP = device.publicIP
 	info.SystemVersion = version.String()
 	info.InternalIP = device.internalIP
-	info.BandwidthDown = device.bandwidthDown
-	info.BandwidthUp = device.bandwidthUp
+
+	if device.resources.Bandwidth != nil {
+		info.BandwidthDown = device.resources.Bandwidth.BandwidthDown * bandwidthUnit
+		info.BandwidthUp = device.resources.Bandwidth.BandwidthUp * bandwidthUnit
+	}
+
+	if device.resources.Storage != nil {
+		info.AvailableDiskSpace = float64(device.resources.Storage.StorageGB) * storageUnit
+	}
 
 	mac, err := getMacAddr(info.InternalIP)
 	if err != nil {
@@ -91,6 +115,12 @@ func (device *Device) GetNodeInfo(ctx context.Context) (types.NodeInfo, error) {
 	if vmStat != nil {
 		info.MemoryUsage = vmStat.UsedPercent
 		info.Memory = float64(vmStat.Total)
+	}
+
+	if cpuInfos, err := cpu.Info(); err != nil {
+		log.Errorf("get cpu info error %s", err.Error())
+	} else if len(cpuInfos) > 0 {
+		info.CPUInfo = cpuInfos[0].ModelName
 	}
 
 	cpuPercent, err := cpu.Percent(0, false)
@@ -134,19 +164,14 @@ func getMacAddr(ip string) (string, error) {
 	return "", nil
 }
 
-// SetBandwidthUp sets the bandwidth upload limit for the device.
-func (device *Device) SetBandwidthUp(bandwidthUp int64) {
-	device.bandwidthUp = bandwidthUp
-}
-
 // GetBandwidthUp returns the bandwidth upload limit for the device.
 func (device *Device) GetBandwidthUp() int64 {
-	return device.bandwidthUp
+	return device.resources.Bandwidth.BandwidthUp * bandwidthUnit
 }
 
 // GetBandwidthDown returns the bandwidth download limit for the device.
 func (device *Device) GetBandwidthDown() int64 {
-	return device.bandwidthDown
+	return device.resources.Bandwidth.BandwidthDown * bandwidthUnit
 }
 
 // GetInternalIP returns the internal IP address for the device.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"golang.org/x/xerrors"
 )
 
 // SaveAWSData save data
@@ -22,7 +23,11 @@ func (n *SQLDB) SaveAWSData(infos []types.AWSDataInfo) error {
 	}()
 
 	for _, info := range infos {
-		sqlString := fmt.Sprintf(`INSERT INTO %s (bucket, replicas, cid) VALUES (:bucket, :replicas, :cid) `, awsDataTable)
+		if info.Size <= 0 {
+			return xerrors.Errorf("%s SaveAWSData size %.2f ", info.Bucket, info.Size)
+		}
+
+		sqlString := fmt.Sprintf(`INSERT INTO %s (bucket, replicas, cid, size) VALUES (:bucket, :replicas, :cid, :size) `, awsDataTable)
 		_, err := tx.NamedExec(sqlString, info)
 		if err != nil {
 			return err
@@ -39,10 +44,10 @@ func (n *SQLDB) UpdateAWSData(info *types.AWSDataInfo) error {
 }
 
 // ListAWSData
-func (n *SQLDB) ListAWSData(limit int) ([]*types.AWSDataInfo, error) {
+func (n *SQLDB) ListAWSData(limit, offset int, isDistribute bool) ([]*types.AWSDataInfo, error) {
 	var infos []*types.AWSDataInfo
 	query := fmt.Sprintf("SELECT * FROM %s WHERE is_distribute=? LIMIT ? OFFSET ?", awsDataTable)
-	err := n.db.Select(&infos, query, false, limit, 0)
+	err := n.db.Select(&infos, query, isDistribute, limit, offset)
 	if err != nil {
 		return nil, err
 	}
