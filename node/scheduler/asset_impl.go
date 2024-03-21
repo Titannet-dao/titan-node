@@ -19,7 +19,7 @@ func (s *Scheduler) NodeRemoveAssetResult(ctx context.Context, resultInfo types.
 	nodeID := handler.GetNodeID(ctx)
 
 	// update node info
-	s.NodeManager.UpdateNodeDiskUsage(nodeID)
+	s.NodeManager.UpdateNodeDiskUsage(nodeID, resultInfo.DiskUsage)
 	return nil
 }
 
@@ -119,6 +119,25 @@ func (s *Scheduler) RemoveAssetRecord(ctx context.Context, cid string) error {
 	}
 
 	return s.AssetManager.RemoveAsset(hash, true) // TODO UserID
+}
+
+// StopAssetRecord stop an asset record from the system by its CID.
+func (s *Scheduler) StopAssetRecord(ctx context.Context, cids []string) error {
+	if len(cids) <= 0 {
+		return xerrors.Errorf("Cid Is Nil")
+	}
+
+	hashs := make([]string, 0)
+	for _, cid := range cids {
+		hash, err := cidutil.CIDToHash(cid)
+		if err != nil {
+			continue
+		}
+
+		hashs = append(hashs, hash)
+	}
+
+	return s.AssetManager.StopAsset(hashs)
 }
 
 // RemoveAssetReplica removes an asset replica from the system by its CID and nodeID.
@@ -308,6 +327,10 @@ func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.Minio
 
 func (s *Scheduler) AddAWSData(ctx context.Context, list []types.AWSDataInfo) error {
 	return s.db.SaveAWSData(list)
+}
+
+func (s *Scheduler) LoadAWSData(ctx context.Context, limit, offset int, isDistribute bool) ([]*types.AWSDataInfo, error) {
+	return s.db.ListAWSData(limit, offset, isDistribute)
 }
 
 func (s *Scheduler) SwitchFillDiskTimer(ctx context.Context, open bool) error {

@@ -2,6 +2,8 @@ package locator
 
 import "sync"
 
+// It differs from sync.map by the addition of the len() function
+// sync.map can not delete item on range
 type SafeMap struct {
 	mu sync.Mutex
 	m  map[interface{}]interface{}

@@ -1,10 +1,12 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	crand "crypto/rand"
 	"database/sql"
+	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -91,7 +93,7 @@ func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey string, 
 		return nil, xerrors.Errorf("RegisterCount %w", err)
 	} else if count >= s.SchedulerCfg.MaxNumberOfRegistrations &&
 		!isInIPWhitelist(ip, s.SchedulerCfg.IPWhitelist) {
-		return nil, xerrors.New("today's registrations exceeded the number")
+		return nil, xerrors.New("Registrations exceeded the number")
 	}
 
 	detail := &types.ActivationDetail{
@@ -338,18 +340,19 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		nodeInfo.BandwidthUp = node.BandwidthUp
 		nodeInfo.ExternalIP = node.ExternalIP
 		nodeInfo.IncomeIncr = node.IncomeIncr
+		nodeInfo.TitanDiskUsage = node.TitanDiskUsage
 
 		log.Debugf("%s node select codes:%v", nodeID, node.SelectWeights())
 	}
 
-	isValidator, err := s.db.IsValidator(nodeID)
-	if err != nil {
-		log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
-	}
+	// isValidator, err := s.db.IsValidator(nodeID)
+	// if err != nil {
+	// 	log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
+	// }
 
-	if isValidator {
-		nodeInfo.Type = types.NodeValidator
-	}
+	// if isValidator {
+	// 	nodeInfo.Type = types.NodeValidator
+	// }
 
 	return nodeInfo, nil
 }
@@ -364,14 +367,14 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 	}
 	defer rows.Close()
 
-	validator := make(map[string]struct{})
-	validatorList, err := s.NodeManager.LoadValidators(s.NodeManager.ServerID)
-	if err != nil {
-		log.Errorf("get validator list: %v", err)
-	}
-	for _, id := range validatorList {
-		validator[id] = struct{}{}
-	}
+	// validator := make(map[string]struct{})
+	// validatorList, err := s.NodeManager.LoadValidators(s.NodeManager.ServerID)
+	// if err != nil {
+	// 	log.Errorf("get validator list: %v", err)
+	// }
+	// for _, id := range validatorList {
+	// 	validator[id] = struct{}{}
+	// }
 
 	nodeInfos := make([]types.NodeInfo, 0)
 	for rows.Next() {
@@ -394,12 +397,13 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 			nodeInfo.BandwidthUp = node.BandwidthUp
 			nodeInfo.ExternalIP = node.ExternalIP
 			nodeInfo.IncomeIncr = node.IncomeIncr
+			nodeInfo.TitanDiskUsage = node.TitanDiskUsage
 		}
 
-		_, exist := validator[nodeInfo.NodeID]
-		if exist {
-			nodeInfo.Type = types.NodeValidator
-		}
+		// _, exist := validator[nodeInfo.NodeID]
+		// if exist {
+		// 	nodeInfo.Type = types.NodeValidator
+		// }
 
 		nodeInfos = append(nodeInfos, *nodeInfo)
 	}
@@ -540,6 +544,15 @@ func (s *Scheduler) GetNodeToken(ctx context.Context, nodeID string) (string, er
 	return node.GetToken(), nil
 }
 
+func (s *Scheduler) CheckIpUsage(ctx context.Context, ip string) (bool, error) {
+	if s.NodeManager.CheckIPExist(ip) {
+		return true, nil
+	}
+
+	count, err := s.db.RegisterCount(ip)
+	return count > 0, err
+}
+
 func (s *Scheduler) getEdgeDownloadRatio() float64 {
 	return s.SchedulerCfg.EdgeDownloadRatio
 }
@@ -561,7 +574,13 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 
 	workloadRecords := make([]*types.WorkloadRecord, 0)
 
+	limit := 50
+
 	for _, rInfo := range replicas {
+		if len(sources) > limit {
+			break
+		}
+
 		// if !rInfo.IsCandidate {
 		// 	continue
 		// }
@@ -569,6 +588,10 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 		nodeID := rInfo.NodeID
 		cNode := s.NodeManager.GetNode(nodeID)
 		if cNode == nil {
+			continue
+		}
+
+		if cNode.Type == types.NodeValidator {
 			continue
 		}
 
@@ -777,7 +800,9 @@ func (s *Scheduler) UpdateBandwidths(ctx context.Context, bandwidthDown, bandwid
 func (s *Scheduler) DownloadDataResult(ctx context.Context, bucket, cid string, size int64) error {
 	nodeID := handler.GetNodeID(ctx)
 
-	log.Infof("DownloadDataResult %s : %s : %s ", nodeID, cid, bucket)
+	log.Infof("awsTask DownloadDataResult %s : %s : %s : %d", nodeID, cid, bucket, size)
+
+	s.AssetManager.UpdateFillAssetResponseCount(bucket, cid, nodeID)
 
 	return nil
 
@@ -868,4 +893,70 @@ func (s *Scheduler) GetNodeOnlineState(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// GetAssetViwe get the asset view of node
+func (s *Scheduler) GetAssetView(ctx context.Context, nodeID string, isFromNode bool) (*types.AssetView, error) {
+	if isFromNode {
+		fmt.Println("from node")
+		node := s.NodeManager.GetNode(nodeID)
+		if node == nil {
+			return nil, fmt.Errorf("node %s offline or not exist", nodeID)
+		}
+		return node.GetAssetView(ctx)
+	}
+
+	topHash, err := s.AssetManager.LoadTopHash(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	hashesBytes, err := s.AssetManager.LoadBucketHashes(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(hashesBytes) == 0 {
+		return nil, fmt.Errorf("node %s not exist any asset", nodeID)
+	}
+
+	bucketHashMap := make(map[uint32]string)
+	buffer := bytes.NewBuffer(hashesBytes)
+	dec := gob.NewDecoder(buffer)
+	if err := dec.Decode(&bucketHashMap); err != nil {
+		return nil, err
+	}
+
+	return &types.AssetView{TopHash: topHash, BucketHashes: bucketHashMap}, nil
+}
+
+// GetAssetInBucket get the assets of the bucket
+func (s *Scheduler) GetAssetsInBucket(ctx context.Context, nodeID string, bucketID int, isFromNode bool) ([]string, error) {
+	if isFromNode {
+		fmt.Println("from node")
+		node := s.NodeManager.GetNode(nodeID)
+		if node == nil {
+			return nil, fmt.Errorf("node %s offline or not exist", nodeID)
+		}
+		return node.GetAssetsInBucket(ctx, bucketID)
+	}
+
+	id := fmt.Sprintf("%s:%d", nodeID, bucketID)
+	hashesBytes, err := s.AssetManager.LoadBucket(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(hashesBytes) == 0 {
+		return nil, fmt.Errorf("bucket %s not exist any asset", bucketID)
+	}
+
+	assetHashes := make([]string, 0)
+	buffer := bytes.NewBuffer(hashesBytes)
+	dec := gob.NewDecoder(buffer)
+	if err := dec.Decode(&assetHashes); err != nil {
+		return nil, err
+	}
+
+	return assetHashes, nil
 }

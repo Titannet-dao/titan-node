@@ -40,7 +40,7 @@ func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, lmgr *leadership.Manage
 		ServerID:      serverID,
 	}
 
-	go mgr.startTimer()
+	// go mgr.startTimer()
 
 	return mgr
 }
@@ -48,7 +48,7 @@ func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, lmgr *leadership.Manage
 func (m *Manager) startTimer() {
 	now := time.Now()
 
-	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, now.Location())
 	if now.After(nextTime) {
 		nextTime = nextTime.Add(oneDay)
 	}

@@ -33,9 +33,6 @@ func DefaultEdgeCfg() *EdgeCfg {
 			Timeout:       "30s",
 			LocatorURL:    "https://localhost:5000/rpc/v0",
 		},
-		BandwidthUp:   104857600,
-		BandwidthDown: 1073741824,
-		Locator:       true,
 
 		CertificatePath:    "",
 		PrivateKeyPath:     "",
@@ -53,7 +50,12 @@ func DefaultEdgeCfg() *EdgeCfg {
 			MemoryGB: 1,
 		},
 		Bandwidth: Bandwidth{
+			// 10MB/s
 			BandwidthMB: 10,
+			// 100MB/s
+			BandwidthUp: 100,
+			// 1G/s
+			BandwidthDown: 1024,
 		},
 		CPU: CPU{
 			Cores: 1,
@@ -69,9 +71,6 @@ func DefaultCandidateCfg() *CandidateCfg {
 			Timeout:       "30s",
 			LocatorURL:    "https://localhost:5000/rpc/v0",
 		},
-		BandwidthUp:   1073741824,
-		BandwidthDown: 1073741824,
-		Locator:       true,
 
 		InsecureSkipVerify: true,
 		CertificatePath:    "",
@@ -91,10 +90,16 @@ func DefaultCandidateCfg() *CandidateCfg {
 			Path:      "./",
 		},
 		Memory: Memory{
+			// 1GB
 			MemoryGB: 1,
 		},
 		Bandwidth: Bandwidth{
-			BandwidthMB: 10,
+			// 1GB/s
+			BandwidthMB: 1024,
+			// 1GB/s
+			BandwidthUp: 1024,
+			// 1GB/s
+			BandwidthDown: 1024,
 		},
 		CPU: CPU{
 			Cores: 1,
@@ -150,6 +155,7 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		UploadAssetReplicaCount: 20,
 		UploadAssetExpiration:   150,
 		IPLimit:                 5,
+		FillAssetEdgeCount:      4000,
 		NodeScoreLevel: map[string][]int{
 			"A": {90, 100},
 			"B": {50, 89},
@@ -168,7 +174,7 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		Weight:                   100,
 		MaxAPIKey:                5,
 		// Maximum number of node registrations for the same IP on the same day
-		MaxNumberOfRegistrations: 5,
+		MaxNumberOfRegistrations: 15,
 	}
 }
 

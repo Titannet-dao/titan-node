@@ -178,11 +178,13 @@ func (ac *awsClient) downloadObjects(svc *s3.S3, bucket, key string, tempFilePat
 		prefix = parts[1]
 	}
 	log.Debugf("downloadObjects bucket=[%s], prefix=[%s]", bucket, prefix)
+	var totalSize = int64(0)
 	var objectKeys = make([]string, 0)
 	var listObjects = &s3.ListObjectsInput{Bucket: &bucket, Prefix: &prefix}
 	err := svc.ListObjectsPages(listObjects, func(p *s3.ListObjectsOutput, last bool) (shouldContinue bool) {
 		for _, obj := range p.Contents {
 			objectKeys = append(objectKeys, *obj.Key)
+			totalSize += aws.Int64Value(obj.Size)
 		}
 		return true
 	})
@@ -192,6 +194,10 @@ func (ac *awsClient) downloadObjects(svc *s3.S3, bucket, key string, tempFilePat
 
 	if len(objectKeys) == 0 {
 		return fmt.Errorf("no key in bucket %s", bucket)
+	}
+
+	if totalSize >= ac.usableDiskSpace() {
+		return fmt.Errorf("not enough disk space, need %d, usable %d, bucket %s", totalSize, ac.usableDiskSpace(), bucket)
 	}
 
 	if err := os.Mkdir(tempFilePath, 0755); err != nil {
@@ -220,6 +226,10 @@ func (ac *awsClient) downloadObject(svc *s3.S3, bucket, key string, tempFilePath
 	}
 	defer result.Body.Close()
 
+	if aws.Int64Value(result.ContentLength) >= ac.usableDiskSpace() {
+		return fmt.Errorf("not enough disk space, bucket %s", bucket)
+	}
+
 	file, err := os.Create(tempFilePath)
 	if err != nil {
 		return err
@@ -231,4 +241,10 @@ func (ac *awsClient) downloadObject(svc *s3.S3, bucket, key string, tempFilePath
 		return err
 	}
 	return nil
+}
+
+func (ac *awsClient) usableDiskSpace() int64 {
+	totalSpace, usage := ac.storageMgr.GetDiskUsageStat()
+	usable := totalSpace - (totalSpace * (usage / float64(100)))
+	return int64(usable)
 }

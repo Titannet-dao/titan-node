@@ -80,6 +80,7 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 	),
 	UploadFailed: planOne(),
 	Remove:       planOne(),
+	Stop:         planOne(),
 	Servicing:    planOne(),
 }
 
@@ -132,6 +133,8 @@ func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (fu
 		return m.handleUploadFailed, processed, nil
 	case Remove:
 		return m.handleRemove, processed, nil
+	case Stop:
+		return m.handleStop, processed, nil
 	// Fatal errors
 	default:
 		log.Errorf("unexpected asset update state: %s", state.State)
@@ -212,7 +215,7 @@ func (m *Manager) initStateMachines(ctx context.Context) error {
 	}
 
 	for _, asset := range list {
-		if asset.State == Remove || asset.State == Servicing {
+		if asset.State == Remove || asset.State == Servicing || asset.State == Stop {
 			continue
 		}
 

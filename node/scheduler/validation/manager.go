@@ -109,7 +109,7 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 
 // Start start validate and elect task
 func (m *Manager) Start(ctx context.Context) {
-	go m.startValidationTicker(ctx)
+	go m.startValidationTicker()
 	// go m.startElectionTicker()
 	go m.startHandleResultsTimer()
 
@@ -151,39 +151,39 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 
 	nodeID := node.NodeID
 
-	isValidator, err := m.nodeMgr.IsValidator(nodeID)
-	if err != nil {
-		log.Errorf("onNodeStateChange IsValidator %s err:%s", node.NodeID, err.Error())
-		return
-	}
+	// isValidator, err := m.nodeMgr.IsValidator(nodeID)
+	// if err != nil {
+	// 	log.Errorf("onNodeStateChange IsValidator %s err:%s", node.NodeID, err.Error())
+	// 	return
+	// }
 
 	if isOnline {
-		if node.IsAbnormal() {
-			return
-		}
+		// if node.IsAbnormal() {
+		// 	return
+		// }
 
-		if isValidator {
-			m.addValidator(nodeID, node.BandwidthDown)
+		if node.Type == types.NodeValidator {
+			// m.addValidator(nodeID, node.BandwidthDown)
 
 			// update validator owner
 			err := m.nodeMgr.UpdateValidatorInfo(m.nodeMgr.ServerID, nodeID)
 			if err != nil {
 				log.Errorf("UpdateValidatorInfo err:%s", err.Error())
 			}
-		} else {
-			if node.Type == types.NodeCandidate {
-				return
-			}
-			m.addValidatableNode(nodeID, node.BandwidthDown)
+			// 	} else {
+			// if node.Type == types.NodeCandidate {
+			// 	return
+			// }
+			// 		m.addValidatableNode(nodeID, node.BandwidthDown)
+			// 	}
+
+			// 	return
 		}
 
-		return
-	}
-
-	if isValidator {
-		m.removeValidator(nodeID)
-	} else {
-		m.removeValidatableNode(nodeID)
+		// if isValidator {
+		// 	m.removeValidator(nodeID)
+		// } else {
+		// 	m.removeValidatableNode(nodeID)
 	}
 }
 

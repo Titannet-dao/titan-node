@@ -32,6 +32,8 @@ const (
 	maxRandomNumber = 10000
 )
 
+type SchedulerAPIMap map[string]*SchedulerAPI
+
 type Storage interface {
 	GetSchedulerConfigs(areaID string) ([]*types.SchedulerCfg, error)
 	GetAllSchedulerConfigs() []*types.SchedulerCfg
@@ -45,12 +47,12 @@ type Locator struct {
 	Storage
 	*config.LocatorCfg
 	*DNSServer
-	Rand *rand.Rand
+	Rand          *rand.Rand
+	ScheduelrAPIs SchedulerAPIMap
 }
 
-type schedulerAPI struct {
+type SchedulerAPI struct {
 	api.Scheduler
-	close  jsonrpc.ClientCloser
 	config *types.SchedulerCfg
 }
 
@@ -71,7 +73,7 @@ func (l *Locator) GetAccessPoints(ctx context.Context, nodeID, areaID string) ([
 		return nil, err
 	}
 
-	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +81,7 @@ func (l *Locator) GetAccessPoints(ctx context.Context, nodeID, areaID string) ([
 	return l.selectBestSchedulers(schedulerAPIs, nodeID)
 }
 
-func (l *Locator) selectBestSchedulers(apis []*schedulerAPI, nodeID string) ([]string, error) {
+func (l *Locator) selectBestSchedulers(apis []*SchedulerAPI, nodeID string) ([]string, error) {
 	if len(apis) == 0 {
 		return nil, nil
 	}
@@ -98,12 +100,11 @@ func (l *Locator) selectBestSchedulers(apis []*schedulerAPI, nodeID string) ([]s
 
 	for _, api := range apis {
 		wg.Add(1)
-		go func(ctx context.Context, s *schedulerAPI) {
-			defer s.close()
+		go func(ctx context.Context, s *SchedulerAPI) {
 			defer wg.Done()
 
 			if err := s.NodeExists(ctx, nodeID); err != nil {
-				log.Warnf("check node exists %s", err.Error())
+				log.Warnf("check node %s exists %s, sheduler %s", nodeID, err.Error(), s.config.SchedulerURL)
 				return
 			}
 
@@ -147,11 +148,11 @@ func (l *Locator) randomSchedulerConfigWithWeight(configs []*types.SchedulerCfg)
 	return nil
 }
 
-func (l *Locator) newSchedulerAPIs(configs []*types.SchedulerCfg) ([]*schedulerAPI, error) {
-	schedulerAPIs := make([]*schedulerAPI, 0, len(configs))
+func (l *Locator) getOrNewSchedulerAPIs(configs []*types.SchedulerCfg) ([]*SchedulerAPI, error) {
+	schedulerAPIs := make([]*SchedulerAPI, 0, len(configs))
 
 	for _, config := range configs {
-		api, err := l.newSchedulerAPI(config)
+		api, err := l.getOrNewSchedulerAPI(config)
 		if err != nil {
 			log.Errorf("new scheduler api error %s", err.Error())
 			continue
@@ -162,17 +163,29 @@ func (l *Locator) newSchedulerAPIs(configs []*types.SchedulerCfg) ([]*schedulerA
 	return schedulerAPIs, nil
 }
 
-func (l *Locator) newSchedulerAPI(config *types.SchedulerCfg) (*schedulerAPI, error) {
+func (l *Locator) getOrNewSchedulerAPI(config *types.SchedulerCfg) (*SchedulerAPI, error) {
+	if l.ScheduelrAPIs == nil {
+		l.ScheduelrAPIs = make(map[string]*SchedulerAPI)
+	}
+
+	scheduler, ok := l.ScheduelrAPIs[config.SchedulerURL]
+	if ok {
+		return scheduler, nil
+	}
+
 	log.Debugf("newSchedulerAPI, url:%s, areaID:%s, accessToken:%s", config.SchedulerURL, config.AreaID, config.AccessToken)
 
 	headers := http.Header{}
 	headers.Add("Authorization", "Bearer "+config.AccessToken)
-	api, close, err := client.NewScheduler(context.Background(), config.SchedulerURL, headers, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
+	api, _, err := client.NewScheduler(context.Background(), config.SchedulerURL, headers, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 	if err != nil {
 		return nil, err
 	}
 
-	return &schedulerAPI{api, close, config}, nil
+	scheduler = &SchedulerAPI{api, config}
+	l.ScheduelrAPIs[config.SchedulerURL] = scheduler
+
+	return scheduler, nil
 }
 
 func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.EdgeDownloadInfoList, error) {
@@ -191,7 +204,7 @@ func (l *Locator) EdgeDownloadInfos(ctx context.Context, cid string) ([]*types.E
 		configs = l.GetAllSchedulerConfigs()
 	}
 
-	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +239,7 @@ func (l *Locator) getAreaID(remoteAddr string) (string, error) {
 	return l.DefaultAreaID, nil
 }
 
-func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid string) ([]*types.EdgeDownloadInfoList, error) {
+func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*SchedulerAPI, cid string) ([]*types.EdgeDownloadInfoList, error) {
 	if len(apis) == 0 {
 		return nil, fmt.Errorf("scheduler api is empty")
 	}
@@ -243,9 +256,7 @@ func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid
 	errCh := make(chan error)
 
 	for _, api := range apis {
-		go func(ctx context.Context, s *schedulerAPI, ch chan *types.EdgeDownloadInfoList, errCh chan error) {
-			defer s.close()
-
+		go func(ctx context.Context, s *SchedulerAPI, ch chan *types.EdgeDownloadInfoList, errCh chan error) {
 			if infoList, err := s.GetEdgeDownloadInfos(ctx, cid); err != nil {
 				errCh <- err
 			} else {
@@ -292,7 +303,7 @@ func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*ty
 		configs = l.GetAllSchedulerConfigs()
 	}
 
-	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +317,7 @@ func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*ty
 	return l.getCandidateDownloadInfoFromBestScheduler(schedulerAPIs, cid)
 }
 
-func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*schedulerAPI, cid string) ([]*types.CandidateDownloadInfo, error) {
+func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*SchedulerAPI, cid string) ([]*types.CandidateDownloadInfo, error) {
 	if len(apis) == 0 {
 		return nil, fmt.Errorf("scheduler api is empty")
 	}
@@ -325,8 +336,7 @@ func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*schedulerAPI
 	for _, api := range apis {
 		wg.Add(1)
 
-		go func(ctx context.Context, s *schedulerAPI) {
-			defer s.close()
+		go func(ctx context.Context, s *SchedulerAPI) {
 			defer wg.Done()
 
 			if infos, err := s.GetCandidateDownloadInfos(ctx, cid); err == nil {
@@ -369,22 +379,15 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		areaID = geoInfo.Geo
 	}
 
-	configs := make([]*types.SchedulerCfg, 0)
+	configs := l.GetAllSchedulerConfigs()
+	if cfg, err := l.getSchedulerWithUserLastEntry(configs, userIP); err != nil {
+		return nil, err
+	} else if cfg != nil {
+		log.Debugf("getSchedulerWithUserLastEntry %s %s", cfg.SchedulerURL, userIP)
+		return &api.AccessPoint{AreaID: cfg.AreaID, SchedulerURLs: []string{cfg.SchedulerURL}}, nil
+	}
 
 	exculdeAreas := convertAreasToMap(l.LocatorCfg.LoadBalanceExcludeArea)
-	if _, ok := exculdeAreas[areaID]; !ok {
-		var err error
-		configs, err = l.GetSchedulerConfigs(areaID)
-		if err != nil {
-			return nil, err
-		}
-
-	}
-
-	if len(configs) == 0 {
-		configs = l.GetAllSchedulerConfigs()
-	}
-
 	schedulerURLs := make(map[string][]string)
 	for _, config := range configs {
 		if _, ok := exculdeAreas[config.AreaID]; ok {
@@ -404,18 +407,45 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		return &api.AccessPoint{AreaID: areaID, SchedulerURLs: make([]string, 0)}, nil
 	}
 
-	var urls []string
-	for _, schedulers := range schedulerURLs {
-		urls = schedulers
-	}
 	// get scheduler configs of first areaID
-	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: urls}, nil
+	for area, schedulers := range schedulerURLs {
+		return &api.AccessPoint{AreaID: area, SchedulerURLs: schedulers}, nil
+	}
+	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: make([]string, 0)}, nil
+}
+
+func (l *Locator) getSchedulerWithUserLastEntry(configs []*types.SchedulerCfg, userIP string) (*types.SchedulerCfg, error) {
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
+	if err != nil {
+		return nil, err
+	}
+
+	var config *types.SchedulerCfg
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := &sync.WaitGroup{}
+	for _, s := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(schedulerAPI *SchedulerAPI) {
+			defer wg.Done()
+			if ok, err := schedulerAPI.CheckIpUsage(ctx, userIP); err != nil {
+				return
+			} else if ok {
+				config = schedulerAPI.config
+				cancel()
+			}
+		}(s)
+	}
+
+	wg.Wait()
+
+	return config, nil
 }
 
 // GetCandidateIP retrieves ip of candidate
 func (l *Locator) GetCandidateIP(ctx context.Context, nodeID string) (string, error) {
 	configs := l.GetAllSchedulerConfigs()
-	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
 		return "", err
 	}
@@ -438,8 +468,7 @@ func (l *Locator) GetCandidateIP(ctx context.Context, nodeID string) (string, er
 	for _, api := range schedulerAPIs {
 		wg.Add(1)
 
-		go func(ctx context.Context, s *schedulerAPI) {
-			defer s.close()
+		go func(ctx context.Context, s *SchedulerAPI) {
 			defer wg.Done()
 
 			if ip, err := s.GetCandidateNodeIP(ctx, nodeID); err == nil {
@@ -462,7 +491,7 @@ func (l *Locator) GetCandidateIP(ctx context.Context, nodeID string) (string, er
 // GetSchedulerWithNode get the scheduler that the node is already connected to
 func (l *Locator) GetSchedulerWithNode(ctx context.Context, nodeID string) (string, error) {
 	configs := l.GetAllSchedulerConfigs()
-	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
 		return "", err
 	}
@@ -485,8 +514,7 @@ func (l *Locator) GetSchedulerWithNode(ctx context.Context, nodeID string) (stri
 	for _, api := range schedulerAPIs {
 		wg.Add(1)
 
-		go func(ctx context.Context, s *schedulerAPI) {
-			defer s.close()
+		go func(ctx context.Context, s *SchedulerAPI) {
 			defer wg.Done()
 
 			if _, err := s.GetCandidateNodeIP(ctx, nodeID); err == nil {
@@ -504,7 +532,7 @@ func (l *Locator) GetSchedulerWithNode(ctx context.Context, nodeID string) (stri
 
 func (l *Locator) GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (string, error) {
 	configs := l.GetAllSchedulerConfigs()
-	schedulerAPIs, err := l.newSchedulerAPIs(configs)
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
 		return "", err
 	}
@@ -527,8 +555,7 @@ func (l *Locator) GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (st
 	for _, api := range schedulerAPIs {
 		wg.Add(1)
 
-		go func(ctx context.Context, s *schedulerAPI) {
-			defer s.close()
+		go func(ctx context.Context, s *SchedulerAPI) {
 			defer wg.Done()
 
 			payload, err := s.AuthVerify(ctx, apiKey)

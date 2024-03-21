@@ -123,6 +123,10 @@ func (ap *assetPuller) pullAsset() error {
 
 		if ap.totalSize == 0 {
 			ap.totalSize = ret.linksSize + ret.doneSize
+			// check usabe disk space
+			if ap.totalSize >= uint64(ap.usableDiskSpace()) {
+				return fmt.Errorf("not enough disk space, need %d, usable %d, pull asset %s", ap.totalSize, ap.usableDiskSpace(), ap.root.String())
+			}
 		}
 
 		nextLayerCIDs = ret.nextLayerCIDs
@@ -396,4 +400,10 @@ func (ap *assetPuller) encodeWorkloadReports() ([]byte, error) {
 	}
 
 	return buffer.Bytes(), nil
+}
+
+func (ap *assetPuller) usableDiskSpace() int64 {
+	totalSpace, usage := ap.storage.GetDiskUsageStat()
+	usable := totalSpace - (totalSpace * (usage / float64(100)))
+	return int64(usable)
 }

@@ -2,7 +2,6 @@ package validation
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"math/rand"
 	"time"
@@ -25,7 +24,7 @@ const (
 )
 
 // startValidationTicker starts the validation process.
-func (m *Manager) startValidationTicker(ctx context.Context) {
+func (m *Manager) startValidationTicker() {
 	ticker := time.NewTicker(validationInterval)
 	defer ticker.Stop()
 
@@ -93,7 +92,12 @@ func (m *Manager) startValidate() error {
 	}
 	m.seed = seed
 
+	m.resetGroup()
+
 	vrs := m.PairValidatorsAndValidatableNodes()
+	if vrs == nil {
+		return xerrors.Errorf("PairValidatorsAndValidatableNodes err...")
+	}
 
 	vReqs, dbInfos := m.getValidationDetails(vrs)
 	if len(vReqs) == 0 {
@@ -102,23 +106,23 @@ func (m *Manager) startValidate() error {
 
 	err = m.nodeMgr.SaveValidationResultInfos(dbInfos)
 	if err != nil {
-		return err
+		return xerrors.Errorf("SaveValidationResultInfos err:%s", err.Error())
 	}
 
 	for nodeID, reqs := range vReqs {
 		delay += duration
-		if delay > 25*60 {
+		if delay > 20*60 {
 			delay = 0
 		}
 
-		go m.sendValidateReqToNodes(nodeID, reqs, delay)
+		go m.sendValidateReqToNode(nodeID, reqs, delay)
 	}
 
 	return nil
 }
 
 // sends a validation request to a node.
-func (m *Manager) sendValidateReqToNodes(nID string, req *api.ValidateReq, delay int) {
+func (m *Manager) sendValidateReqToNode(nID string, req *api.ValidateReq, delay int) {
 	time.Sleep(time.Duration(delay) * time.Second)
 	log.Infof("%d sendValidateReqToNodes v:[%s] n:[%s]", delay, req.TCPSrvAddr, nID)
 
@@ -143,18 +147,16 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 
 	for _, vr := range vrs {
 		vID := vr.NodeID
+		vTCPAddr := ""
 		vNode := m.nodeMgr.GetCandidateNode(vID)
-		if vNode == nil {
-			log.Errorf("%s validator not exist", vNode)
-			continue
+		if vNode != nil {
+			vTCPAddr = vNode.TCPAddr()
 		}
 
 		for nodeID := range vr.ValidatableNodes {
 			cid, err := m.assetMgr.RandomAsset(nodeID, m.seed)
 			if err != nil {
-				if err != sql.ErrNoRows {
-					log.Errorf("%s RandomAsset err:%s", nodeID, err.Error())
-				}
+				log.Errorf("%s RandomAsset err:%s", nodeID, err.Error())
 				continue
 			}
 
@@ -173,7 +175,7 @@ func (m *Manager) getValidationDetails(vrs []*VWindow) (map[string]*api.Validate
 			req := &api.ValidateReq{
 				RandomSeed: m.seed,
 				Duration:   duration,
-				TCPSrvAddr: vNode.TCPAddr(),
+				TCPSrvAddr: vTCPAddr,
 			}
 
 			bReqs[nodeID] = req
@@ -194,22 +196,22 @@ func (m *Manager) getRandNum(max int, r *rand.Rand) int {
 
 // updateResultInfo updates the validation result information for a given node.
 func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult) error {
-	if status == types.ValidationStatusValidateFail {
+	if status == types.ValidationStatusOther {
 		status = types.ValidationStatusSuccess
 	}
 
 	profit := 0.0
 	// update node bandwidths
-	if status != types.ValidationStatusNodeTimeOut && status != types.ValidationStatusValidateFail {
-		node := m.nodeMgr.GetNode(vr.NodeID)
-		if node != nil {
-			if status == types.ValidationStatusSuccess {
-				node.BandwidthUp = int64(vr.Bandwidth)
-			}
-
-			profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges)
+	node := m.nodeMgr.GetNode(vr.NodeID)
+	if node != nil {
+		if status == types.ValidationStatusNodeTimeOut || status == types.ValidationStatusValidateFail {
+			node.BandwidthUp = 0
+		} else if status == types.ValidationStatusCancel {
+		} else {
+			node.BandwidthUp = int64(vr.Bandwidth)
 		}
 
+		profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges)
 	}
 
 	resultInfo := &types.ValidationResultInfo{
@@ -312,7 +314,7 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 		// TODO Penalize the candidate if vCid error
 
 		if !m.compareCid(resultCid, validatorCid) {
-			status = types.ValidationStatusValidateFail
+			status = types.ValidationStatusOther
 			log.Errorf("handleResult round [%s] validator [%s] cNodeID [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, cNodeID, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
 			return
 		}
@@ -371,7 +373,7 @@ func (m *Manager) compareCid(cidStr1, cidStr2 string) bool {
 func (m *Manager) startHandleResultsTimer() {
 	now := time.Now()
 
-	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 15, 0, 0, 0, now.Location())
 	if now.After(nextTime) {
 		nextTime = nextTime.Add(oneDay)
 	}

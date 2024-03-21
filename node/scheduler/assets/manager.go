@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"database/sql"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -30,9 +31,9 @@ const (
 	// The number of pull replica in the first stage
 	seedReplicaCount = 1
 	// Interval to get asset pull progress from node (Unit:Second)
-	pullProgressInterval = 5 * time.Second
+	pullProgressInterval = 60 * time.Second
 	// Interval to check candidate backup of asset (Unit:Minute)
-	checkCandidateBackupInterval = 10 * time.Minute
+	checkCandidateBackupInterval = 60 * time.Minute
 	// Maximum number of replicas per asset
 	assetEdgeReplicasLimit = 10000
 	// The number of retries to select the pull asset node
@@ -63,6 +64,9 @@ type Manager struct {
 	removeMapLock        sync.Mutex
 
 	fillSwitch bool
+
+	fillAssets     sync.Map
+	fillAssetNodes sync.Map
 }
 
 // NewManager returns a new AssetManager instance
@@ -89,9 +93,9 @@ func (m *Manager) Start(ctx context.Context) {
 		log.Errorf("restartStateMachines err: %s", err.Error())
 	}
 
-	go m.startCheckAssetsTimer()
-	go m.startCheckPullProgressesTimer(ctx)
-	go m.startCheckCandidateBackupTimer()
+	// go m.startCheckAssetsTimer()
+	go m.startCheckPullProgressesTimer()
+	// go m.startCheckCandidateBackupTimer()
 	go m.initFillDiskTimer()
 }
 
@@ -114,7 +118,7 @@ func (m *Manager) startCheckCandidateBackupTimer() {
 func (m *Manager) startCheckAssetsTimer() {
 	now := time.Now()
 
-	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 18, 0, 0, 0, now.Location())
 	if now.After(nextTime) {
 		nextTime = nextTime.Add(24 * time.Hour)
 	}
@@ -139,7 +143,7 @@ func (m *Manager) startCheckAssetsTimer() {
 }
 
 // startCheckPullProgressesTimer Periodically gets asset pull progress
-func (m *Manager) startCheckPullProgressesTimer(ctx context.Context) {
+func (m *Manager) startCheckPullProgressesTimer() {
 	ticker := time.NewTicker(pullProgressInterval)
 	defer ticker.Stop()
 
@@ -232,7 +236,9 @@ func (m *Manager) retrieveNodePullProgresses() {
 		return true
 	})
 
-	getCP := func(nodeID string, cids []string) {
+	getCP := func(nodeID string, cids []string, delay int) {
+		time.Sleep(time.Duration(delay) * time.Second)
+
 		// request node
 		result, err := m.requestNodePullProgresses(nodeID, cids)
 		if err != nil {
@@ -244,8 +250,15 @@ func (m *Manager) retrieveNodePullProgresses() {
 		m.updateAssetPullResults(nodeID, result)
 	}
 
+	duration := 1
+	delay := 0
 	for nodeID, cids := range nodePulls {
-		go getCP(nodeID, cids)
+		delay += duration
+		if delay > 50 {
+			delay = 0
+		}
+
+		go getCP(nodeID, cids, delay)
 	}
 }
 
@@ -317,6 +330,7 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 		State:                 UploadInit.String(),
 		TotalSize:             req.AssetSize,
 		CreatedTime:           time.Now(),
+		Note:                  req.UserID,
 	}
 
 	err = m.SaveAssetRecord(record)
@@ -350,8 +364,8 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 	}
 
 	rInfo := AssetForceState{
-		State:      UploadInit,
-		Requester:  req.UserID,
+		State: UploadInit,
+		// Requester:  req.UserID,
 		SeedNodeID: cNode.NodeID,
 	}
 
@@ -406,17 +420,22 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 		return xerrors.Errorf("LoadAssetRecord err:%s", err.Error())
 	}
 
+	if info.CandidateReplicas == 0 {
+		info.CandidateReplicas = int64(m.GetCandidateReplicaCount())
+	}
+
 	if assetRecord == nil {
 		record := &types.AssetRecord{
 			Hash:                  info.Hash,
 			CID:                   info.CID,
 			ServerID:              m.nodeMgr.ServerID,
 			NeedEdgeReplica:       info.Replicas,
-			NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
+			NeedCandidateReplicas: info.CandidateReplicas,
 			Expiration:            info.Expiration,
 			NeedBandwidth:         info.Bandwidth,
 			State:                 SeedSelect.String(),
 			CreatedTime:           time.Now(),
+			Note:                  info.UserID,
 		}
 
 		err = m.SaveAssetRecord(record)
@@ -425,8 +444,8 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 		}
 
 		rInfo := AssetForceState{
-			State:      SeedSelect,
-			Requester:  info.UserID,
+			State: SeedSelect,
+			// Requester:  info.UserID,
 			SeedNodeID: info.SeedNodeID,
 		}
 
@@ -455,12 +474,13 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 	assetRecord.NeedEdgeReplica = info.Replicas
 	assetRecord.Expiration = info.Expiration
 	assetRecord.NeedBandwidth = info.Bandwidth
+	assetRecord.NeedCandidateReplicas = info.CandidateReplicas
 
 	return m.replenishAssetReplicas(assetRecord, 0, info.UserID, "", SeedSelect, info.SeedNodeID)
 }
 
 // replenishAssetReplicas updates the existing asset replicas if needed
-func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, replenishReplicas int64, userID, details string, state AssetState, seedNodeID string) error {
+func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, replenishReplicas int64, note, details string, state AssetState, seedNodeID string) error {
 	log.Debugf("replenishAssetReplicas : %d", replenishReplicas)
 
 	record := &types.AssetRecord{
@@ -468,13 +488,14 @@ func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, repleni
 		CID:                   assetRecord.CID,
 		ServerID:              m.nodeMgr.ServerID,
 		NeedEdgeReplica:       assetRecord.NeedEdgeReplica,
-		NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
+		NeedCandidateReplicas: assetRecord.NeedCandidateReplicas,
 		Expiration:            assetRecord.Expiration,
 		ReplenishReplicas:     replenishReplicas,
 		NeedBandwidth:         assetRecord.NeedBandwidth,
 		State:                 state.String(),
 		TotalSize:             assetRecord.TotalSize,
 		CreatedTime:           assetRecord.CreatedTime,
+		Note:                  note,
 	}
 
 	err := m.SaveAssetRecord(record)
@@ -483,8 +504,8 @@ func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, repleni
 	}
 
 	rInfo := AssetForceState{
-		State:      state,
-		Requester:  userID,
+		State: state,
+		// Requester:  note,
 		Details:    details,
 		SeedNodeID: seedNodeID,
 	}
@@ -590,6 +611,22 @@ func (m *Manager) RemoveAsset(hash string, isWait bool) error {
 	return nil
 }
 
+// StopAsset stop an asset
+func (m *Manager) StopAsset(hashs []string) error {
+	for _, hash := range hashs {
+		if exist, _ := m.assetStateMachines.Has(AssetHash(hash)); !exist {
+			continue
+		}
+
+		err := m.assetStateMachines.Send(AssetHash(hash), AssetForceState{State: Stop})
+		if err != nil {
+			log.Errorf("StopAsset assetStateMachines err:%s", err.Error())
+		}
+	}
+
+	return nil
+}
+
 // updateAssetPullResults updates asset pull results
 func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult) {
 	haveChange := false
@@ -674,7 +711,7 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 
 	if haveChange {
 		// update node Disk Use
-		m.nodeMgr.UpdateNodeDiskUsage(nodeID)
+		m.nodeMgr.UpdateNodeDiskUsage(nodeID, result.DiskUsage)
 	}
 }
 
@@ -857,11 +894,21 @@ func (m *Manager) getDownloadSources(hash string) []*types.CandidateDownloadInfo
 		return nil
 	}
 
+	limit := 50
+
 	sources := make([]*types.CandidateDownloadInfo, 0)
 	for _, replica := range replicaInfos {
+		if len(sources) > limit {
+			break
+		}
+
 		nodeID := replica.NodeID
 		cNode := m.nodeMgr.GetNode(nodeID)
 		if cNode == nil {
+			continue
+		}
+
+		if cNode.Type == types.NodeValidator {
 			continue
 		}
 
@@ -877,6 +924,7 @@ func (m *Manager) getDownloadSources(hash string) []*types.CandidateDownloadInfo
 		}
 
 		sources = append(sources, source)
+
 	}
 	return sources
 }
@@ -969,9 +1017,7 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 		}
 
 		// Calculate node residual capacity
-		residual := (100 - node.DiskUsage) * node.DiskSpace
-		if residual <= size {
-			log.Debugf("node %s disk residual %.2f", nodeID, residual)
+		if !node.DiskEnough(size) {
 			return false
 		}
 
@@ -997,8 +1043,12 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 	// if count >= m.nodeMgr.Edges-len(filterNodes) {
 	// choose all
 	nodes := m.nodeMgr.GetAllEdgeNode()
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].TitanDiskUsage < nodes[j].TitanDiskUsage
+	})
 
-	for _, node := range nodes {
+	for i := 0; i < len(nodes); i++ {
+		node := nodes[i]
 		if selectNodes(node) {
 			break
 		}

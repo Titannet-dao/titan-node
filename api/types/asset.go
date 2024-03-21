@@ -44,7 +44,8 @@ type AssetRecord struct {
 	NeedCandidateReplicas int64           `db:"candidate_replicas"`
 	ServerID              dtypes.ServerID `db:"scheduler_sid"`
 	State                 string          `db:"state"`
-	NeedBandwidth         int64           `db:"bandwidth"` // unit:MiB/s
+	NeedBandwidth         int64           `db:"bandwidth"` // unit:MiB/
+	Note                  string          `db:"note"`
 
 	RetryCount        int64 `db:"retry_count"`
 	ReplenishReplicas int64 `db:"replenish_replicas"`
@@ -107,7 +108,11 @@ type PullAssetReq struct {
 	Hash      string
 	Bandwidth int64 // unit:MiB/s
 
-	SeedNodeID string
+	SeedNodeID        string
+	CandidateReplicas int64
+
+	CandidateNodeList []string
+	EdgeNodeList      []string
 }
 
 // AssetType represents the type of a asset
@@ -248,4 +253,10 @@ type MinioUploadFileEvent struct {
 	Size       int64
 	CreateTime time.Time
 	Expiration time.Time
+}
+
+type AssetView struct {
+	TopHash string
+	// key bucketID, value bucketHash
+	BucketHashes map[uint32]string
 }

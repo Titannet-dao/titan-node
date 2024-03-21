@@ -3,6 +3,7 @@ package fetcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"sync"
@@ -33,6 +34,7 @@ func NewIPFSClient(ipfsAPIURL string) *IPFSClient {
 		Transport: t,
 	}
 
+	fmt.Println("ipfsAPIURL ", ipfsAPIURL)
 	httpAPI, err := httpapi.NewURLApiWithClient(ipfsAPIURL, httpClient)
 	if err != nil {
 		log.Panicf("new ipfs error:%s, url:%s", err.Error(), ipfsAPIURL)

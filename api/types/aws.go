@@ -9,4 +9,5 @@ type AWSDataInfo struct {
 	Replicas       int       `db:"replicas"`
 	IsDistribute   bool      `db:"is_distribute"`
 	DistributeTime time.Time `db:"distribute_time"`
+	Size           float64   `db:"size"`
 }

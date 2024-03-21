@@ -42,10 +42,11 @@ type Node struct {
 	TCPPort     int
 	ExternalURL string
 
-	NATType     types.NatType
-	CPUUsage    float64
-	MemoryUsage float64
-	DiskUsage   float64
+	NATType        types.NatType
+	CPUUsage       float64
+	MemoryUsage    float64
+	DiskUsage      float64
+	TitanDiskUsage float64
 
 	OnlineDuration int
 	Type           types.NodeType
@@ -57,9 +58,10 @@ type Node struct {
 
 	IsPrivateMinioOnly bool
 
-	ExternalIP string
-	IncomeIncr float64
-	DiskSpace  float64
+	ExternalIP         string
+	IncomeIncr         float64
+	DiskSpace          float64
+	AvailableDiskSpace float64
 }
 
 // API represents the node API
@@ -264,14 +266,14 @@ func (n *Node) CalculateIncome(nodeCount int) float64 {
 	mx := weighting(nodeCount)
 	mbn := mb * mn * mx
 
-	ds := (n.DiskUsage / 100) * n.DiskSpace
+	ds := float64(n.TitanDiskUsage)
 	s := bToGB(ds * 12.5)
 
 	ms := mx * min(s, 2000) * (0.1 + float64(1/max(min(s, 2000), 10)))
 
 	poa := mbn + ms
 	poa = math.Round(poa*1000000) / 1000000
-	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] DiskSpace:[%.2f*%.2f=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] mx:[%.1f]", n.NodeID, n.BandwidthUp, n.NATType, mn, n.DiskSpace, n.DiskUsage, s, poa, mbn, ms, mx)
+	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] DiskSpace:[%.2f*12.5=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] mx:[%.1f]", n.NodeID, n.BandwidthUp, n.NATType, mn, n.TitanDiskUsage, s, poa, mbn, ms, mx)
 
 	return poa
 }
@@ -368,4 +370,20 @@ func (n *Node) CalculateMCx(count int) float64 {
 	// log.Debugf("CalculateMCx [%s] bandwidth:[%d] DiskUsage:[%v] DiskSpace:[%v] mMbw:[%v] mMsw:[%v] mMcx:[%v] ", n.NodeID, n.BandwidthUp, n.DiskUsage, n.Info.DiskSpace, mMbw, mMsw, mMcx)
 
 	// return mMcx
+}
+
+func (n *Node) DiskEnough(size float64) bool {
+	residual := ((100 - n.DiskUsage) / 100) * n.DiskSpace
+	if residual <= size {
+		log.Debugf("node %s disk residual n.DiskUsage:%.2f, n.DiskSpace:%.2f", n.NodeID, n.DiskUsage, n.DiskSpace)
+		return false
+	}
+
+	residual = n.AvailableDiskSpace - n.TitanDiskUsage
+	if residual <= size {
+		log.Debugf("node %s disk residual AvailableDiskSpace:%.2f, TitanDiskUsage:%.2f", n.NodeID, n.AvailableDiskSpace, n.TitanDiskUsage)
+		return false
+	}
+
+	return true
 }

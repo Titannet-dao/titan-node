@@ -47,7 +47,7 @@ func ConfigEdge(c interface{}) Option {
 
 	return Options(
 		Override(new(*config.EdgeCfg), cfg),
-		Override(new(*device.Device), modules.NewDevice(cfg.BandwidthUp, cfg.BandwidthDown)),
+		Override(new(*device.Device), modules.NewDevice(&cfg.CPU, &cfg.Memory, &cfg.Storage, &cfg.Bandwidth)),
 		Override(new(*config.MinioConfig), &config.MinioConfig{}),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
 		Override(new(*asset.Manager), modules.NewAssetsManager(cfg.PullBlockParallel, cfg.PullBlockTimeout, cfg.PullBlockRetry, cfg.IPFSAPIURL)),

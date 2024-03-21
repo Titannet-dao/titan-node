@@ -33,6 +33,8 @@ const (
 	UploadFailed AssetState = "UploadFailed"
 	// Remove remove
 	Remove AssetState = "Remove"
+	// Stop Stop
+	Stop AssetState = "Stop"
 )
 
 // String returns the string representation of the AssetState.

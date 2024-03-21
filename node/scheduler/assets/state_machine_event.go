@@ -43,15 +43,15 @@ func (evt PullAssetFatalError) applyGlobal(state *AssetPullingInfo) bool {
 
 // AssetForceState forces an asset state
 type AssetForceState struct {
-	State      AssetState
-	Requester  string
+	State AssetState
+	// Requester  string
 	Details    string
 	SeedNodeID string
 }
 
 func (evt AssetForceState) applyGlobal(state *AssetPullingInfo) bool {
 	state.State = evt.State
-	state.Requester = evt.Requester
+	// state.Requester = evt.Requester
 	state.Details = evt.Details
 	state.SeedNodeID = evt.SeedNodeID
 	state.RetryCount = 0

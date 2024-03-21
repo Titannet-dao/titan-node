@@ -215,7 +215,11 @@ func (m *Manager) GetDiskUsageStat() (totalSpace, usage float64) {
 		return m.minioService.GetMinioStat(context.Background())
 	}
 
-	usageStat, err := disk.Usage(m.opts.MetaDataPath)
+	if len(m.opts.AssetsPaths) == 0 {
+		return 0, 0
+	}
+
+	usageStat, err := disk.Usage(m.opts.AssetsPaths[0])
 	if err != nil {
 		log.Errorf("get disk usage stat error: %s", err)
 		return 0, 0

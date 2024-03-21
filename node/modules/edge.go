@@ -13,9 +13,10 @@ import (
 )
 
 // NewDevice creates a function that generates new instances of device.Device.
-func NewDevice(bandwidthUP, bandwidthDown int64) func(nodeID dtypes.NodeID, internalIP dtypes.InternalIP, storageMgr *storage.Manager) *device.Device {
+func NewDevice(cpu *config.CPU, memory *config.Memory, storageCfg *config.Storage, bandwidth *config.Bandwidth) func(nodeID dtypes.NodeID, internalIP dtypes.InternalIP, storageMgr *storage.Manager) *device.Device {
 	return func(nodeID dtypes.NodeID, internalIP dtypes.InternalIP, storageMgr *storage.Manager) *device.Device {
-		return device.NewDevice(string(nodeID), string(internalIP), bandwidthUP, bandwidthDown, storageMgr)
+		res := &device.Resources{CPU: cpu, Memory: memory, Storage: storageCfg, Bandwidth: bandwidth}
+		return device.NewDevice(string(nodeID), string(internalIP), res, storageMgr)
 	}
 }
 

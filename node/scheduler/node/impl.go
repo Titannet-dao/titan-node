@@ -30,15 +30,8 @@ func (m *Manager) GetCandidateNodes(num int, filterValidators bool) []*Node {
 	m.candidateNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
 
-		if filterValidators {
-			b, err := m.IsValidator(node.NodeID)
-			if err != nil {
-				log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
-			}
-
-			if b {
-				return true
-			}
+		if filterValidators && node.Type == types.NodeValidator {
+			return true
 		}
 
 		out = append(out, node)
@@ -108,7 +101,7 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	node.BandwidthUp = info.BandwidthUp
 	node.PortMapping = info.PortMapping
 	node.DeactivateTime = info.DeactivateTime
-	node.DiskUsage = info.DiskUsage
+	node.AvailableDiskSpace = info.AvailableDiskSpace
 
 	node.NodeID = info.NodeID
 	node.Type = info.Type
@@ -126,11 +119,12 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	switch node.Type {
 	case types.NodeEdge:
 		m.storeEdgeNode(node)
-	case types.NodeCandidate:
+	case types.NodeCandidate, types.NodeValidator:
 		m.storeCandidateNode(node)
 	}
 
-	m.UpdateNodeDiskUsage(info.NodeID)
+	m.UpdateNodeDiskUsage(info.NodeID, info.DiskUsage)
+
 	return nil
 }
 
