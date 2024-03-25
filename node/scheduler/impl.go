@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"time"
 
@@ -242,7 +241,7 @@ func (s *Scheduler) NodeValidationResult(ctx context.Context, r io.Reader, sign 
 		return err
 	}
 
-	data, err := ioutil.ReadAll(r)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
@@ -318,7 +317,7 @@ func (s *Scheduler) SubmitUserWorkloadReport(ctx context.Context, r io.Reader) e
 	nodeID := handler.GetNodeID(ctx)
 	node := s.NodeManager.GetNode(nodeID)
 
-	cipherText, err := ioutil.ReadAll(r)
+	cipherText, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

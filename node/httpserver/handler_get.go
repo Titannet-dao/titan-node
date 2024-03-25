@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"mime"
 	"net/http"
 	"strings"
@@ -135,7 +135,7 @@ func (hs *HttpServer) verifyToken(w http.ResponseWriter, r *http.Request) (*type
 		return hs.parseJWTToken(token, r)
 	}
 
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}

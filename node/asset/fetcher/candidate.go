@@ -6,7 +6,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -61,14 +61,14 @@ func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource 
 	defer resp.Body.Close() //nolint:errcheck // ignore error
 
 	if resp.StatusCode != http.StatusOK {
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
 		return nil, fmt.Errorf("http status code: %d, error msg: %s", resp.StatusCode, string(data))
 	}
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}

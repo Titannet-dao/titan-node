@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -79,7 +78,7 @@ func (a *asset) storeBlocksToCar(ctx context.Context, root cid.Cid) error {
 	}
 
 	for _, entry := range entries {
-		data, err := ioutil.ReadFile(filepath.Join(assetDir, entry.Name()))
+		data, err := os.ReadFile(filepath.Join(assetDir, entry.Name()))
 		if err != nil {
 			return err
 		}
