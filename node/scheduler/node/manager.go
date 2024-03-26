@@ -124,6 +124,17 @@ func (m *Manager) RemoveNodeIP(nodeID, ip string) {
 	}
 }
 
+func (m *Manager) GetNodeOfIP(ip string) []string {
+	listI, exist := m.nodeIPs.Load(ip)
+	if exist && listI != nil {
+		nodes := listI.([]string)
+
+		return nodes
+	}
+
+	return nil
+}
+
 func (m *Manager) CheckIPExist(ip string) bool {
 	_, exist := m.nodeIPs.Load(ip)
 
@@ -265,6 +276,11 @@ func (m *Manager) DistributeNodeWeight(node *Node) {
 		return
 	}
 
+	isValidator, err := m.IsValidator(node.NodeID)
+	if err != nil || isValidator {
+		return
+	}
+
 	score := m.getNodeScoreLevel(node.NodeID)
 	wNum := m.weightMgr.getWeightNum(score)
 	if node.Type == types.NodeCandidate {
@@ -276,6 +292,11 @@ func (m *Manager) DistributeNodeWeight(node *Node) {
 
 // RepayNodeWeight Repay Node Weight
 func (m *Manager) RepayNodeWeight(node *Node) {
+	isValidator, err := m.IsValidator(node.NodeID)
+	if err != nil || isValidator {
+		return
+	}
+
 	if node.Type == types.NodeCandidate {
 		m.weightMgr.repayCandidateWeight(node.selectWeights)
 		node.selectWeights = nil
@@ -333,13 +354,15 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 				// log.Infof("nodeKeepalive %s : Mc:[%v] , i:[%v]", node.NodeID, mc, float64(keepaliveTime/(5*time.Second)))
 
 				nodes = append(nodes, &types.NodeSnapshot{
-					NodeID:         node.NodeID,
-					OnlineDuration: node.OnlineDuration,
-					DiskUsage:      node.DiskUsage,
-					LastSeen:       time.Now(),
-					BandwidthDown:  node.BandwidthDown,
-					BandwidthUp:    node.BandwidthUp,
-					Profit:         profit,
+					NodeID:             node.NodeID,
+					OnlineDuration:     node.OnlineDuration,
+					DiskUsage:          node.DiskUsage,
+					LastSeen:           time.Now(),
+					BandwidthDown:      node.BandwidthDown,
+					BandwidthUp:        node.BandwidthUp,
+					Profit:             profit,
+					TitanDiskUsage:     node.TitanDiskUsage,
+					AvailableDiskSpace: node.AvailableDiskSpace,
 				})
 			}
 		}
@@ -359,12 +382,14 @@ func (m *Manager) nodesKeepalive(isSave bool) {
 				node.OnlineDuration += int((saveInfoInterval * keepaliveTime) / time.Minute)
 
 				nodes = append(nodes, &types.NodeSnapshot{
-					NodeID:         node.NodeID,
-					OnlineDuration: node.OnlineDuration,
-					DiskUsage:      node.DiskUsage,
-					LastSeen:       time.Now(),
-					BandwidthDown:  node.BandwidthDown,
-					BandwidthUp:    node.BandwidthUp,
+					NodeID:             node.NodeID,
+					OnlineDuration:     node.OnlineDuration,
+					DiskUsage:          node.DiskUsage,
+					LastSeen:           time.Now(),
+					BandwidthDown:      node.BandwidthDown,
+					BandwidthUp:        node.BandwidthUp,
+					TitanDiskUsage:     node.TitanDiskUsage,
+					AvailableDiskSpace: node.AvailableDiskSpace,
 				})
 			}
 		}
@@ -399,7 +424,8 @@ func (m *Manager) redistributeNodeSelectWeights() {
 			return true
 		}
 
-		if node.Type == types.NodeValidator {
+		isValidator, err := m.IsValidator(node.NodeID)
+		if err != nil || isValidator {
 			return true
 		}
 

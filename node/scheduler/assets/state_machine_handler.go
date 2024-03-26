@@ -16,7 +16,7 @@ var (
 	MinRetryTime = 1 * time.Minute
 
 	// MaxRetryCount defines the maximum number of retries allowed
-	MaxRetryCount = 3
+	MaxRetryCount = 1
 )
 
 // failedCoolDown is called when a retry needs to be attempted and waits for the specified time duration
@@ -150,7 +150,7 @@ func (m *Manager) handleSeedUploading(ctx statemachine.Context, info AssetPullin
 func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
 	log.Debugf("handle candidates select, %s", info.Hash)
 
-	sources := m.getDownloadSources(info.Hash.String())
+	sources := m.getDownloadSources(info.Hash.String(), info.Note)
 	if len(sources) < 1 {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
@@ -269,7 +269,7 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		return ctx.Send(SkipStep{})
 	}
 
-	sources := m.getDownloadSources(info.Hash.String())
+	sources := m.getDownloadSources(info.Hash.String(), info.Note)
 	if len(sources) < 1 {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
@@ -284,6 +284,12 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 
 		m.removeNodesFromFillAsset(info.CID, false)
 	} else {
+		// if info.Note == "" {
+		// 	sLen := int64(len(sources))
+		// 	if needCount > sLen {
+		// 		needCount = sLen
+		// 	}
+		// }
 		// find nodes
 		str := ""
 		nodes, str = m.chooseEdgeNodes(int(needCount), needBandwidth, info.EdgeReplicaSucceeds, float64(info.Size))
@@ -313,12 +319,16 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 	// send a pull request to the node
 	go func() {
 		for _, node := range nodes {
+			// if len(downloadSources[node.NodeID]) == 0 {
+			// 	continue
+			// }
+
+			// log.Infof("pullSources %s : %v , lens:%d", node.NodeID, downloadSources[node.NodeID], len(sources))
 			err := node.PullAsset(ctx.Context(), info.CID, downloadSources[node.NodeID])
 			if err != nil {
 				log.Errorf("%s pull asset err:%s", node.NodeID, err.Error())
 				continue
 			}
-
 		}
 	}()
 
@@ -365,11 +375,11 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 		return nil
 	}
 
-	log.Debugf("handle pulls failed: %s, retries: %d", info.Hash.String(), info.RetryCount)
+	log.Debugf(": %s, retries: %d", info.Hash.String(), info.RetryCount)
 
-	if err := failedCoolDown(ctx, info); err != nil {
-		return err
-	}
+	// if err := failedCoolDown(ctx, info); err != nil {
+	// 	return err
+	// }
 
 	return ctx.Send(AssetRePull{})
 }
@@ -415,8 +425,10 @@ func (m *Manager) handleRemove(ctx statemachine.Context, info AssetPullingInfo) 
 }
 
 func (m *Manager) handleStop(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Infof("handle remove: %s", info.Hash)
+	log.Infof("handle stop: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
+
+	m.DeleteUnfinishedReplicas(info.Hash.String())
 
 	return nil
 }

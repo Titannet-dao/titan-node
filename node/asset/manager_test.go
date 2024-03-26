@@ -55,7 +55,7 @@ func TestManager(t *testing.T) {
 		return
 	}
 
-	mgr.addToWaitList(c, nil)
+	mgr.addToWaitList(c, nil, false)
 
 	time.Sleep(1 * time.Minute)
 }

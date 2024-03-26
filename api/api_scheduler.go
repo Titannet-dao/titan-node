@@ -138,6 +138,8 @@ type NodeAPI interface {
 	GetAssetView(ctx context.Context, nodeID string, isFromNode bool) (*types.AssetView, error) //perm:admin
 	// GetAssetInBucket get the assets of the bucket
 	GetAssetsInBucket(ctx context.Context, nodeID string, bucketID int, isFromNode bool) ([]string, error) //perm:admin
+	// GetNodeOfIP get nodes
+	GetNodeOfIP(ctx context.Context, ip string) ([]string, error) //perm:admin,web,locator
 }
 
 // UserAPI is an interface for user

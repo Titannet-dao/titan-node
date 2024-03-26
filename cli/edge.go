@@ -12,7 +12,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/Filecoin-Titan/titan/api"
@@ -21,6 +25,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
+	"github.com/docker/go-units"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/google/uuid"
 	"github.com/mitchellh/go-homedir"
@@ -30,6 +35,7 @@ import (
 
 var EdgeCmds = []*cli.Command{
 	nodeInfoCmd,
+	showCmds,
 	cacheStatCmd,
 	progressCmd,
 	keyCmds,
@@ -37,6 +43,14 @@ var EdgeCmds = []*cli.Command{
 	stateCmd,
 	signCmd,
 	bindCmd,
+}
+
+var showCmds = &cli.Command{
+	Name:  "show",
+	Usage: "Displays node information and binding information",
+	Subcommands: []*cli.Command{
+		bindingInfoCmd,
+	},
 }
 
 var nodeInfoCmd = &cli.Command{
@@ -51,22 +65,117 @@ var nodeInfoCmd = &cli.Command{
 
 		ctx := ReqContext(cctx)
 
-		v, err := api.GetNodeInfo(ctx)
+		info, err := api.GetNodeInfo(ctx)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("node id: %v \n", v.NodeID)
-		fmt.Printf("node name: %v \n", v.NodeName)
-		fmt.Printf("node external_ip: %v \n", v.ExternalIP)
-		fmt.Printf("node internal_ip: %v \n", v.InternalIP)
-		fmt.Printf("node systemVersion: %s \n", v.SystemVersion)
-		fmt.Printf("node DiskUsage: %f \n", v.DiskUsage)
-		fmt.Printf("node disk space: %f \n", v.DiskSpace)
-		fmt.Printf("node fsType: %s \n", v.IoSystem)
-		fmt.Printf("node mac: %v \n", v.MacLocation)
-		fmt.Printf("node download bandwidth: %v \n", v.BandwidthDown)
-		fmt.Printf("node upload bandwidth: %v \n", v.BandwidthUp)
-		fmt.Printf("node cpu percent: %v \n", v.CPUUsage)
+
+		fmt.Printf("node id: %s \n", info.NodeID)
+		fmt.Printf("name: %s \n", info.NodeName)
+		fmt.Printf("internal_ip: %s \n", info.InternalIP)
+		fmt.Printf("system version: %s \n", info.SystemVersion)
+		fmt.Printf("disk usage: %.4f %s\n", info.DiskUsage, "%")
+		fmt.Printf("disk space: %s \n", units.BytesSize(info.DiskSpace))
+		fmt.Printf("titan disk usage: %s\n", units.BytesSize(info.TitanDiskUsage))
+		fmt.Printf("titan disk space: %s\n", units.BytesSize(info.AvailableDiskSpace))
+		fmt.Printf("fsType: %s \n", info.IoSystem)
+		fmt.Printf("mac: %s \n", info.MacLocation)
+		fmt.Printf("download bandwidth: %s \n", units.BytesSize(float64(info.BandwidthDown)))
+		fmt.Printf("upload bandwidth: %s \n", units.BytesSize(float64(info.BandwidthUp)))
+		fmt.Printf("cpu percent: %.2f %s \n", info.CPUUsage, "%")
+		return nil
+	},
+}
+
+var bindingInfoCmd = &cli.Command{
+	Name:      "binding-info",
+	Usage:     "Print binding info",
+	UsageText: "binding-info https://webserver-api-url",
+	Action: func(cctx *cli.Context) error {
+		webServer := cctx.Args().First()
+		if len(webServer) == 0 {
+			return fmt.Errorf("example: binding-info https://webserver-api-url")
+		}
+
+		r, err := openRepo(cctx)
+		if err != nil {
+			return err
+		}
+
+		nodeID, err := r.NodeID()
+		if err != nil {
+			return err
+		}
+
+		type ReqBindingInfo struct {
+			NodeID string   `json:"node_id"`
+			Keys   []string `json:"keys"`
+			Since  int      `json:"since"`
+		}
+
+		req := ReqBindingInfo{
+			NodeID: string(nodeID),
+			Keys:   []string{"account"},
+			Since:  0,
+		}
+
+		buf, err := json.Marshal(req)
+		if err != nil {
+			return err
+		}
+
+		resp, err := http.Post(webServer, "application/json", bytes.NewBuffer(buf))
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			buf, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("status code %d, read body error %s", resp.StatusCode, err.Error())
+			}
+			return fmt.Errorf("status code %d, error message %s", resp.StatusCode, string(buf))
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read body error %s", err.Error())
+		}
+
+		type Account struct {
+			UserID        string `json:"user_id"`
+			WalletAddress string `json:"wallet_address"`
+			Code          string `json:"code"`
+		}
+
+		type Data struct {
+			Account Account `json:"account"`
+			Since   int64   `json:"since"`
+		}
+
+		type Resp struct {
+			Code int    `json:"code"`
+			Data Data   `json:"data"`
+			Err  int    `json:"err"`
+			Msg  string `json:"msg"`
+		}
+
+		rsp := Resp{}
+		if err = json.Unmarshal(respBody, &rsp); err != nil {
+			return err
+		}
+
+		if rsp.Code != 0 {
+			fmt.Println(string(respBody))
+			return nil
+		}
+
+		tm := time.Unix(rsp.Data.Since, 0)
+
+		fmt.Println("Account:", rsp.Data.Account.UserID)
+		fmt.Println("Code:", rsp.Data.Account.Code)
+		fmt.Println("Wallet address:", rsp.Data.Account.WalletAddress)
+		fmt.Println("Bound Since:", tm.Format("2006-01-02 15:04:05"))
 
 		return nil
 	},
@@ -74,7 +183,7 @@ var nodeInfoCmd = &cli.Command{
 
 var cacheStatCmd = &cli.Command{
 	Name:  "cache",
-	Usage: "cache stat",
+	Usage: "Cache stat",
 	Flags: []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
 		api, closer, err := getEdgeAPI(cctx)
@@ -90,14 +199,14 @@ var cacheStatCmd = &cli.Command{
 			return err
 		}
 
-		fmt.Printf("Total asset count %d, block count %d, wait cache asset count %d", stat.TotalAssetCount, stat.TotalBlockCount, stat.WaitCacheAssetCount)
+		fmt.Printf("Total asset count %d, wait cache asset count %d\n", stat.TotalAssetCount, stat.WaitCacheAssetCount)
 		return nil
 	},
 }
 
 var progressCmd = &cli.Command{
 	Name:  "progress",
-	Usage: "get cache progress",
+	Usage: "Get cache progress",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "cid",
@@ -131,7 +240,7 @@ var progressCmd = &cli.Command{
 
 var keyCmds = &cli.Command{
 	Name:  "key",
-	Usage: "generate key, show key, import key, export key",
+	Usage: "Generate key, show key, import key, export key",
 	Subcommands: []*cli.Command{
 		generateRsaKey,
 		showKey,
@@ -142,7 +251,7 @@ var keyCmds = &cli.Command{
 
 var generateRsaKey = &cli.Command{
 	Name:  "generate",
-	Usage: "generate rsa key",
+	Usage: "Generate rsa key",
 	Flags: []cli.Flag{
 		&cli.IntFlag{
 			Name:  "bits",
@@ -178,7 +287,7 @@ var generateRsaKey = &cli.Command{
 
 var showKey = &cli.Command{
 	Name:  "show",
-	Usage: "show key",
+	Usage: "Show key",
 	Action: func(cctx *cli.Context) error {
 		repoPath, err := getRepoPath(cctx)
 		if err != nil {
@@ -202,7 +311,7 @@ var showKey = &cli.Command{
 
 var importKey = &cli.Command{
 	Name:  "import",
-	Usage: "import key",
+	Usage: "Import key",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Required: true,
@@ -235,7 +344,7 @@ var importKey = &cli.Command{
 
 var exportKey = &cli.Command{
 	Name:  "export",
-	Usage: "export key",
+	Usage: "Export key",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "pk-path",
@@ -398,7 +507,7 @@ func getEdgeAPI(ctx *cli.Context) (api.Edge, jsonrpc.ClientCloser, error) {
 
 var configCmds = &cli.Command{
 	Name:  "config",
-	Usage: "set config",
+	Usage: "Config commands",
 	Subcommands: []*cli.Command{
 		setConfigCmd,
 		showConfigCmd,
@@ -411,175 +520,114 @@ var showConfigCmd = &cli.Command{
 	Usage: "show config",
 	Flags: []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
-		_, lr, err := openRepoAndLock(cctx)
+		configPath, err := getConfigPath(cctx)
 		if err != nil {
 			return err
 		}
-		defer lr.Close() //nolint:errcheck  // ignore error
+		cfg, err := config.FromFile(configPath, config.DefaultEdgeCfg())
+		if err != nil {
+			return xerrors.Errorf("load local config file error %w", err)
+		}
 
-		cfg, err := lr.Config()
+		// buf, err := json.Marshal(cfg)
+		// if err != nil {
+		// 	return err
+		// }
+		buf, err := json.MarshalIndent(cfg, "", "    ")
 		if err != nil {
 			return err
 		}
-
-		fmt.Printf("%#v\n", cfg)
+		fmt.Println(string(buf))
 		return nil
 	},
 }
 
 var setConfigCmd = &cli.Command{
 	Name:  "set",
-	Usage: "set config",
+	Usage: "set config, after modifying the configuration, the node must be restarted",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "listen-address",
-			Usage: "local listen address, example: --listen-address=local_server_ip:port",
+			Usage: "set local listen address, example: --listen-address=local_server_ip:port",
 			Value: "0.0.0.0:1234",
 		},
 		&cli.StringFlag{
-			Name:  "timeout",
-			Usage: "network connect timeout. example: --timeout=timeout",
-			Value: "30s",
+			Name:  "storage-path",
+			Usage: "set storage path, example: --storage-path=/data/your-storage-path-here",
 		},
 		&cli.StringFlag{
-			Name:  "area-id",
-			Usage: "example: --area-id=your_area_id",
-			Value: "",
-		},
-		&cli.StringFlag{
-			Name:  "metadata-path",
-			Usage: "metadata path, example: --metadata-path=/path/to/metadata",
-			Value: "",
-		},
-		&cli.StringSliceFlag{
-			Name:  "assets-paths",
-			Usage: "assets paths, example: --assets-paths=/path/to/assets1,/path/to/assets2",
-			Value: &cli.StringSlice{},
-		},
-		&cli.Int64Flag{
-			Name:  "bandwidth-up",
-			Usage: "example: --bandwidth-up=your_bandwidth_up",
-			Value: 104857600,
-		},
-		&cli.Int64Flag{
-			Name:  "bandwidth-down",
-			Usage: "example: --bandwidth-down=your_bandwidth_down",
-			Value: 1073741824,
-		},
-		&cli.BoolFlag{
-			Name:  "locator",
-			Usage: "example: --locator=true",
-			Value: true,
-		},
-		&cli.StringFlag{
-			Name:  "certificate-path",
-			Usage: "example: --certificate-path=/path/to/certificate",
-			Value: "",
-		},
-		&cli.StringFlag{
-			Name:  "private-key-path",
-			Usage: "example: --private-key-path=/path/to/private.key",
-			Value: "",
-		},
-		&cli.StringFlag{
-			Name:  "ca-certificate-path",
-			Usage: "example: --ca-certificate-path=/path/to/ca-certificate",
-			Value: "",
-		},
-		&cli.IntFlag{
-			Name:  "fetch-block-timeout",
-			Usage: "fetch block timeout, unit is seconds, example: --fetch-block-timeout=timeout",
-			Value: 3,
-		},
-		&cli.IntFlag{
-			Name:  "fetch-block-retry",
-			Usage: "retry of times when fetch block failed, example: --fetch-block-retry=retry_count",
-			Value: 2,
-		},
-		&cli.IntFlag{
-			Name:  "fetch-batch",
-			Usage: "example: --fetch-batch=fetch_batch",
-			Value: 5,
-		},
-		&cli.StringFlag{
-			Name:  "tcp-server-addr",
-			Usage: "only use for candidate, example: --tcp-server-addr=local_server_ip:port",
-			Value: "0.0.0.0:9000",
-		},
-		&cli.StringFlag{
-			Name:  "ipfs-api-url",
-			Usage: "only use for candidate, example: --ipfs-api-url=http://ipfs-server:api_port_of_ipfs_server",
-			Value: "",
-		},
-		&cli.IntFlag{
-			Name:  "validate-duration",
-			Usage: "only use for candidate, example: --validate-duration=duration",
-			Value: 10,
+			Name:  "storage-size",
+			Usage: "set storage size, the unit is GB, example: --storage-size=32GB",
 		},
 	},
 
 	Action: func(cctx *cli.Context) error {
-		_, lr, err := openRepoAndLock(cctx)
+		configPath, err := getConfigPath(cctx)
 		if err != nil {
 			return err
 		}
-		defer lr.Close() //nolint:errcheck  // ignore error
+		cfg, err := config.FromFile(configPath, config.DefaultEdgeCfg())
+		if err != nil {
+			return xerrors.Errorf("load local config file error %w", err)
+		}
 
-		lr.SetConfig(func(raw interface{}) {
-			cfg, ok := raw.(*config.EdgeCfg)
-			if !ok {
-				candidateCfg, ok := raw.(*config.CandidateCfg)
-				if !ok {
-					log.Errorf("can not convert interface to CandidateCfg")
-					return
+		edgeConfig := cfg.(*config.EdgeCfg)
+		if cctx.IsSet("listen-address") {
+			edgeConfig.Network.ListenAddress = cctx.String("listen-address")
+		}
+
+		if cctx.IsSet("storage-path") {
+			storagePath := cctx.String("storage-path")
+			if _, err := os.Stat(storagePath); os.IsNotExist(err) {
+				return fmt.Errorf("storage path %s not exist", storagePath)
+			}
+
+			oldStoragePath := edgeConfig.Storage.Path
+			if len(oldStoragePath) == 0 {
+				repoPath, err := getRepoPath(cctx)
+				if err != nil {
+					return err
 				}
-				cfg = &candidateCfg.EdgeCfg
+
+				repoPath, err = homedir.Expand(repoPath)
+				if err != nil {
+					return err
+				}
+				oldStoragePath = path.Join(repoPath, "storage")
 			}
 
-			if cctx.IsSet("listen-address") {
-				cfg.Network.ListenAddress = cctx.String("listen-address")
-			}
-			if cctx.IsSet("timeout") {
-				cfg.Network.Timeout = cctx.String("timeout")
-			}
-
-			if cctx.IsSet("area-id") {
-				cfg.AreaID = cctx.String("area-id")
-			}
-			if cctx.IsSet("certificate-path") {
-				cfg.CertificatePath = cctx.String("certificate-path")
-			}
-			if cctx.IsSet("private-key-path") {
-				cfg.PrivateKeyPath = cctx.String("private-key-path")
-			}
-			if cctx.IsSet("ca-certificate-path") {
-				cfg.CaCertificatePath = cctx.String("ca-certificate-path")
-			}
-			if cctx.IsSet("pull-block-timeout") {
-				cfg.PullBlockTimeout = cctx.Int("pull-block-timeout")
-			}
-			if cctx.IsSet("pull-block-retry") {
-				cfg.PullBlockRetry = cctx.Int("pull-block-retry")
-			}
-			if cctx.IsSet("pull-block-parallel") {
-				cfg.PullBlockParallel = cctx.Int("pull-block-parallel")
+			if oldStoragePath != storagePath {
+				if err = copyDir(oldStoragePath, storagePath); err != nil {
+					return err
+				}
 			}
 
-			if cctx.IsSet("tcp-server-addr") {
-				cfg.TCPSrvAddr = cctx.String("tcp-server-addr")
+			edgeConfig.Storage.Path = storagePath
+		}
+
+		if cctx.IsSet("storage-size") {
+			storageSize := cctx.String("storage-size")
+			if !strings.Contains(storageSize, "GB") {
+				return fmt.Errorf("storage size %s is an invalid value", storageSize)
+			}
+			sizeString := strings.TrimSuffix(storageSize, "GB")
+			size, err := strconv.Atoi(sizeString)
+			if err != nil {
+				return fmt.Errorf("storage size %s is an invalid value", sizeString)
 			}
 
-			if cctx.IsSet("ipfs-api-url") {
-				cfg.IPFSAPIURL = cctx.String("ipfs-api-url")
+			if size <= 0 {
+				return fmt.Errorf("storage size %d is an invalid value", size)
 			}
+			edgeConfig.Storage.StorageGB = int64(size)
+		}
 
-			if cctx.IsSet("validate-duration") {
-				cfg.ValidateDuration = cctx.Int("validate-duration")
-			}
+		configBytes, err := config.GenerateConfigUpdate(edgeConfig, config.DefaultEdgeCfg(), true)
+		if err != nil {
+			return xerrors.Errorf("update config error %w", err)
+		}
 
-		})
-
-		return nil
+		return os.WriteFile(configPath, configBytes, 0o644)
 	},
 }
 
@@ -752,7 +800,7 @@ func RegitsterNode(cctx *cli.Context, lr repo.LockedRepo, locatorURL string, nod
 
 var stateCmd = &cli.Command{
 	Name:  "state",
-	Usage: "check daemon state",
+	Usage: "Check daemon state",
 	Flags: []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
 		api, close, err := getEdgeAPI(cctx)
@@ -784,7 +832,7 @@ var stateCmd = &cli.Command{
 
 var signCmd = &cli.Command{
 	Name:      "sign",
-	Usage:     "sign with the hash",
+	Usage:     "Sign with the hash",
 	UsageText: "sign your-hash-here",
 	Flags:     []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
@@ -821,7 +869,7 @@ var signCmd = &cli.Command{
 
 var bindCmd = &cli.Command{
 	Name:      "bind",
-	Usage:     "bind with the hash",
+	Usage:     "Bind with the hash",
 	UsageText: "bind your-hash-here https://your-web-server-api",
 	Flags: []cli.Flag{
 		&cli.StringFlag{

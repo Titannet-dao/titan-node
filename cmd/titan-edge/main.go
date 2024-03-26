@@ -110,7 +110,7 @@ func main() {
 
 var daemonCmd = &cli.Command{
 	Name:  "daemon",
-	Usage: "daemon cmd",
+	Usage: "Daemon commands",
 	Subcommands: []*cli.Command{
 		daemonStartCmd,
 		daemonStopCmd,

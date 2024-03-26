@@ -307,7 +307,7 @@ func (fsr *FsRepo) APIEndpoint() (multiaddr.Multiaddr, error) {
 	}
 	defer f.Close() //nolint: errcheck // Read only op
 
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, xerrors.Errorf("failed to read %q: %w", p, err)
 	}
@@ -332,7 +332,7 @@ func (fsr *FsRepo) APIToken() ([]byte, error) {
 	}
 	defer f.Close() //nolint: errcheck // Read only op
 
-	tb, err := ioutil.ReadAll(f)
+	tb, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +351,7 @@ func (fsr *FsRepo) ServerID() ([]byte, error) {
 	}
 	defer f.Close() //nolint: errcheck // Read only op
 
-	tb, err := ioutil.ReadAll(f)
+	tb, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -658,7 +658,7 @@ func (fsr *fsLockedRepo) Get(name string) (types.KeyInfo, error) {
 	}
 	defer file.Close() //nolint: errcheck // read only op
 
-	data, err := ioutil.ReadAll(file)
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return types.KeyInfo{}, xerrors.Errorf("reading key '%s': %w", name, err)
 	}

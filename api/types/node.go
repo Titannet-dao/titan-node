@@ -11,13 +11,15 @@ import (
 // NodeSnapshot contains the real-time status information of a node,
 // such as the last online time, online duration, CPU usage rate, and score changes.
 type NodeSnapshot struct {
-	NodeID         string    `db:"node_id"`
-	OnlineDuration int       `db:"online_duration"` // unit:Minute
-	DiskUsage      float64   `db:"disk_usage"`
-	LastSeen       time.Time `db:"last_seen"`
-	BandwidthUp    int64     `db:"bandwidth_up"`
-	BandwidthDown  int64     `db:"bandwidth_down"`
-	Profit         float64   `db:"profit"`
+	NodeID             string    `db:"node_id"`
+	OnlineDuration     int       `db:"online_duration"` // unit:Minute
+	DiskUsage          float64   `db:"disk_usage"`
+	LastSeen           time.Time `db:"last_seen"`
+	BandwidthUp        int64     `db:"bandwidth_up"`
+	BandwidthDown      int64     `db:"bandwidth_down"`
+	Profit             float64   `db:"profit"`
+	AvailableDiskSpace float64   `db:"available_disk_space"`
+	TitanDiskUsage     float64   `db:"titan_disk_usage"`
 }
 
 // NodeDynamicInfo Dynamic information about the node
@@ -27,7 +29,7 @@ type NodeDynamicInfo struct {
 	CPUUsage        float64
 	MemoryUsage     float64
 	Status          NodeStatus
-	TitanDiskUsage  float64
+	TitanDiskUsage  float64   `db:"titan_disk_usage"`
 	IncomeIncr      float64   // Base points increase every half hour (30 minute)
 	OnlineDuration  int       `db:"online_duration"` // unit:Minute
 	Profit          float64   `db:"profit"`
@@ -164,6 +166,10 @@ type CandidateDownloadInfo struct {
 	NodeID  string
 	Address string
 	Tk      *Token
+	// download from aws
+	AWSBucket string
+	// download from aws
+	AWSKey string
 }
 
 // NodeIPInfo

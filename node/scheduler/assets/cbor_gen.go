@@ -76,6 +76,29 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 		return err
 	}
 
+	// t.Note (string) (string)
+	if len("Note") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"Note\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Note"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("Note")); err != nil {
+		return err
+	}
+
+	if len(t.Note) > cbg.MaxLength {
+		return xerrors.Errorf("Value in field t.Note was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(t.Note))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string(t.Note)); err != nil {
+		return err
+	}
+
 	// t.Size (int64) (int64)
 	if len("Size") > cbg.MaxLength {
 		return xerrors.Errorf("Value in field \"Size\" was too long")
@@ -186,29 +209,6 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Bandwidth-1)); err != nil {
 			return err
 		}
-	}
-
-	// t.Requester (string) (string)
-	if len("Requester") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"Requester\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Requester"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("Requester")); err != nil {
-		return err
-	}
-
-	if len(t.Requester) > cbg.MaxLength {
-		return xerrors.Errorf("Value in field t.Requester was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(t.Requester))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string(t.Requester)); err != nil {
-		return err
 	}
 
 	// t.RetryCount (int64) (int64)
@@ -492,6 +492,17 @@ func (t *AssetPullingInfo) UnmarshalCBOR(r io.Reader) (err error) {
 
 				t.Hash = AssetHash(sval)
 			}
+			// t.Note (string) (string)
+		case "Note":
+
+			{
+				sval, err := cbg.ReadString(cr)
+				if err != nil {
+					return err
+				}
+
+				t.Note = string(sval)
+			}
 			// t.Size (int64) (int64)
 		case "Size":
 			{
@@ -591,17 +602,6 @@ func (t *AssetPullingInfo) UnmarshalCBOR(r io.Reader) (err error) {
 				}
 
 				t.Bandwidth = int64(extraI)
-			}
-			// t.Requester (string) (string)
-		case "Requester":
-
-			{
-				sval, err := cbg.ReadString(cr)
-				if err != nil {
-					return err
-				}
-
-				t.Requester = string(sval)
 			}
 			// t.RetryCount (int64) (int64)
 		case "RetryCount":

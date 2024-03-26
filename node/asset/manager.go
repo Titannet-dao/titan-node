@@ -35,9 +35,10 @@ const maxSizeOfCache = 128
 
 // assetWaiter is used by Manager to store waiting assets for pulling
 type assetWaiter struct {
-	Root   cid.Cid
-	Dss    []*types.CandidateDownloadInfo
-	puller *assetPuller
+	Root       cid.Cid
+	Dss        []*types.CandidateDownloadInfo
+	puller     *assetPuller
+	isSyncData bool
 }
 
 // Manager is the struct that manages asset pulling and store
@@ -154,15 +155,15 @@ func (m *Manager) pullAssets() {
 
 // doPullAsset pulls a single asset from the waitList
 func (m *Manager) doPullAsset() {
-	cw := m.headFromWaitList()
-	if cw == nil {
+	aw := m.headFromWaitList()
+	if aw == nil {
 		return
 	}
-	defer m.removeAssetFromWaitList(cw.Root)
+	defer m.removeAssetFromWaitList(aw.Root)
 
 	opts := &pullerOptions{
-		root:       cw.Root,
-		dss:        cw.Dss,
+		root:       aw.Root,
+		dss:        aw.Dss,
 		storage:    m.Storage,
 		ipfsAPIURL: m.ipfsAPIURL,
 		parallel:   m.pullParallel,
@@ -177,13 +178,12 @@ func (m *Manager) doPullAsset() {
 		return
 	}
 
-	cw.puller = assetPuller
-	err = assetPuller.pullAsset()
-	if err != nil {
+	aw.puller = assetPuller
+	if err = assetPuller.pullAsset(); err != nil {
 		log.Errorf("pull asset error: %s", err)
 	}
 
-	m.onPullAssetFinish(assetPuller)
+	m.onPullAssetFinish(assetPuller, aw.isSyncData)
 }
 
 // headFromWaitList returns the first assetWaiter in waitList, which is the oldest asset waiting to be downloaded
@@ -223,7 +223,7 @@ func (m *Manager) removeAssetFromWaitList(root cid.Cid) *assetWaiter {
 }
 
 // addToWaitList adds an assetWaiter to waitList if the asset with the root CID is not already waiting to be downloaded
-func (m *Manager) addToWaitList(root cid.Cid, dss []*types.CandidateDownloadInfo) {
+func (m *Manager) addToWaitList(root cid.Cid, dss []*types.CandidateDownloadInfo, isSyncData bool) {
 	m.waitListLock.Lock()
 	defer m.waitListLock.Unlock()
 
@@ -233,7 +233,7 @@ func (m *Manager) addToWaitList(root cid.Cid, dss []*types.CandidateDownloadInfo
 		}
 	}
 
-	cw := &assetWaiter{Root: root, Dss: dss}
+	cw := &assetWaiter{Root: root, Dss: dss, isSyncData: isSyncData}
 	m.waitList = append(m.waitList, cw)
 
 	if err := m.saveWaitList(); err != nil {
@@ -257,7 +257,7 @@ func (m *Manager) savePuller(puller *assetPuller) error {
 }
 
 // onPullAssetFinish is called when an assetPuller finishes downloading an asset
-func (m *Manager) onPullAssetFinish(puller *assetPuller) {
+func (m *Manager) onPullAssetFinish(puller *assetPuller, isSyncData bool) {
 	log.Debugf("onPullAssetFinish, asset %s totalSize %d doneSize %d", puller.root.String(), puller.totalSize, puller.doneSize)
 
 	if puller.isPulledComplete() {
@@ -265,17 +265,22 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller) {
 			log.Errorf("remove asset puller error:%s", err.Error())
 		}
 
-		blockCountOfAsset := uint32(len(puller.blocksPulledSuccessList))
-		if err := m.SetBlockCount(context.Background(), puller.root, blockCountOfAsset); err != nil {
-			log.Errorf("set block count error:%s", err.Error())
+		if len(puller.blocksPulledSuccessList) > 0 {
+			blockCountOfAsset := uint32(len(puller.blocksPulledSuccessList))
+			if err := m.SetBlockCount(context.Background(), puller.root, blockCountOfAsset); err != nil {
+				log.Errorf("set block count error:%s", err.Error())
+			}
+
+			if err := m.StoreBlocksToCar(context.Background(), puller.root); err != nil {
+				log.Errorf("store asset error: %s", err.Error())
+			}
+
 		}
 
-		if err := m.StoreBlocksToCar(context.Background(), puller.root); err != nil {
-			log.Errorf("store asset error: %s", err.Error())
-		}
-
-		if err := m.AddAssetToView(context.Background(), puller.root); err != nil {
-			log.Errorf("add asset to view error: %s", err.Error())
+		if isSyncData {
+			if err := m.AddAssetToView(context.Background(), puller.root); err != nil {
+				log.Errorf("sync data add asset to view %s", err.Error())
+			}
 		}
 
 	} else {
@@ -573,14 +578,15 @@ func (m *Manager) AddLostAsset(root cid.Cid) error {
 	if has, err := m.AssetExists(root); err != nil {
 		return err
 	} else if has {
-		return nil
+		log.Debugf("add lost asset, %s already exist", root.String())
+		return m.AddAssetToView(context.TODO(), root)
 	}
 
 	downloadInfos, err := m.GetCandidateDownloadInfos(context.Background(), root.String())
 	if err != nil {
 		return xerrors.Errorf("get candidate download infos: %w", err.Error())
 	}
-	m.addToWaitList(root, downloadInfos)
+	m.addToWaitList(root, downloadInfos, true)
 
 	return nil
 }
@@ -707,7 +713,7 @@ func (m *Manager) SaveUserAsset(ctx context.Context, userID string, root cid.Cid
 		m.uploadingAssets.Delete(root.Hash().String())
 		return err
 	}
-	return m.AddAssetToView(context.Background(), root)
+	return nil
 }
 
 func (m *Manager) SetAssetUploadProgress(ctx context.Context, root cid.Cid, progress *types.UploadProgress) error {
@@ -738,4 +744,13 @@ func (m *Manager) GetUploadingAsset(ctx context.Context, root cid.Cid) (*types.U
 	}
 
 	return v.(*types.UploadingAsset), nil
+}
+
+func isContainAWSDownloadSource(downloadInfos []*types.CandidateDownloadInfo) bool {
+	for _, downloadSource := range downloadInfos {
+		if len(downloadSource.AWSBucket) > 0 {
+			return true
+		}
+	}
+	return false
 }

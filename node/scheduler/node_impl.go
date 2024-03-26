@@ -345,14 +345,14 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		log.Debugf("%s node select codes:%v", nodeID, node.SelectWeights())
 	}
 
-	// isValidator, err := s.db.IsValidator(nodeID)
-	// if err != nil {
-	// 	log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
-	// }
+	isValidator, err := s.db.IsValidator(nodeID)
+	if err != nil {
+		log.Errorf("IsValidator %s err:%s", node.NodeID, err.Error())
+	}
 
-	// if isValidator {
-	// 	nodeInfo.Type = types.NodeValidator
-	// }
+	if isValidator {
+		nodeInfo.Type = types.NodeValidator
+	}
 
 	return nodeInfo, nil
 }
@@ -367,14 +367,14 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 	}
 	defer rows.Close()
 
-	// validator := make(map[string]struct{})
-	// validatorList, err := s.NodeManager.LoadValidators(s.NodeManager.ServerID)
-	// if err != nil {
-	// 	log.Errorf("get validator list: %v", err)
-	// }
-	// for _, id := range validatorList {
-	// 	validator[id] = struct{}{}
-	// }
+	validator := make(map[string]struct{})
+	validatorList, err := s.NodeManager.LoadValidators(s.NodeManager.ServerID)
+	if err != nil {
+		log.Errorf("get validator list: %v", err)
+	}
+	for _, id := range validatorList {
+		validator[id] = struct{}{}
+	}
 
 	nodeInfos := make([]types.NodeInfo, 0)
 	for rows.Next() {
@@ -400,10 +400,10 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 			nodeInfo.TitanDiskUsage = node.TitanDiskUsage
 		}
 
-		// _, exist := validator[nodeInfo.NodeID]
-		// if exist {
-		// 	nodeInfo.Type = types.NodeValidator
-		// }
+		_, exist := validator[nodeInfo.NodeID]
+		if exist {
+			nodeInfo.Type = types.NodeValidator
+		}
 
 		nodeInfos = append(nodeInfos, *nodeInfo)
 	}
@@ -544,6 +544,10 @@ func (s *Scheduler) GetNodeToken(ctx context.Context, nodeID string) (string, er
 	return node.GetToken(), nil
 }
 
+func (s *Scheduler) GetNodeOfIP(ctx context.Context, ip string) ([]string, error) {
+	return s.NodeManager.GetNodeOfIP(ip), nil
+}
+
 func (s *Scheduler) CheckIpUsage(ctx context.Context, ip string) (bool, error) {
 	if s.NodeManager.CheckIPExist(ip) {
 		return true, nil
@@ -567,7 +571,12 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
 	sources := make([]*types.CandidateDownloadInfo, 0)
 
-	replicas, err := s.NodeManager.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	replicas, err := s.db.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	if err != nil {
+		return nil, err
+	}
+
+	aInfo, err := s.db.LoadAssetRecord(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -611,9 +620,10 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 		workloadRecords = append(workloadRecords, workloadRecord)
 
 		source := &types.CandidateDownloadInfo{
-			NodeID:  nodeID,
-			Address: cNode.DownloadAddr(),
-			Tk:      token,
+			NodeID:    nodeID,
+			Address:   cNode.DownloadAddr(),
+			Tk:        token,
+			AWSBucket: aInfo.Note,
 		}
 
 		sources = append(sources, source)

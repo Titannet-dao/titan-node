@@ -30,8 +30,15 @@ func (m *Manager) GetCandidateNodes(num int, filterValidators bool) []*Node {
 	m.candidateNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
 
-		if filterValidators && node.Type == types.NodeValidator {
-			return true
+		if filterValidators {
+			isValidator, err := m.IsValidator(node.NodeID)
+			if err != nil {
+				return true
+			}
+
+			if isValidator {
+				return true
+			}
 		}
 
 		out = append(out, node)
@@ -96,21 +103,6 @@ func (m *Manager) GetOnlineNodeCount(nodeType types.NodeType) int {
 
 // NodeOnline registers a node as online
 func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
-	node.OnlineDuration = info.OnlineDuration
-	node.BandwidthDown = info.BandwidthDown
-	node.BandwidthUp = info.BandwidthUp
-	node.PortMapping = info.PortMapping
-	node.DeactivateTime = info.DeactivateTime
-	node.AvailableDiskSpace = info.AvailableDiskSpace
-
-	node.NodeID = info.NodeID
-	node.Type = info.Type
-
-	node.ExternalIP = info.ExternalIP
-	node.DiskSpace = info.DiskSpace
-
-	node.IncomeIncr = (node.CalculateMCx(m.TotalNetworkEdges) * 360)
-
 	err := m.saveInfo(info)
 	if err != nil {
 		return err
@@ -123,7 +115,7 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 		m.storeCandidateNode(node)
 	}
 
-	m.UpdateNodeDiskUsage(info.NodeID, info.DiskUsage)
+	// m.UpdateNodeDiskUsage(info.NodeID, info.DiskUsage)
 
 	return nil
 }

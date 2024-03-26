@@ -104,7 +104,7 @@ type PullAssetReq struct {
 	Replicas   int64
 	Expiration time.Time
 
-	UserID    string
+	Bucket    string
 	Hash      string
 	Bandwidth int64 // unit:MiB/s
 

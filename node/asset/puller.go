@@ -110,6 +110,14 @@ func (ap *assetPuller) removeBlocksFromWaitList(n int) {
 
 // pullAsset pulls the asset by downloading its blocks
 func (ap *assetPuller) pullAsset() error {
+	if isContainAWSDownloadSource(ap.downloadSources) {
+		err := ap.pullAssetFromAWS()
+		if err == nil {
+			return nil
+		}
+		log.Errorf("pull asset from aws %s", err.Error())
+	}
+
 	nextLayerCIDs := ap.blocksWaitList
 	if len(nextLayerCIDs) == 0 {
 		nextLayerCIDs = append(nextLayerCIDs, ap.root.String())
@@ -406,4 +414,52 @@ func (ap *assetPuller) usableDiskSpace() int64 {
 	totalSpace, usage := ap.storage.GetDiskUsageStat()
 	usable := totalSpace - (totalSpace * (usage / float64(100)))
 	return int64(usable)
+}
+
+func (ap *assetPuller) pullAssetFromAWS() error {
+	bucket, key := getAWSBucketAndKey(ap.downloadSources)
+	if len(bucket) == 0 && len(key) == 0 {
+		return fmt.Errorf("bucket and key is empty, can not pull asset from aws")
+	}
+
+	log.Debugf("pull asset %s from aws bucket=%s, ket=%s", ap.root.String(), bucket, key)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ap.cancel = cancel
+	ap.totalSize = 0
+	ap.doneSize = 0
+
+	awsClient := &awsClient{storage: ap.storage}
+	cid, size, err := awsClient.pullAssetFromAWS(ctx, bucket, key)
+	if err != nil {
+		ap.errMsgs = append(ap.errMsgs, &fetcher.ErrMsg{Cid: ap.root.String(), Source: bucket, Msg: err.Error()})
+		return err
+	}
+
+	if cid.Hash().String() != ap.root.Hash().String() {
+		if err = ap.storage.DeleteAsset(cid); err != nil {
+			log.Errorln("download an unwanted asset from aws, delete it error ", err.Error())
+		}
+
+		err = fmt.Errorf("download asset from aws bucket=%s key=%s not match cid %s", bucket, key, cid.String())
+		ap.errMsgs = append(ap.errMsgs, &fetcher.ErrMsg{Cid: ap.root.String(), Source: bucket, Msg: err.Error()})
+
+		return err
+	}
+
+	ap.totalSize = uint64(size)
+	ap.doneSize = uint64(size)
+
+	return nil
+}
+
+func getAWSBucketAndKey(downloadInfos []*types.CandidateDownloadInfo) (string, string) {
+	for _, downloadSource := range downloadInfos {
+		if len(downloadSource.AWSBucket) > 0 {
+			return downloadSource.AWSBucket, downloadSource.AWSKey
+		}
+	}
+	return "", ""
 }

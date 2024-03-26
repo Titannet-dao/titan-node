@@ -38,8 +38,8 @@ var (
 	replicaCountFlag = &cli.IntFlag{
 		Name:        "replica-count",
 		Usage:       "Number of replica pull to nodes",
-		Value:       2,
-		DefaultText: "2",
+		Value:       500,
+		DefaultText: "500",
 	}
 
 	nodeTypeFlag = &cli.IntFlag{

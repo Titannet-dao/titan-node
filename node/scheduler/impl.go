@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"time"
 
@@ -100,55 +99,109 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		return xerrors.Errorf("%s The number of IPs exceeds the limit", externalIP)
 	}
 
+	defer func() {
+		if err != nil {
+			s.NodeManager.RemoveNodeIP(nodeID, externalIP)
+		}
+	}()
+
 	cNode.SetToken(opts.Token)
 	cNode.RemoteAddr = remoteAddr
 	cNode.ExternalURL = opts.ExternalURL
 	cNode.TCPPort = opts.TcpServerPort
 	cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
-	log.Infof("node connected %s, address:%s", nodeID, remoteAddr)
+	log.Infof("node connected %s, address:%s , %v", nodeID, remoteAddr, alreadyConnect)
 
 	err = cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
 	if err != nil {
 		return xerrors.Errorf("nodeConnect ConnectRPC err:%s", err.Error())
 	}
 
-	if !alreadyConnect {
-		// init node info
-		nodeInfo, err := cNode.API.GetNodeInfo(context.Background())
+	// init node info
+	nodeInfo, err := cNode.API.GetNodeInfo(context.Background())
+	if err != nil {
+		log.Errorf("nodeConnect NodeInfo err:%s", err.Error())
+		return err
+	}
+
+	if nodeID != nodeInfo.NodeID {
+		return xerrors.Errorf("nodeID mismatch %s, %s", nodeID, nodeInfo.NodeID)
+	}
+
+	nodeInfo.Type = nodeType
+	nodeInfo.SchedulerID = s.ServerID
+
+	if nodeInfo.AvailableDiskSpace <= 0 {
+		nodeInfo.AvailableDiskSpace = 2 * units.GiB
+	}
+
+	if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace {
+		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace
+	}
+
+	if nodeType == types.NodeCandidate {
+		// isValidator, err := s.db.IsValidator(nodeID)
+		// if err != nil {
+		// 	return xerrors.Errorf("nodeConnect IsValidator err:%s", err.Error())
+		// }
+
+		// if isValidator {
+		// 	nodeType = types.NodeValidator
+		// }
+		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace * 0.9
+	} else {
+		err = checkNodeParameters(&nodeInfo)
 		if err != nil {
-			log.Errorf("nodeConnect NodeInfo err:%s", err.Error())
 			return err
 		}
+	}
 
-		if nodeInfo.AvailableDiskSpace <= 0 {
-			nodeInfo.AvailableDiskSpace = 2 * units.GiB
+	nodeInfo.ExternalIP = externalIP
+	nodeInfo.BandwidthUp = units.KiB
+
+	oldInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
+	if err != nil && err != sql.ErrNoRows {
+		return xerrors.Errorf("load node online duration %s err : %s", nodeID, err.Error())
+	}
+
+	size, err := s.db.LoadReplicaSizeByNodeID(nodeID)
+	if err != nil {
+		return xerrors.Errorf("LoadReplicaSizeByNodeID %s err:%s", nodeID, err.Error())
+	}
+	nodeInfo.TitanDiskUsage = float64(size)
+	if nodeInfo.AvailableDiskSpace < float64(size) {
+		nodeInfo.AvailableDiskSpace = float64(roundUpToNextGB(size))
+	}
+
+	if oldInfo != nil {
+		// init node info
+		nodeInfo.PortMapping = oldInfo.PortMapping
+		nodeInfo.OnlineDuration = oldInfo.OnlineDuration
+		nodeInfo.BandwidthDown = oldInfo.BandwidthDown
+		nodeInfo.BandwidthUp = oldInfo.BandwidthUp
+		nodeInfo.DeactivateTime = oldInfo.DeactivateTime
+
+		if oldInfo.DeactivateTime > 0 && oldInfo.DeactivateTime < time.Now().Unix() {
+			return xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
 		}
+	}
 
-		if nodeType == types.NodeCandidate {
-			isValidator, err := s.db.IsValidator(nodeID)
-			if err != nil {
-				return xerrors.Errorf("nodeConnect IsValidator err:%s", err.Error())
-			}
+	cNode.OnlineDuration = nodeInfo.OnlineDuration
+	cNode.BandwidthDown = nodeInfo.BandwidthDown
+	cNode.BandwidthUp = nodeInfo.BandwidthUp
+	cNode.PortMapping = nodeInfo.PortMapping
+	cNode.DeactivateTime = nodeInfo.DeactivateTime
+	cNode.AvailableDiskSpace = nodeInfo.AvailableDiskSpace
+	cNode.NodeID = nodeInfo.NodeID
+	cNode.Type = nodeInfo.Type
+	cNode.ExternalIP = nodeInfo.ExternalIP
+	cNode.DiskSpace = nodeInfo.DiskSpace
+	cNode.TitanDiskUsage = nodeInfo.TitanDiskUsage
+	cNode.DiskUsage = nodeInfo.DiskUsage
+	cNode.IncomeIncr = (cNode.CalculateMCx(s.NodeManager.TotalNetworkEdges) * 360)
 
-			if isValidator {
-				nodeType = types.NodeValidator
-			}
-		} else {
-			err = checkNodeParameters(&nodeInfo)
-			if err != nil {
-				return err
-			}
-		}
-
-		if nodeID != nodeInfo.NodeID {
-			return xerrors.Errorf("nodeID mismatch %s, %s", nodeID, nodeInfo.NodeID)
-		}
-
-		nodeInfo.NodeID = nodeID
-		nodeInfo.Type = nodeType
-		nodeInfo.SchedulerID = s.ServerID
-
+	if !alreadyConnect {
 		pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
 		if err != nil && err != sql.ErrNoRows {
 			return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
@@ -159,27 +212,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 			return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
 		}
 		cNode.PublicKey = publicKey
-
-		oldInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
-		if err != nil && err != sql.ErrNoRows {
-			return xerrors.Errorf("load node online duration %s err : %s", nodeID, err.Error())
-		}
-
-		nodeInfo.ExternalIP = externalIP
-		nodeInfo.BandwidthUp = units.MiB
-
-		if oldInfo != nil {
-			// init node info
-			nodeInfo.PortMapping = oldInfo.PortMapping
-			nodeInfo.OnlineDuration = oldInfo.OnlineDuration
-			nodeInfo.BandwidthDown = oldInfo.BandwidthDown
-			nodeInfo.BandwidthUp = oldInfo.BandwidthUp
-			nodeInfo.DeactivateTime = oldInfo.DeactivateTime
-
-			if oldInfo.DeactivateTime > 0 && oldInfo.DeactivateTime < time.Now().Unix() {
-				return xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
-			}
-		}
 
 		err = s.NodeManager.NodeOnline(cNode, &nodeInfo)
 		if err != nil {
@@ -197,14 +229,22 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	return nil
 }
 
+func roundUpToNextGB(bytes int) int {
+	const GB = 1 << 30
+	if bytes%GB == 0 {
+		return bytes
+	}
+	return ((bytes / GB) + 1) * GB
+}
+
 func checkNodeParameters(nodeInfo *types.NodeInfo) error {
 	if nodeInfo.DiskSpace > diskSpaceLimit || nodeInfo.DiskSpace < 0 {
 		return xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.DiskSpace)
 	}
 
-	if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace || nodeInfo.AvailableDiskSpace < 0 {
-		return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] > DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, nodeInfo.DiskSpace)
-	}
+	// if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace {
+	// 	return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] > DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, nodeInfo.DiskSpace)
+	// }
 
 	// if nodeInfo.AvailableDiskSpace < float64(tDiskUsage) {
 	// 	return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] < tDiskUsage [%d]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, tDiskUsage)
@@ -242,7 +282,7 @@ func (s *Scheduler) NodeValidationResult(ctx context.Context, r io.Reader, sign 
 		return err
 	}
 
-	data, err := ioutil.ReadAll(r)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
@@ -318,7 +358,7 @@ func (s *Scheduler) SubmitUserWorkloadReport(ctx context.Context, r io.Reader) e
 	nodeID := handler.GetNodeID(ctx)
 	node := s.NodeManager.GetNode(nodeID)
 
-	cipherText, err := ioutil.ReadAll(r)
+	cipherText, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

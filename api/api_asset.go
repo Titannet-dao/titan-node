@@ -24,6 +24,8 @@ type Asset interface {
 	PullAssetFromAWS(ctx context.Context, bucket, key string) error //perm:admin
 	// GetAssetView get asset view
 	GetAssetView(ctx context.Context) (*types.AssetView, error) //perm:admin
+	// AddAssetView add asset to view
+	AddAssetView(ctx context.Context, assetCIDs []string) error //perm:admin
 	// GetAssetsInBucket get assets in bucket
 	GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, error) //perm:admin
 }

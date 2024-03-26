@@ -151,18 +151,18 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 
 	nodeID := node.NodeID
 
-	// isValidator, err := m.nodeMgr.IsValidator(nodeID)
-	// if err != nil {
-	// 	log.Errorf("onNodeStateChange IsValidator %s err:%s", node.NodeID, err.Error())
-	// 	return
-	// }
+	isValidator, err := m.nodeMgr.IsValidator(nodeID)
+	if err != nil {
+		log.Errorf("onNodeStateChange IsValidator %s err:%s", node.NodeID, err.Error())
+		return
+	}
 
 	if isOnline {
 		// if node.IsAbnormal() {
 		// 	return
 		// }
 
-		if node.Type == types.NodeValidator {
+		if isValidator {
 			// m.addValidator(nodeID, node.BandwidthDown)
 
 			// update validator owner

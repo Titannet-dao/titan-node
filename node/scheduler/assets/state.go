@@ -64,5 +64,5 @@ var (
 	}
 
 	// ActiveStates contains a list of asset pull states that represent active.
-	ActiveStates = append(append([]string{Servicing.String()}, FailedStates...), PullingStates...)
+	ActiveStates = append(append([]string{Servicing.String(), Stop.String()}, FailedStates...), PullingStates...)
 )

@@ -473,7 +473,7 @@ var listAssetRecordCmd = &cli.Command{
 			tablewriter.Col("State"),
 			tablewriter.Col("Size"),
 			tablewriter.Col("Replicas"),
-			tablewriter.Col("CreatedTime"),
+			// tablewriter.Col("CreatedTime"),
 			tablewriter.Col("Note"),
 			tablewriter.NewLineCol("Processes"),
 		)
@@ -485,14 +485,18 @@ var listAssetRecordCmd = &cli.Command{
 
 		for w := 0; w < len(list); w++ {
 			info := list[w]
+
+			// if info.Note == "" {
+			// 	continue
+			// }
 			m := map[string]interface{}{
-				"Num":         w + 1,
-				"CID":         info.CID,
-				"State":       colorState(info.State),
-				"Size":        units.BytesSize(float64(info.TotalSize)),
-				"Replicas":    info.NeedEdgeReplica,
-				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
-				"Note":        info.Note,
+				"Num":      w + 1,
+				"CID":      info.CID,
+				"State":    colorState(info.State),
+				"Size":     units.BytesSize(float64(info.TotalSize)),
+				"Replicas": info.NeedEdgeReplica,
+				// "CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
+				"Note": info.Note,
 			}
 
 			sort.Slice(info.ReplicaInfos, func(i, j int) bool {
@@ -585,7 +589,7 @@ var assetViewCmd = &cli.Command{
 		fmt.Println("Top Hash: ", assetView.TopHash)
 
 		bucketIDs := make([]int, 0)
-		for bucketID, _ := range assetView.BucketHashes {
+		for bucketID := range assetView.BucketHashes {
 			bucketIDs = append(bucketIDs, int(bucketID))
 		}
 

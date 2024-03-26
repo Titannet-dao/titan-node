@@ -9,8 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Filecoin-Titan/titan/api"
-	"github.com/Filecoin-Titan/titan/api/terrors"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/filecoin-project/go-statemachine"
 	"github.com/ipfs/go-datastore"
@@ -67,6 +65,8 @@ type Manager struct {
 
 	fillAssets     sync.Map
 	fillAssetNodes sync.Map
+
+	isPullSpecifyAsset bool
 }
 
 // NewManager returns a new AssetManager instance
@@ -275,125 +275,125 @@ func (m *Manager) requestNodePullProgresses(nodeID string, cids []string) (resul
 
 // CreateAssetUploadTask create a new asset upload task
 func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
-	// Waiting for state machine initialization
-	m.stateMachineWait.Wait()
-	log.Infof("asset event: %s, add asset ", req.AssetCID)
-	exist, err := m.AssetExistsOfUser(hash, req.UserID)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
-	}
+	return nil, xerrors.Errorf("interface not implemented")
+	// // Waiting for state machine initialization
+	// m.stateMachineWait.Wait()
+	// log.Infof("asset event: %s, add asset ", req.AssetCID)
+	// exist, err := m.AssetExistsOfUser(hash, req.UserID)
+	// if err != nil {
+	// 	return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	// }
 
-	if exist {
-		return nil, &api.ErrWeb{Code: terrors.NoDuplicateUploads.Int(), Message: fmt.Sprintf("Asset is exist, no duplicate uploads")}
-	}
+	// if exist {
+	// 	return nil, &api.ErrWeb{Code: terrors.NoDuplicateUploads.Int(), Message: fmt.Sprintf("Asset is exist, no duplicate uploads")}
+	// }
 
-	if m.getPullingAssetLen() >= m.getAssetPullTaskLimit() {
-		return nil, &api.ErrWeb{Code: terrors.BusyServer.Int(), Message: fmt.Sprintf("The task has reached its limit. Please try again later.")}
-	}
+	// if m.getPullingAssetLen() >= m.getAssetPullTaskLimit() {
+	// 	return nil, &api.ErrWeb{Code: terrors.BusyServer.Int(), Message: fmt.Sprintf("The task has reached its limit. Please try again later.")}
+	// }
 
-	replicaCount := int64(10)
-	bandwidth := int64(0)
-	expiration := time.Now().Add(30 * 24 * time.Hour)
+	// replicaCount := int64(10)
+	// bandwidth := int64(0)
+	// expiration := time.Now().Add(30 * 24 * time.Hour)
 
-	cfg, err := m.config()
-	if err == nil {
-		replicaCount = int64(cfg.UploadAssetReplicaCount)
-		expiration = time.Now().Add(time.Duration(cfg.UploadAssetExpiration) * 24 * time.Hour)
-	}
+	// cfg, err := m.config()
+	// if err == nil {
+	// 	replicaCount = int64(cfg.UploadAssetReplicaCount)
+	// 	expiration = time.Now().Add(time.Duration(cfg.UploadAssetExpiration) * 24 * time.Hour)
+	// }
 
-	assetRecord, err := m.LoadAssetRecord(hash)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
-	}
+	// assetRecord, err := m.LoadAssetRecord(hash)
+	// if err != nil && err != sql.ErrNoRows {
+	// 	return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	// }
 
-	err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration, req.Password, req.GroupID)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
-	}
+	// err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration, req.Password, req.GroupID)
+	// if err != nil {
+	// 	return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	// }
 
-	if assetRecord != nil && assetRecord.State != "" && assetRecord.State != Remove.String() && assetRecord.State != UploadFailed.String() {
-		info := &types.CreateAssetRsp{AlreadyExists: true}
+	// if assetRecord != nil && assetRecord.State != "" && assetRecord.State != Remove.String() && assetRecord.State != UploadFailed.String() {
+	// 	info := &types.CreateAssetRsp{AlreadyExists: true}
 
-		m.UpdateAssetRecordExpiration(hash, expiration)
+	// 	m.UpdateAssetRecordExpiration(hash, expiration)
 
-		return info, nil
-	}
+	// 	return info, nil
+	// }
 
-	record := &types.AssetRecord{
-		Hash:                  hash,
-		CID:                   req.AssetCID,
-		ServerID:              m.nodeMgr.ServerID,
-		NeedEdgeReplica:       replicaCount,
-		NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
-		Expiration:            expiration,
-		NeedBandwidth:         bandwidth,
-		State:                 UploadInit.String(),
-		TotalSize:             req.AssetSize,
-		CreatedTime:           time.Now(),
-		Note:                  req.UserID,
-	}
+	// record := &types.AssetRecord{
+	// 	Hash:                  hash,
+	// 	CID:                   req.AssetCID,
+	// 	ServerID:              m.nodeMgr.ServerID,
+	// 	NeedEdgeReplica:       replicaCount,
+	// 	NeedCandidateReplicas: int64(m.GetCandidateReplicaCount()),
+	// 	Expiration:            expiration,
+	// 	NeedBandwidth:         bandwidth,
+	// 	State:                 UploadInit.String(),
+	// 	TotalSize:             req.AssetSize,
+	// 	CreatedTime:           time.Now(),
+	// }
 
-	err = m.SaveAssetRecord(record)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
-	}
+	// err = m.SaveAssetRecord(record)
+	// if err != nil {
+	// 	return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	// }
 
-	cNode := m.nodeMgr.GetCandidateNode(req.NodeID)
-	if cNode == nil {
-		cNodes, str := m.chooseCandidateNodes(1, nil)
-		if len(cNodes) == 0 {
-			return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: fmt.Sprintf("not found node :%s", str)}
-		}
+	// cNode := m.nodeMgr.GetCandidateNode(req.NodeID)
+	// if cNode == nil {
+	// 	cNodes, str := m.chooseCandidateNodes(1, nil)
+	// 	if len(cNodes) == 0 {
+	// 		return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: fmt.Sprintf("not found node :%s", str)}
+	// 	}
 
-		for _, n := range cNodes {
-			cNode = n
-			break
-		}
-	}
+	// 	for _, n := range cNodes {
+	// 		cNode = n
+	// 		break
+	// 	}
+	// }
 
-	payload := &types.AuthUserUploadDownloadAsset{
-		UserID:     req.UserID,
-		AssetCID:   req.AssetCID,
-		AssetSize:  req.AssetSize,
-		Expiration: time.Now().Add(time.Hour),
-	}
+	// payload := &types.AuthUserUploadDownloadAsset{
+	// 	UserID:     req.UserID,
+	// 	AssetCID:   req.AssetCID,
+	// 	AssetSize:  req.AssetSize,
+	// 	Expiration: time.Now().Add(time.Hour),
+	// }
 
-	token, err := cNode.API.CreateAsset(context.Background(), payload)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.RequestNodeErr.Int(), Message: err.Error()}
-	}
+	// token, err := cNode.API.CreateAsset(context.Background(), payload)
+	// if err != nil {
+	// 	return nil, &api.ErrWeb{Code: terrors.RequestNodeErr.Int(), Message: err.Error()}
+	// }
 
-	rInfo := AssetForceState{
-		State: UploadInit,
-		// Requester:  req.UserID,
-		SeedNodeID: cNode.NodeID,
-	}
+	// rInfo := AssetForceState{
+	// 	State: UploadInit,
+	// 	// Requester:  req.UserID,
+	// 	SeedNodeID: cNode.NodeID,
+	// }
 
-	// create asset task
-	err = m.assetStateMachines.Send(AssetHash(hash), rInfo)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
-	}
+	// // create asset task
+	// err = m.assetStateMachines.Send(AssetHash(hash), rInfo)
+	// if err != nil {
+	// 	return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
+	// }
 
-	uploadURL := fmt.Sprintf("http://%s/upload", cNode.RemoteAddr)
-	if len(cNode.ExternalURL) > 0 {
-		uploadURL = fmt.Sprintf("%s/upload", cNode.ExternalURL)
-	}
+	// uploadURL := fmt.Sprintf("http://%s/upload", cNode.RemoteAddr)
+	// if len(cNode.ExternalURL) > 0 {
+	// 	uploadURL = fmt.Sprintf("%s/upload", cNode.ExternalURL)
+	// }
 
-	return &types.CreateAssetRsp{UploadURL: uploadURL, Token: token}, nil
+	// return &types.CreateAssetRsp{UploadURL: uploadURL, Token: token}, nil
 }
 
 func (m *Manager) CreateBaseAsset(cid, nodeID string, size, replicas int64) error {
 	log.Infof("CreateBaseAsset cid:%s , nodeID:%s", cid, nodeID)
+	return xerrors.Errorf("interface not implemented")
+	// hash, err := cidutil.CIDToHash(cid)
+	// if err != nil {
+	// 	return xerrors.Errorf("%s cid to hash err:%s", cid, err.Error())
+	// }
 
-	hash, err := cidutil.CIDToHash(cid)
-	if err != nil {
-		return xerrors.Errorf("%s cid to hash err:%s", cid, err.Error())
-	}
+	// expiration := time.Now().Add(360 * 24 * time.Hour)
 
-	expiration := time.Now().Add(360 * 24 * time.Hour)
-
-	return m.CreateAssetPullTask(&types.PullAssetReq{CID: cid, Replicas: replicas, Expiration: expiration, Hash: hash, UserID: "admin", SeedNodeID: nodeID})
+	// return m.CreateAssetPullTask(&types.PullAssetReq{CID: cid, Replicas: replicas, Expiration: expiration, Hash: hash,  SeedNodeID: nodeID})
 }
 
 // CreateAssetPullTask create a new asset pull task
@@ -435,7 +435,7 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 			NeedBandwidth:         info.Bandwidth,
 			State:                 SeedSelect.String(),
 			CreatedTime:           time.Now(),
-			Note:                  info.UserID,
+			Note:                  info.Bucket,
 		}
 
 		err = m.SaveAssetRecord(record)
@@ -476,7 +476,7 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 	assetRecord.NeedBandwidth = info.Bandwidth
 	assetRecord.NeedCandidateReplicas = info.CandidateReplicas
 
-	return m.replenishAssetReplicas(assetRecord, 0, info.UserID, "", SeedSelect, info.SeedNodeID)
+	return m.replenishAssetReplicas(assetRecord, 0, info.Bucket, "", SeedSelect, info.SeedNodeID)
 }
 
 // replenishAssetReplicas updates the existing asset replicas if needed
@@ -525,7 +525,7 @@ func (m *Manager) CandidateDeactivate(nodeID string) error {
 
 // RestartPullAssets restarts asset pulls
 func (m *Manager) RestartPullAssets(hashes []types.AssetHash) error {
-	if m.getPullingAssetLen()+len(hashes) >= m.getAssetPullTaskLimit() {
+	if m.getPullingAssetLen()+len(hashes) > m.getAssetPullTaskLimit() {
 		return xerrors.Errorf("The asset in the pulling exceeds the limit %d, please wait", m.getAssetPullTaskLimit())
 	}
 
@@ -618,10 +618,12 @@ func (m *Manager) StopAsset(hashs []string) error {
 			continue
 		}
 
-		err := m.assetStateMachines.Send(AssetHash(hash), AssetForceState{State: Stop})
-		if err != nil {
-			log.Errorf("StopAsset assetStateMachines err:%s", err.Error())
-		}
+		// err := m.assetStateMachines.Send(AssetHash(hash), AssetForceState{State: Stop})
+		// if err != nil {
+		// 	log.Errorf("StopAsset assetStateMachines err:%s", err.Error())
+		// }
+
+		m.setAssetTimeout(hash)
 	}
 
 	return nil
@@ -629,6 +631,12 @@ func (m *Manager) StopAsset(hashs []string) error {
 
 // updateAssetPullResults updates asset pull results
 func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult) {
+	node := m.nodeMgr.GetNode(nodeID)
+	if node != nil {
+		node.DiskUsage = result.DiskUsage
+	}
+
+	cids := make([]string, 0)
 	haveChange := false
 	for _, progress := range result.Progresses {
 		log.Infof("updateAssetPullResults node_id: %s, status: %d, block:%d/%d, size: %d/%d, cid: %s , msg:%s", nodeID, progress.Status, progress.DoneBlocksCount, progress.BlocksCount, progress.DoneSize, progress.Size, progress.CID, progress.Msg)
@@ -684,6 +692,7 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 				log.Errorf("updateAssetPullResults %s LoadAssetRecord err:%s", nodeID, err.Error())
 				continue
 			}
+			cids = append(cids, record.CID)
 
 			err = m.SaveReplicaEvent(cInfo.Hash, record.CID, cInfo.NodeID, cInfo.DoneSize, record.Expiration, types.ReplicaEventAdd)
 			if err != nil {
@@ -712,6 +721,12 @@ func (m *Manager) updateAssetPullResults(nodeID string, result *types.PullResult
 	if haveChange {
 		// update node Disk Use
 		m.nodeMgr.UpdateNodeDiskUsage(nodeID, result.DiskUsage)
+
+		// TODO next version
+		node := m.nodeMgr.GetNode(nodeID)
+		if node != nil {
+			node.AddAssetView(context.Background(), cids)
+		}
 	}
 }
 
@@ -875,7 +890,6 @@ func (m *Manager) saveReplicaInformation(nodes map[string]*node.Node, hash strin
 	replicaInfos := make([]*types.ReplicaInfo, 0)
 
 	for _, node := range nodes {
-		log.Infof("saveReplicaInformation %s : %s", hash, node.NodeID)
 		replicaInfos = append(replicaInfos, &types.ReplicaInfo{
 			NodeID:      node.NodeID,
 			Status:      types.ReplicaStatusWaiting,
@@ -888,7 +902,7 @@ func (m *Manager) saveReplicaInformation(nodes map[string]*node.Node, hash strin
 }
 
 // getDownloadSources gets download sources for a given CID
-func (m *Manager) getDownloadSources(hash string) []*types.CandidateDownloadInfo {
+func (m *Manager) getDownloadSources(hash, bucket string) []*types.CandidateDownloadInfo {
 	replicaInfos, err := m.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
 	if err != nil {
 		return nil
@@ -919,8 +933,9 @@ func (m *Manager) getDownloadSources(hash string) []*types.CandidateDownloadInfo
 		}
 
 		source := &types.CandidateDownloadInfo{
-			NodeID:  nodeID,
-			Address: cNode.DownloadAddr(),
+			NodeID:    nodeID,
+			Address:   cNode.DownloadAddr(),
+			AWSBucket: bucket,
 		}
 
 		sources = append(sources, source)
@@ -982,6 +997,7 @@ func (m *Manager) chooseCandidateNodes(count int, filterNodes []string) (map[str
 // size: the minimum free storage space required for each selected node
 func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []string, size float64) (map[string]*node.Node, string) {
 	str := fmt.Sprintf("need node:%d , filter node:%d , cur node:%d , randNum : ", count, len(filterNodes), m.nodeMgr.Edges)
+
 	selectMap := make(map[string]*node.Node)
 	if count <= 0 {
 		count = 1
@@ -989,9 +1005,9 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 
 	// If the number of filterNodes is equal or greater than the total edge nodes,
 	// there are no nodes to consider, so return an empty map and the result string
-	if len(filterNodes) >= m.nodeMgr.Edges {
-		return selectMap, str
-	}
+	// if len(filterNodes) >= m.nodeMgr.Edges {
+	// 	return selectMap, str
+	// }
 
 	filterMap := make(map[string]struct{})
 	for _, nodeID := range filterNodes {
@@ -1022,6 +1038,11 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 		}
 
 		if _, exist := selectMap[nodeID]; exist {
+			return false
+		}
+
+		pCount, err := m.nodeMgr.GetNodePullingCount(node.NodeID)
+		if err != nil || pCount > 0 {
 			return false
 		}
 
@@ -1102,15 +1123,25 @@ func (m *Manager) GenerateToken(assetCID string, sources []*types.CandidateDownl
 	downloadSources := make(map[string][]*types.CandidateDownloadInfo)
 	tkPayloads := make([]*types.TokenPayload, 0)
 
+	// index := 0
 	for _, node := range nodes {
+		// if len(sources) <= index {
+		// 	break
+		// }
+
+		// ss := sources[index]
+
 		newSources, payloads, err := m.generateTokenForDownloadSources(sources, titanRsa, assetCID, node.NodeID)
 		if err != nil {
-			return nil, nil, err
+			continue
 		}
+
+		// index++
 
 		tkPayloads = append(tkPayloads, payloads...)
 		downloadSources[node.NodeID] = newSources
 	}
+
 	return downloadSources, tkPayloads, nil
 }
 
