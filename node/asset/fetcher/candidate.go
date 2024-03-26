@@ -6,7 +6,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -44,38 +44,38 @@ func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource 
 
 	buf, err := encode(downloadSource.Tk)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode %s", err.Error())
 	}
 	url := fmt.Sprintf("https://%s/ipfs/%s?format=raw", downloadSource.Address, cidStr)
 
 	req, err := http.NewRequest(http.MethodGet, url, buf)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("newRequest %s", err.Error())
 	}
 	req = req.WithContext(ctx)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("doRequest %s", err.Error())
 	}
 	defer resp.Body.Close() //nolint:errcheck // ignore error
 
 	if resp.StatusCode != http.StatusOK {
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("http status code: %d, read body error %s", resp.StatusCode, err.Error())
 		}
 		return nil, fmt.Errorf("http status code: %d, error msg: %s", resp.StatusCode, string(data))
 	}
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read body %s", err.Error())
 	}
 
 	cid, err := cid.Decode(cidStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode %s", err.Error())
 	}
 
 	basicBlock, err := blocks.NewBlockWithCid(data, cid)

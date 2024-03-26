@@ -146,6 +146,10 @@ func NewHTTP3Client() *http.Client {
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
+			QuicConfig: &quic.Config{
+				MaxIncomingStreams:    100,
+				MaxIncomingUniStreams: 100,
+			},
 		},
 	}
 }

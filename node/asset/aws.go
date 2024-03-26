@@ -26,10 +26,10 @@ type AWS interface {
 	PullAssetFromAWS(ctx context.Context, bucket, key string) error
 }
 
-func NewAWS(scheduler api.Scheduler, manager *storage.Manager) AWS {
+func NewAWS(scheduler api.Scheduler, storage storage.Storage) AWS {
 	return &awsClient{
-		scheduler:  scheduler,
-		storageMgr: manager,
+		scheduler: scheduler,
+		storage:   storage,
 	}
 }
 
@@ -50,10 +50,10 @@ func getRegion(bucket string) (string, error) {
 }
 
 type awsClient struct {
-	isRunning  bool
-	object     awsObject
-	scheduler  api.Scheduler
-	storageMgr *storage.Manager
+	isRunning bool
+	object    awsObject
+	scheduler api.Scheduler
+	storage   storage.Storage
 }
 
 type awsObject struct {
@@ -74,6 +74,7 @@ func (ac *awsClient) PullAssetFromAWS(ctx context.Context, bucket, key string) e
 		defer func() {
 			ac.isRunning = false
 		}()
+
 		ctx := context.Background()
 		cid, size, err := ac.pullAssetFromAWS(ctx, bucket, key)
 		if err != nil {
@@ -104,7 +105,7 @@ func (ac *awsClient) pullAssetFromAWS(ctx context.Context, bucket, key string) (
 	svc := newS3(region)
 
 	tempFilePath := path.Join(os.TempDir(), uuid.NewString())
-	if err := ac.downloadAssets(svc, bucket, key, tempFilePath); err != nil {
+	if err := ac.downloadAssets(ctx, svc, bucket, key, tempFilePath); err != nil {
 		return cid.Cid{}, 0, err
 	}
 	defer os.RemoveAll(tempFilePath)
@@ -122,7 +123,7 @@ func (ac *awsClient) pullAssetFromAWS(ctx context.Context, bucket, key string) (
 	}
 
 	var isExists bool
-	if isExists, err = ac.storageMgr.AssetExists(rootCID); err != nil {
+	if isExists, err = ac.storage.AssetExists(rootCID); err != nil {
 		return cid.Cid{}, 0, err
 	} else if isExists {
 		log.Debugf("asset %s already exist", rootCID.String())
@@ -149,28 +150,24 @@ func (ac *awsClient) saveCarFile(ctx context.Context, tempCarFile string, root c
 		return err
 	}
 	log.Debugf("car file size %d", fInfo.Size())
-	if err := ac.storageMgr.StoreUserAsset(ctx, uuid.NewString(), root, fInfo.Size(), f); err != nil {
-		return err
-	}
-
-	if err := ac.storageMgr.AddAssetToView(ctx, root); err != nil {
+	if err := ac.storage.StoreUserAsset(ctx, uuid.NewString(), root, fInfo.Size(), f); err != nil {
 		return err
 	}
 	return nil
 }
-func (ac *awsClient) downloadAssets(svc *s3.S3, bucket, key string, tempFilePath string) error {
+func (ac *awsClient) downloadAssets(ctx context.Context, svc *s3.S3, bucket, key string, tempFilePath string) error {
 	if len(bucket) == 0 && len(key) == 0 {
 		return fmt.Errorf("bucket and key can not empty")
 	}
 
 	if len(key) == 0 {
-		return ac.downloadObjects(svc, bucket, key, tempFilePath)
+		return ac.downloadObjects(ctx, svc, bucket, key, tempFilePath)
 	}
 
-	return ac.downloadObject(svc, bucket, key, tempFilePath)
+	return ac.downloadObject(ctx, svc, bucket, key, tempFilePath)
 }
 
-func (ac *awsClient) downloadObjects(svc *s3.S3, bucket, key string, tempFilePath string) error {
+func (ac *awsClient) downloadObjects(ctx context.Context, svc *s3.S3, bucket, key string, tempFilePath string) error {
 	var prefix string
 	var parts = strings.SplitN(strings.TrimSpace(bucket), "/", 2)
 	if len(parts) > 1 {
@@ -206,7 +203,7 @@ func (ac *awsClient) downloadObjects(svc *s3.S3, bucket, key string, tempFilePat
 
 	for _, key := range objectKeys {
 		filePath := path.Join(tempFilePath, strings.ReplaceAll(key, "/", "-"))
-		if err := ac.downloadObject(svc, bucket, key, filePath); err != nil {
+		if err := ac.downloadObject(ctx, svc, bucket, key, filePath); err != nil {
 			return err
 		}
 	}
@@ -214,9 +211,10 @@ func (ac *awsClient) downloadObjects(svc *s3.S3, bucket, key string, tempFilePat
 	return nil
 }
 
-func (ac *awsClient) downloadObject(svc *s3.S3, bucket, key string, tempFilePath string) error {
+func (ac *awsClient) downloadObject(ctx context.Context, svc *s3.S3, bucket, key string, tempFilePath string) error {
 	log.Debugf("downloadObject bucket=[%s], key[%s]", bucket, key)
-	result, err := svc.GetObjectWithContext(context.Background(), &s3.GetObjectInput{
+
+	result, err := svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
@@ -244,7 +242,7 @@ func (ac *awsClient) downloadObject(svc *s3.S3, bucket, key string, tempFilePath
 }
 
 func (ac *awsClient) usableDiskSpace() int64 {
-	totalSpace, usage := ac.storageMgr.GetDiskUsageStat()
+	totalSpace, usage := ac.storage.GetDiskUsageStat()
 	usable := totalSpace - (totalSpace * (usage / float64(100)))
 	return int64(usable)
 }

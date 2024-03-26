@@ -25,6 +25,7 @@ var nodeCmds = &cli.Command{
 		listNodeCmd,
 		deactivateCmd,
 		unDeactivateCmd,
+		listNodeOfIPCmd,
 	},
 }
 
@@ -144,6 +145,38 @@ var listNodeCmd = &cli.Command{
 		err = tw.Flush(os.Stdout)
 
 		fmt.Printf(color.YellowString("\n Total:%d ", r.Total))
+
+		return err
+	},
+}
+
+var listNodeOfIPCmd = &cli.Command{
+	Name:  "lp",
+	Usage: "list node of ip",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "ip",
+			Usage: "node ip",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		ip := cctx.String("ip")
+
+		list, err := schedulerAPI.GetNodeOfIP(ctx, ip)
+		if err != nil {
+			return err
+		}
+
+		for _, nodeID := range list {
+			fmt.Println(nodeID)
+		}
 
 		return err
 	},

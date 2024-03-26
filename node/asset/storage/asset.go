@@ -77,6 +77,7 @@ func (a *asset) storeBlocksToCar(ctx context.Context, root cid.Cid) error {
 	if err != nil {
 		return err
 	}
+	defer rw.Close()
 
 	for _, entry := range entries {
 		data, err := ioutil.ReadFile(filepath.Join(assetDir, entry.Name()))
@@ -214,6 +215,8 @@ func (a *asset) saveUserAsset(ctx context.Context, userID string, root cid.Cid, 
 		return err
 	}
 
+	defer os.RemoveAll(tempAssetDir)
+
 	// create file
 	name := a.generateAssetName(root)
 	tempAssetPath := filepath.Join(tempAssetDir, name)
@@ -236,10 +239,6 @@ func (a *asset) saveUserAsset(ctx context.Context, userID string, root cid.Cid, 
 		if err = os.Rename(tempAssetPath, assetPath); err != nil {
 			return err
 		}
-	}
-
-	if err = os.RemoveAll(tempAssetDir); err != nil {
-		return err
 	}
 
 	if err = a.verifyAsset(assetPath, root); err != nil {
@@ -344,7 +343,11 @@ func (a *asset) count() (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		count += len(entries)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				count++
+			}
+		}
 	}
 
 	return count, nil

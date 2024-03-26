@@ -94,9 +94,8 @@ func (l *Locator) selectBestSchedulers(apis []*SchedulerAPI, nodeID string) ([]s
 	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
 	defer cancel()
 
-	schedulerConfigs := make([]*types.SchedulerCfg, 0)
+	var schedulerConfig *types.SchedulerCfg
 	wg := &sync.WaitGroup{}
-	lock := &sync.Mutex{}
 
 	for _, api := range apis {
 		wg.Add(1)
@@ -108,16 +107,18 @@ func (l *Locator) selectBestSchedulers(apis []*SchedulerAPI, nodeID string) ([]s
 				return
 			}
 
-			lock.Lock()
-			schedulerConfigs = append(schedulerConfigs, s.config)
-			lock.Unlock()
+			cancel()
+			schedulerConfig = s.config
 
 		}(ctx, api)
 	}
 
 	wg.Wait()
 
-	return l.randomSchedulerConfigWithWeight(schedulerConfigs), nil
+	if schedulerConfig != nil {
+		return []string{schedulerConfig.SchedulerURL}, nil
+	}
+	return []string{}, nil
 }
 
 func (l *Locator) randomSchedulerConfigWithWeight(configs []*types.SchedulerCfg) []string {

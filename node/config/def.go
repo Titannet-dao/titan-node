@@ -39,7 +39,7 @@ func DefaultEdgeCfg() *EdgeCfg {
 		CaCertificatePath:  "",
 		InsecureSkipVerify: true,
 
-		PullBlockTimeout:  15,
+		PullBlockTimeout:  180,
 		PullBlockRetry:    5,
 		PullBlockParallel: 5,
 
@@ -77,7 +77,7 @@ func DefaultCandidateCfg() *CandidateCfg {
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
 
-		PullBlockTimeout:    15,
+		PullBlockTimeout:    180,
 		PullBlockRetry:      5,
 		PullBlockParallel:   5,
 		TCPSrvAddr:          "0.0.0.0:9000",

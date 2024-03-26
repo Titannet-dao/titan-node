@@ -4,7 +4,6 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/docker/go-units"
 )
 
@@ -121,7 +120,8 @@ func (m *Manager) resetGroup() {
 
 	_, candidates := m.nodeMgr.GetAllValidCandidateNodes()
 	for _, node := range candidates {
-		if node.Type != types.NodeValidator {
+		isValidator, err := m.nodeMgr.IsValidator(node.NodeID)
+		if err != nil || !isValidator {
 			continue
 		}
 

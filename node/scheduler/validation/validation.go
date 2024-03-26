@@ -206,12 +206,12 @@ func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.Valida
 	if node != nil {
 		if status == types.ValidationStatusNodeTimeOut || status == types.ValidationStatusValidateFail {
 			node.BandwidthUp = 0
-		} else if status == types.ValidationStatusCancel {
 		} else {
-			node.BandwidthUp = int64(vr.Bandwidth)
+			if status != types.ValidationStatusCancel {
+				node.BandwidthUp = int64(vr.Bandwidth)
+			}
 		}
-
-		profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges)
+		profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges, len(m.nodeMgr.GetNodeOfIP(node.ExternalIP)))
 	}
 
 	resultInfo := &types.ValidationResultInfo{
@@ -314,7 +314,7 @@ func (m *Manager) handleResult(vr *api.ValidationResult) {
 		// TODO Penalize the candidate if vCid error
 
 		if !m.compareCid(resultCid, validatorCid) {
-			status = types.ValidationStatusOther
+			status = types.ValidationStatusValidateFail
 			log.Errorf("handleResult round [%s] validator [%s] cNodeID [%s] nodeID [%s], assetCID [%s] seed [%d] ; validator fail resultCid:%s, vCid:%s,index:%d", m.curRoundID, vr.Validator, cNodeID, nodeID, vInfo.Cid, m.seed, resultCid, validatorCid, i)
 			return
 		}

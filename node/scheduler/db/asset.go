@@ -155,6 +155,22 @@ func (n *SQLDB) LoadAssetRecord(hash string) (*types.AssetRecord, error) {
 	return &info, nil
 }
 
+// LoadAWSRecords load the asset records from the incoming scheduler
+func (n *SQLDB) LoadAWSRecords(statuses []string, serverID dtypes.ServerID) ([]*types.AssetRecord, error) {
+	sQuery := fmt.Sprintf(`SELECT * FROM %s a LEFT JOIN %s b ON a.hash = b.hash WHERE state in (?) AND note!="" `, assetStateTable(serverID), assetRecordTable)
+	query, args, err := sqlx.In(sQuery, statuses)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*types.AssetRecord, 0)
+
+	query = n.db.Rebind(query)
+	n.db.Select(&out, query, args...)
+
+	return out, nil
+}
+
 // LoadAssetRecords load the asset records from the incoming scheduler
 func (n *SQLDB) LoadAssetRecords(statuses []string, limit, offset int, serverID dtypes.ServerID) (*sqlx.Rows, error) {
 	if limit > loadAssetRecordsDefaultLimit || limit == 0 {
@@ -359,6 +375,17 @@ func (n *SQLDB) AssetExists(hash string, serverID dtypes.ServerID) (bool, error)
 	return total > 0, nil
 }
 
+// GetNodePullingCount
+func (n *SQLDB) GetNodePullingCount(nodeID string) (int64, error) {
+	var total int64
+	countSQL := fmt.Sprintf(`SELECT count(*) FROM %s WHERE node_id=? AND (status=? OR status=?) `, replicaInfoTable)
+	if err := n.db.Get(&total, countSQL, nodeID, types.ReplicaStatusPulling, types.ReplicaStatusWaiting); err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
+
 // LoadAssetCount count asset
 func (n *SQLDB) LoadAssetCount(serverID dtypes.ServerID, filterState string) (int, error) {
 	var size int
@@ -437,7 +464,7 @@ func (n *SQLDB) SaveAssetRecord(rInfo *types.AssetRecord) error {
 	query := fmt.Sprintf(
 		`INSERT INTO %s (hash, scheduler_sid, cid, edge_replicas, candidate_replicas, expiration, bandwidth, total_size, created_time, note) 
 		        VALUES (:hash, :scheduler_sid, :cid, :edge_replicas, :candidate_replicas, :expiration, :bandwidth, :total_size, :created_time, :note)
-				ON DUPLICATE KEY UPDATE scheduler_sid=:scheduler_sid, edge_replicas=:edge_replicas, created_time=:created_time, note=:note,
+				ON DUPLICATE KEY UPDATE scheduler_sid=:scheduler_sid, edge_replicas=:edge_replicas, created_time=:created_time,
 				candidate_replicas=:candidate_replicas, expiration=:expiration, bandwidth=:bandwidth, total_size=:total_size`, assetRecordTable)
 	_, err = tx.NamedExec(query, rInfo)
 	if err != nil {

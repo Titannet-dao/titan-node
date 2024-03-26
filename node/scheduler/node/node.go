@@ -260,11 +260,11 @@ func (n *Node) encryptTokenPayload(tkPayload *types.TokenPayload, publicKey *rsa
 }
 
 // CalculateIncome Calculate income of the node
-func (n *Node) CalculateIncome(nodeCount int) float64 {
+func (n *Node) CalculateIncome(nodeCount, ipNum int) float64 {
 	mb := n.calculateMb()
 	mn := n.calculateMN()
 	mx := weighting(nodeCount)
-	mbn := mb * mn * mx
+	mbn := (mb * mn * mx) / float64(ipNum)
 
 	ds := float64(n.TitanDiskUsage)
 	s := bToGB(ds * 12.5)
@@ -273,7 +273,7 @@ func (n *Node) CalculateIncome(nodeCount int) float64 {
 
 	poa := mbn + ms
 	poa = math.Round(poa*1000000) / 1000000
-	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] DiskSpace:[%.2f*12.5=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] mx:[%.1f]", n.NodeID, n.BandwidthUp, n.NATType, mn, n.TitanDiskUsage, s, poa, mbn, ms, mx)
+	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] ipNum[%d] DiskSpace:[%.2f*12.5=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] mx:[%.1f]", n.NodeID, n.BandwidthUp, n.NATType, mn, ipNum, n.TitanDiskUsage, s, poa, mbn, ms, mx)
 
 	return poa
 }

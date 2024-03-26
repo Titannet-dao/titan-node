@@ -37,6 +37,7 @@ var cNodeInfoTable = `
 	    nat_type             VARCHAR(32)     DEFAULT '',
 	    disk_space           FLOAT           DEFAULT 0,
 		available_disk_space FLOAT           DEFAULT 0,
+		titan_disk_usage     FLOAT           DEFAULT 0,
     	bandwidth_up         INT             DEFAULT 0,
     	bandwidth_down       INT             DEFAULT 0,
 	    scheduler_sid        VARCHAR(128)    NOT NULL,

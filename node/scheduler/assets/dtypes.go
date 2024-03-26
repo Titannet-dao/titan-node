@@ -39,9 +39,10 @@ type AssetPullingInfo struct {
 	RetryCount        int64
 	ReplenishReplicas int64
 
-	Requester  string
 	Details    string
 	SeedNodeID string
+
+	Note string
 }
 
 // ToAssetRecord converts AssetPullingInfo to types.AssetRecord
@@ -56,6 +57,7 @@ func (state *AssetPullingInfo) ToAssetRecord() *types.AssetRecord {
 		NeedCandidateReplicas: state.CandidateReplicas,
 		RetryCount:            state.RetryCount,
 		ReplenishReplicas:     state.ReplenishReplicas,
+		Note:                  state.Note,
 	}
 }
 
@@ -72,6 +74,7 @@ func assetPullingInfoFrom(info *types.AssetRecord, assetDB *db.SQLDB) *AssetPull
 		RetryCount:        info.RetryCount,
 		ReplenishReplicas: info.ReplenishReplicas,
 		Bandwidth:         info.NeedBandwidth,
+		Note:              info.Note,
 	}
 
 	for _, r := range info.ReplicaInfos {
