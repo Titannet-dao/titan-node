@@ -758,7 +758,7 @@ func (m *Manager) regularSyncDataWithAssetView() {
 		log.Errorln(err)
 	}
 
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(2 * time.Hour)
 	for {
 		select {
 		case <-ticker.C:
