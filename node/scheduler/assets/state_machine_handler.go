@@ -71,7 +71,7 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 		return ctx.Send(SelectFailed{error: err})
 	}
 
-	m.startAssetTimeoutCounting(info.Hash.String(), 0)
+	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
 
 	// send a cache request to the node
 	go func() {
@@ -126,7 +126,7 @@ func (m *Manager) handleUploadInit(ctx statemachine.Context, info AssetPullingIn
 		return ctx.Send(SelectFailed{error: err})
 	}
 
-	m.startAssetTimeoutCounting(info.Hash.String(), 0)
+	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
 
 	return ctx.Send(PullRequestSent{})
 }
@@ -151,7 +151,7 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 	log.Debugf("handle candidates select, %s", info.Hash)
 
 	sources := m.getDownloadSources(info.Hash.String(), info.Note)
-	if len(sources) < 1 {
+	if len(sources) < 1 && info.Note == "" {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
@@ -190,10 +190,10 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 		return ctx.Send(SelectFailed{error: err})
 	}
 
-	err = m.SaveTokenPayload(payloads)
-	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
-	}
+	// err = m.SaveTokenPayload(payloads)
+	// if err != nil {
+	// 	return ctx.Send(SelectFailed{error: err})
+	// }
 
 	// save to db
 	err = m.saveReplicaInformation(nodes, info.Hash.String(), true)
@@ -201,10 +201,15 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 		return ctx.Send(SelectFailed{error: err})
 	}
 
-	m.startAssetTimeoutCounting(info.Hash.String(), 0)
+	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
 
 	// send a pull request to the node
 	go func() {
+		err = m.SaveTokenPayload(payloads)
+		if err != nil {
+			log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(payloads), err.Error())
+		}
+
 		for _, node := range nodes {
 			err := node.PullAsset(ctx.Context(), info.CID, downloadSources[node.NodeID])
 			if err != nil {
@@ -263,14 +268,13 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 	}
 
 	needBandwidth := info.Bandwidth - m.getCurBandwidthUp(info.EdgeReplicaSucceeds)
-
 	if needCount < 1 && needBandwidth <= 0 {
 		// The number of edge node replications and the total downlink bandwidth are met
 		return ctx.Send(SkipStep{})
 	}
 
 	sources := m.getDownloadSources(info.Hash.String(), info.Note)
-	if len(sources) < 1 {
+	if len(sources) < 1 && info.Note == "" {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
@@ -303,27 +307,22 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		return ctx.Send(SelectFailed{error: xerrors.Errorf("GenerateToken; %s", err.Error())})
 	}
 
-	err = m.SaveTokenPayload(payloads)
-	if err != nil {
-		return ctx.Send(SelectFailed{error: xerrors.Errorf("SaveTokenPayload; %s", err.Error())})
-	}
-
 	// save to db
 	err = m.saveReplicaInformation(nodes, info.Hash.String(), false)
 	if err != nil {
 		return ctx.Send(SelectFailed{error: xerrors.Errorf("saveReplicaInformation; %s", err.Error())})
 	}
 
-	m.startAssetTimeoutCounting(info.Hash.String(), 0)
+	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
 
 	// send a pull request to the node
 	go func() {
-		for _, node := range nodes {
-			// if len(downloadSources[node.NodeID]) == 0 {
-			// 	continue
-			// }
+		err = m.SaveTokenPayload(payloads)
+		if err != nil {
+			log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(payloads), err.Error())
+		}
 
-			// log.Infof("pullSources %s : %v , lens:%d", node.NodeID, downloadSources[node.NodeID], len(sources))
+		for _, node := range nodes {
 			err := node.PullAsset(ctx.Context(), info.CID, downloadSources[node.NodeID])
 			if err != nil {
 				log.Errorf("%s pull asset err:%s", node.NodeID, err.Error())
@@ -357,7 +356,8 @@ func (m *Manager) handleServicing(ctx statemachine.Context, info AssetPullingInf
 	m.stopAssetTimeoutCounting(info.Hash.String())
 
 	// remove fail replicas
-	return m.DeleteUnfinishedReplicas(info.Hash.String())
+	// return m.DeleteUnfinishedReplicas(info.Hash.String())
+	return nil
 }
 
 // handlePullsFailed handles the failed state of asset pulling and retries if necessary
@@ -377,9 +377,9 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 
 	log.Debugf(": %s, retries: %d", info.Hash.String(), info.RetryCount)
 
-	// if err := failedCoolDown(ctx, info); err != nil {
-	// 	return err
-	// }
+	if err := failedCoolDown(ctx, info); err != nil {
+		return err
+	}
 
 	return ctx.Send(AssetRePull{})
 }
@@ -428,7 +428,7 @@ func (m *Manager) handleStop(ctx statemachine.Context, info AssetPullingInfo) er
 	log.Infof("handle stop: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
 
-	m.DeleteUnfinishedReplicas(info.Hash.String())
+	// m.DeleteUnfinishedReplicas(info.Hash.String())
 
 	return nil
 }

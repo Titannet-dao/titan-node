@@ -26,6 +26,9 @@ var nodeCmds = &cli.Command{
 		deactivateCmd,
 		unDeactivateCmd,
 		listNodeOfIPCmd,
+		listReplicaCmd,
+		nodeCleanReplicasCmd,
+		listValidationResultsCmd,
 	},
 }
 
@@ -150,8 +153,74 @@ var listNodeCmd = &cli.Command{
 	},
 }
 
+var listValidationResultsCmd = &cli.Command{
+	Name:  "lv",
+	Usage: "list node validation results",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+		limitFlag,
+		offsetFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		nodeID := cctx.String("node-id")
+		limit := cctx.Int("limit")
+		offset := cctx.Int("offset")
+
+		list, err := schedulerAPI.GetValidationResults(ctx, nodeID, limit, offset)
+		if err != nil {
+			return err
+		}
+
+		for _, info := range list.ValidationResultInfos {
+			fmt.Printf("cid:%s %d , %s \n", info.Cid, info.Status, info.StartTime.String())
+		}
+
+		return err
+	},
+}
+
+var listReplicaCmd = &cli.Command{
+	Name:  "lr",
+	Usage: "list node replica",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+		limitFlag,
+		offsetFlag,
+	},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		nodeID := cctx.String("node-id")
+		limit := cctx.Int("limit")
+		offset := cctx.Int("offset")
+
+		list, err := schedulerAPI.GetReplicasForNode(ctx, nodeID, limit, offset, types.ReplicaStatusAll)
+		if err != nil {
+			return err
+		}
+
+		for _, info := range list.NodeReplicaInfos {
+			fmt.Printf("cid:%s %s %d/%d , %s \n", info.Cid, colorReplicaState(info.Status), info.DoneSize, info.TotalSize, info.StartTime.String())
+		}
+
+		return err
+	},
+}
+
 var listNodeOfIPCmd = &cli.Command{
-	Name:  "lp",
+	Name:  "lip",
 	Usage: "list node of ip",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
@@ -180,6 +249,16 @@ var listNodeOfIPCmd = &cli.Command{
 
 		return err
 	},
+}
+
+func colorReplicaState(state types.ReplicaStatus) string {
+	if state == types.ReplicaStatusSucceeded {
+		return color.GreenString(state.String())
+	} else if state == types.ReplicaStatusFailed {
+		return color.RedString(state.String())
+	} else {
+		return color.YellowString(state.String())
+	}
 }
 
 func colorOnline(status types.NodeStatus) string {
@@ -305,6 +384,27 @@ var nodeQuitCmd = &cli.Command{
 		}
 
 		return nil
+	},
+}
+
+var nodeCleanReplicasCmd = &cli.Command{
+	Name:  "cr",
+	Usage: "clean nodes failed replica",
+	Flags: []cli.Flag{},
+
+	Before: func(cctx *cli.Context) error {
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.RemoveNodeFailedReplica(ctx)
 	},
 }
 

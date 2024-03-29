@@ -7,7 +7,9 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
@@ -351,4 +353,33 @@ func (a *asset) count() (int, error) {
 	}
 
 	return count, nil
+}
+
+func (a *asset) getAssetHashesForSyncData() ([]string, error) {
+	// Only check resources that have been successfully downloaded for more than 30 minutes
+	beforeTime := 30 * time.Minute
+	hashes := make([]string, 0)
+	for _, baseDir := range a.assetsPaths.baseDirs {
+		entries, err := os.ReadDir(baseDir)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				info, err := entry.Info()
+				if err != nil {
+					continue
+				}
+
+				t := info.ModTime()
+				if time.Since(t) > beforeTime {
+					hash := strings.TrimSuffix(entry.Name(), a.suffix)
+					hashes = append(hashes, hash)
+				}
+			}
+		}
+	}
+
+	return hashes, nil
 }

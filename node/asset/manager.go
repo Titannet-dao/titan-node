@@ -99,6 +99,8 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 
 	go m.start()
 
+	go m.syncDataWithAssetView()
+
 	return m, nil
 }
 
@@ -261,10 +263,6 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller, isSyncData bool) {
 	log.Debugf("onPullAssetFinish, asset %s totalSize %d doneSize %d", puller.root.String(), puller.totalSize, puller.doneSize)
 
 	if puller.isPulledComplete() {
-		if err := m.DeletePuller(puller.root); err != nil && !os.IsNotExist(err) {
-			log.Errorf("remove asset puller error:%s", err.Error())
-		}
-
 		if len(puller.blocksPulledSuccessList) > 0 {
 			blockCountOfAsset := uint32(len(puller.blocksPulledSuccessList))
 			if err := m.SetBlockCount(context.Background(), puller.root, blockCountOfAsset); err != nil {
@@ -284,9 +282,14 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller, isSyncData bool) {
 		}
 
 	} else {
-		if err := m.savePuller(puller); err != nil {
-			log.Errorf("save puller error:%s", err.Error())
+		log.Infof("pull asset failed, remove %s", puller.root.String())
+		if err := m.DeleteAsset(puller.root); err != nil {
+			log.Errorf("DeleteAsset failed %s", err.Error())
 		}
+	}
+
+	if err := m.DeletePuller(puller.root); err != nil && !os.IsNotExist(err) {
+		log.Errorf("remove asset puller error:%s", err.Error())
 	}
 
 	if err := m.submitPullerWorkloadReport(puller); err != nil {
@@ -379,6 +382,10 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 		} else if e.Err != syscall.ENOENT {
 			return err
 		}
+	}
+
+	if err := m.Storage.DeleteBlockCount(context.Background(), root); err != nil {
+		log.Errorf("DeleteBlockCount error %s", err.Error())
 	}
 
 	return m.RemoveAssetFromView(context.Background(), root)
@@ -744,6 +751,86 @@ func (m *Manager) GetUploadingAsset(ctx context.Context, root cid.Cid) (*types.U
 	}
 
 	return v.(*types.UploadingAsset), nil
+}
+
+func (m *Manager) regularSyncDataWithAssetView() {
+	if err := m.syncDataWithAssetView(); err != nil {
+		log.Errorln(err)
+	}
+
+	ticker := time.NewTicker(1 * time.Hour)
+	for {
+		select {
+		case <-ticker.C:
+			if err := m.syncDataWithAssetView(); err != nil {
+				log.Errorln(err)
+			}
+		}
+	}
+
+}
+
+func (m *Manager) syncDataWithAssetView() error {
+	now := time.Now()
+
+	bucketHashMap, err := m.GetBucketHashes(context.Background())
+	if err != nil {
+		return fmt.Errorf("syncDataWithAssetView, GetBucketHashes error %s", err.Error())
+	}
+
+	assetCIDsInView := make([]cid.Cid, 0)
+	for bucket, _ := range bucketHashMap {
+		cids, err := m.Storage.GetAssetsInBucket(context.Background(), bucket)
+		if err != nil {
+			return fmt.Errorf("syncDataWithAssetView, GetAssetsInBucket erorr %s", err.Error())
+		}
+		assetCIDsInView = append(assetCIDsInView, cids...)
+	}
+
+	// Only check resources that have been successfully downloaded for more than 30 minutes
+	allAssetHashes, err := m.GetAssetHashesForSyncData(context.Background())
+	if err != nil {
+		return fmt.Errorf("syncDataWithAssetView, GetAllAssetHashes erorr %s", err.Error())
+	}
+
+	assetsInView := make(map[string]cid.Cid)
+	assetsInStorage := make(map[string]cid.Cid)
+
+	for _, cid := range assetCIDsInView {
+		assetsInView[cid.Hash().String()] = cid
+	}
+
+	for _, hash := range allAssetHashes {
+		multihash, err := multihash.FromHexString(hash)
+		if err != nil {
+			return fmt.Errorf("syncDataWithAssetView, GetAllAssetHashes erorr %s", err.Error())
+		}
+		cid := cid.NewCidV1(cid.Raw, multihash)
+		assetsInStorage[hash] = cid
+	}
+
+	for _, cid := range assetCIDsInView {
+		if _, ok := assetsInStorage[cid.Hash().String()]; ok {
+			delete(assetsInView, cid.Hash().String())
+			delete(assetsInStorage, cid.Hash().String())
+		}
+	}
+
+	// add lost assets
+	for _, cid := range assetsInView {
+		m.AddLostAsset(cid)
+		log.Debugf("add lost asset %s", cid.Hash())
+	}
+
+	// remove extra assets
+	for _, cid := range assetsInStorage {
+		m.DeleteAsset(cid)
+		log.Debugf("delete extra asset %s", cid.Hash())
+	}
+
+	log.Debugf("syncDataWithAssetView cost %ds", time.Since(now)/time.Second)
+
+	return nil
 }
 
 func isContainAWSDownloadSource(downloadInfos []*types.CandidateDownloadInfo) bool {

@@ -62,6 +62,8 @@ type Node struct {
 	IncomeIncr         float64
 	DiskSpace          float64
 	AvailableDiskSpace float64
+
+	PullAssetCount int
 }
 
 // API represents the node API

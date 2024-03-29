@@ -76,10 +76,7 @@ func (m *Manager) getValidationProfit() float64 {
 // startValidate is a method of the Manager that starts a new validation round.
 func (m *Manager) startValidate() error {
 	// Set the timeout status of the previous verification
-	err := m.nodeMgr.UpdateValidationResultsTimeout(m.curRoundID)
-	if err != nil {
-		log.Errorf("startNewRound:%s UpdateValidationResultsTimeout err:%s", m.curRoundID, err.Error())
-	}
+	m.updateTimeoutResultInfo()
 
 	delay := 0
 
@@ -126,16 +123,22 @@ func (m *Manager) sendValidateReqToNode(nID string, req *api.ValidateReq, delay 
 	time.Sleep(time.Duration(delay) * time.Second)
 	log.Infof("%d sendValidateReqToNodes v:[%s] n:[%s]", delay, req.TCPSrvAddr, nID)
 
+	status := types.ValidationStatusNodeOffline
+
 	cNode := m.nodeMgr.GetNode(nID)
 	if cNode != nil {
 		err := cNode.ExecuteValidation(context.Background(), req)
-		if err != nil {
-			log.Errorf("%s Validate err:%s", nID, err.Error())
+		if err == nil {
+			return
 		}
-		return
+		log.Errorf("%s Validate err:%s", nID, err.Error())
+		status = types.ValidationStatusNodeTimeOut
 	}
 
-	log.Errorf("%s validatable Node not found", nID)
+	err := m.nodeMgr.UpdateValidationResultStatus(m.curRoundID, nID, status)
+	if err != nil {
+		log.Errorf("%s UpdateValidationResultStatus err:%s", nID, err.Error())
+	}
 }
 
 // get validation details.
@@ -194,24 +197,46 @@ func (m *Manager) getRandNum(max int, r *rand.Rand) int {
 	return max
 }
 
-// updateResultInfo updates the validation result information for a given node.
-func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult) error {
-	if status == types.ValidationStatusOther {
-		status = types.ValidationStatusSuccess
+func (m *Manager) updateTimeoutResultInfo() {
+	list, err := m.nodeMgr.LoadCreateValidationResultInfos()
+	if err != nil {
+		log.Errorf("updateTimeoutResultInfo LoadCreateValidationResultInfos err:%s", err.Error())
+		return
 	}
 
+	for _, resultInfo := range list {
+		resultInfo.Status = types.ValidationStatusValidatorTimeOut
+
+		node := m.nodeMgr.GetNode(resultInfo.NodeID)
+		if node != nil {
+			resultInfo.Profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges, len(m.nodeMgr.GetNodeOfIP(node.ExternalIP)))
+		} else {
+			resultInfo.Status = types.ValidationStatusNodeOffline
+		}
+
+		err = m.nodeMgr.UpdateValidationResultInfo(resultInfo)
+		if err != nil {
+			log.Errorf("%d updateTimeoutResultInfo UpdateValidationResultInfo err:%s", resultInfo.ID, err.Error())
+		}
+	}
+}
+
+// updateResultInfo updates the validation result information for a given node.
+func (m *Manager) updateResultInfo(status types.ValidationStatus, vr *api.ValidationResult) error {
 	profit := 0.0
 	// update node bandwidths
 	node := m.nodeMgr.GetNode(vr.NodeID)
 	if node != nil {
-		if status == types.ValidationStatusNodeTimeOut || status == types.ValidationStatusValidateFail {
+		if status == types.ValidationStatusNodeTimeOut || status == types.ValidationStatusValidateFail || status == types.ValidationStatusValidatorMismatch {
 			node.BandwidthUp = 0
 		} else {
 			if status != types.ValidationStatusCancel {
 				node.BandwidthUp = int64(vr.Bandwidth)
 			}
+			profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges, len(m.nodeMgr.GetNodeOfIP(node.ExternalIP)))
 		}
-		profit = node.CalculateIncome(m.nodeMgr.TotalNetworkEdges, len(m.nodeMgr.GetNodeOfIP(node.ExternalIP)))
+	} else {
+		status = types.ValidationStatusNodeOffline
 	}
 
 	resultInfo := &types.ValidationResultInfo{

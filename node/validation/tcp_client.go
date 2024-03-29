@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/lib/limiter"
@@ -14,12 +15,12 @@ import (
 
 // establishTCPClient creates a new TCP client with a given address
 func newTCPClient(addr string) (*net.TCPConn, error) {
-	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
 
-	return net.DialTCP("tcp", nil, tcpAddr)
+	return conn.(*net.TCPConn), nil
 }
 
 // prepareDataPacket packs data along with its message type into a byte slice

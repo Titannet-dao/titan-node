@@ -39,6 +39,8 @@ type AssetAPI interface {
 	GetAssetCount(ctx context.Context) (int, error) //perm:web,admin
 	// GetAssetsForNode retrieves a asset list of node
 	GetAssetsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) //perm:web,admin
+	// GetReplicasForNode retrieves a replica list of node
+	GetReplicasForNode(ctx context.Context, nodeID string, limit, offset int, statuses []types.ReplicaStatus) (*types.ListNodeReplicaRsp, error) //perm:web,admin
 	// GetReplicaEventsForNode retrieves a replica event list of node
 	GetReplicaEventsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListReplicaEventRsp, error) //perm:web,admin
 	// GetReplicaEvents retrieves a replica event list of node
@@ -63,6 +65,8 @@ type AssetAPI interface {
 	SwitchFillDiskTimer(ctx context.Context, open bool) error //perm:web,admin
 	// LoadAWSData load data
 	LoadAWSData(ctx context.Context, limit, offset int, isDistribute bool) ([]*types.AWSDataInfo, error) //perm:web,admin
+	// RemoveNodeFailedReplica
+	RemoveNodeFailedReplica(ctx context.Context) error //perm:web,admin
 }
 
 // NodeAPI is an interface for node

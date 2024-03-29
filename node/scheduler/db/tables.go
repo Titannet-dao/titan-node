@@ -18,6 +18,7 @@ var cReplicaInfoTable = `
 		done_size     BIGINT       DEFAULT 0,
 		is_candidate  BOOLEAN,
 		end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		start_time    DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (hash,node_id),
 		KEY idx_node_id (node_id)
 	) ENGINE=InnoDB COMMENT='asset replica info';`
@@ -75,7 +76,8 @@ var cValidationResultsTable = `
 		PRIMARY KEY (id),
 	    KEY round_node (round_id, node_id),
 		KEY idx_profit (calculated_profit),
-		KEY idx_file  (file_saved)
+		KEY idx_file  (file_saved),
+		KEY idx_start_time  (start_time)
     ) ENGINE=InnoDB COMMENT='Validation result records';`
 
 var cNodeRegisterTable = `
@@ -155,7 +157,8 @@ var cWorkloadTable = `
 		client_end_time INT          DEFAULT 0,
 		PRIMARY KEY (token_id),
 		KEY idx_node_id (node_id),
-		KEY idx_status (status)
+		KEY idx_status (status),
+		KEY idx_created_time (created_time)
 	) ENGINE=InnoDB COMMENT='workload report';`
 
 var cUserAssetTable = `
@@ -199,7 +202,8 @@ var cReplicaEventTable = `
 	    end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		expiration    DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		KEY idx_hash (hash),
-		KEY idx_node_id (node_id)
+		KEY idx_node_id (node_id),
+		KEY idx_end_time (end_time)
 	) ENGINE=InnoDB COMMENT='asset replica event';`
 
 var cRetrieveEventTable = `
@@ -213,7 +217,8 @@ var cRetrieveEventTable = `
 		end_time        INT            DEFAULT 0,
 	    profit          DECIMAL(14, 6) DEFAULT 0,
 		PRIMARY KEY (token_id),
-		KEY idx_node_id (node_id)
+		KEY idx_node_id (node_id),
+		KEY idx_created_time (created_time)
 	) ENGINE=InnoDB COMMENT='asset retrieve event';`
 
 var cAssetVisitCountTable = `

@@ -117,16 +117,23 @@ func (n *SQLDB) UpdateNodeUploadTraffic(nodeID string, incSize int64) error {
 }
 
 // UpdateValidationResultsTimeout sets the validation results' status as timeout.
-func (n *SQLDB) UpdateValidationResultsTimeout(roundID string) error {
-	if roundID != "" {
-		query := fmt.Sprintf(`UPDATE %s SET status=?, end_time=NOW() WHERE round_id=? AND status=?`, validationResultTable)
-		_, err := n.db.Exec(query, types.ValidationStatusValidatorTimeOut, roundID, types.ValidationStatusCreate)
-		return err
-	} else {
-		query := fmt.Sprintf(`UPDATE %s SET status=?, end_time=NOW() WHERE status=?`, validationResultTable)
-		_, err := n.db.Exec(query, types.ValidationStatusValidatorTimeOut, types.ValidationStatusCreate)
-		return err
+func (n *SQLDB) UpdateValidationResultStatus(roundID, nodeID string, status types.ValidationStatus) error {
+	query := fmt.Sprintf(`UPDATE %s SET status=?, end_time=NOW() WHERE round_id=? AND node_id=?`, validationResultTable)
+	_, err := n.db.Exec(query, status, roundID, nodeID)
+	return err
+}
+
+// LoadCreateValidationResultInfos load validation results.
+func (n *SQLDB) LoadCreateValidationResultInfos() ([]*types.ValidationResultInfo, error) {
+	var infos []*types.ValidationResultInfo
+	query := fmt.Sprintf("SELECT * FROM %s WHERE status=?", validationResultTable)
+
+	err := n.db.Select(&infos, query, types.ValidationStatusCreate)
+	if err != nil {
+		return nil, err
 	}
+
+	return infos, nil
 }
 
 // LoadValidationResultInfos load validation results.
@@ -638,13 +645,13 @@ func (n *SQLDB) RemoveInvalidWorkloadResult(sIDs []string) error {
 
 // LoadUnCalculatedValidationResults Load not calculated profit validation results
 func (n *SQLDB) LoadUnCalculatedValidationResults(maxTime time.Time, limit int) (*sqlx.Rows, error) {
-	sQuery := fmt.Sprintf(`SELECT * FROM %s WHERE calculated_profit=? AND end_time<? order by end_time asc LIMIT ?`, validationResultTable)
+	sQuery := fmt.Sprintf(`SELECT * FROM %s WHERE calculated_profit=? AND start_time<? order by start_time asc LIMIT ?`, validationResultTable)
 	return n.db.QueryxContext(context.Background(), sQuery, false, maxTime, limit)
 }
 
 // LoadUnSavedValidationResults Load not save to file validation results
 func (n *SQLDB) LoadUnSavedValidationResults(limit int) (*sqlx.Rows, error) {
-	sQuery := fmt.Sprintf(`SELECT * FROM %s WHERE file_saved=? AND calculated_profit=? order by end_time asc LIMIT ?`, validationResultTable)
+	sQuery := fmt.Sprintf(`SELECT * FROM %s WHERE file_saved=? AND calculated_profit=? order by start_time asc LIMIT ?`, validationResultTable)
 	return n.db.QueryxContext(context.Background(), sQuery, false, true, limit)
 }
 

@@ -320,8 +320,8 @@ const (
 	// ValidationStatusCIDToHashErr is the validation status when there is an error converting a CID to a hash.
 	ValidationStatusCIDToHashErr
 
-	// ValidationStatusOther
-	ValidationStatusOther
+	// ValidationStatusNodeOffline is the validation status when the node offline.
+	ValidationStatusNodeOffline
 )
 
 // TokenPayload payload of token

@@ -87,6 +87,12 @@ func (ac *awsClient) PullAssetFromAWS(ctx context.Context, bucket, key string) e
 		}
 
 		if err := ac.scheduler.DownloadDataResult(ctx, bucket, cidString, size); err != nil {
+			// if call scheduler failed, remove the asset
+			if cid.Defined() {
+				if err = ac.storage.DeleteAsset(cid); err != nil {
+					log.Errorln("DownloadDataResult failed, deleter asset error ", err.Error())
+				}
+			}
 			log.Errorln("DownloadDataResult error ", err.Error())
 		}
 	}()

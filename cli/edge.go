@@ -43,6 +43,7 @@ var EdgeCmds = []*cli.Command{
 	stateCmd,
 	signCmd,
 	bindCmd,
+	syncDataCmd,
 }
 
 var showCmds = &cli.Command{
@@ -1002,4 +1003,25 @@ func getUserAccessPoint(cctx *cli.Context, httpClient *http.Client, locatorURL s
 	}
 
 	return "", fmt.Errorf("not scheduler exit")
+}
+
+var syncDataCmd = &cli.Command{
+	Name:  "sync-data",
+	Usage: "sync local asset view and car",
+	Action: func(cctx *cli.Context) error {
+		api, closer, err := getEdgeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		ctx := ReqContext(cctx)
+
+		err = api.SyncAssetViewAndData(ctx)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	},
 }

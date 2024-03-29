@@ -9,6 +9,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
+	"github.com/docker/go-units"
 )
 
 const (
@@ -85,6 +86,19 @@ func (m *Manager) autoRestartAssetReplicas() bool {
 		return false
 	}
 
+	if m.isPullSpecifyAsset {
+		tList := make([]*types.AssetRecord, 0)
+		for _, info := range list {
+			if info.TotalSize < units.GiB {
+				tList = append(tList, info)
+			}
+		}
+
+		if len(tList) > 0 {
+			list = tList
+		}
+	}
+
 	index := rand.Intn(len(list))
 	randomElement := list[index]
 
@@ -114,7 +128,7 @@ func (m *Manager) pullAssetFromAWSs(edgeCount, candidateCount int64) bool {
 
 			err = m.CreateAssetPullTask(&types.PullAssetReq{
 				CID:        task.Cid,
-				Replicas:   task.TotalCount,
+				Replicas:   int64(task.Replicas),
 				Expiration: time.Now().Add(360 * 24 * time.Hour),
 				Hash:       hash,
 				Bucket:     task.Bucket,
@@ -152,9 +166,9 @@ func (m *Manager) pullAssetFromAWSs(edgeCount, candidateCount int64) bool {
 		return false
 	}
 
-	edgeCount = int64(info.Replicas)
+	// edgeCount = int64(info.Replicas)
 
-	m.updateFillAssetInfo(info.Bucket, edgeCount+candidateCount)
+	m.updateFillAssetInfo(info.Bucket, candidateCount, info.Replicas)
 
 	go m.requestNodePullAsset(info.Bucket, info.Cid, info.Size, edgeCount, candidateCount)
 
@@ -212,41 +226,44 @@ func (m *Manager) requestNodePullAsset(bucket, cid string, size float64, edgeCou
 		}
 	}
 
-	eNodes := m.nodeMgr.GetAllEdgeNode()
-	sort.Slice(eNodes, func(i, j int) bool {
-		return eNodes[i].TitanDiskUsage < eNodes[j].TitanDiskUsage
-	})
+	// eNodes := m.nodeMgr.GetAllEdgeNode()
+	// sort.Slice(eNodes, func(i, j int) bool {
+	// 	return eNodes[i].TitanDiskUsage < eNodes[j].TitanDiskUsage
+	// })
 
 	eCount := 0
-	for i := 0; i < len(eNodes); i++ {
-		if eCount >= int(edgeCount) {
-			break
-		}
-		node := eNodes[i]
+	// for i := 0; i < len(eNodes); i++ {
+	// 	if eCount >= int(edgeCount) {
+	// 		break
+	// 	}
+	// 	node := eNodes[i]
 
-		if !node.DiskEnough(size) {
-			continue
-		}
+	// 	if !node.DiskEnough(size) {
+	// 		continue
+	// 	}
 
-		pCount, err := m.nodeMgr.GetNodePullingCount(node.NodeID)
-		if err != nil || pCount > 0 {
-			continue
-		}
+	// 	if node.PullAssetCount > 0 {
+	// 		continue
+	// 	}
+	// 	// pCount, err := m.nodeMgr.GetNodePullingCount(node.NodeID)
+	// 	// if err != nil || pCount > 0 {
+	// 	// 	continue
+	// 	// }
 
-		if exist, err := m.checkAssetIfExist(node, cid); err != nil {
-			// log.Warnf("requestNodePullAsset checkAssetIfExist error %s", err)
-			continue
-		} else if exist {
-			continue
-		}
+	// 	if exist, err := m.checkAssetIfExist(node, cid); err != nil {
+	// 		// log.Warnf("requestNodePullAsset checkAssetIfExist error %s", err)
+	// 		continue
+	// 	} else if exist {
+	// 		continue
+	// 	}
 
-		if err := m.pullAssetFromAWS(node, bucket); err == nil {
-			// log.Warnf("requestNodePullAsset pullAssetFromAWS error %s", err.Error())
-			eCount++
-		}
-	}
+	// 	if err := m.pullAssetFromAWS(node, bucket); err == nil {
+	// 		// log.Warnf("requestNodePullAsset pullAssetFromAWS error %s", err.Error())
+	// 		eCount++
+	// 	}
+	// }
 
-	m.updateFillAssetInfo(bucket, int64(cCount+eCount))
+	m.updateFillAssetInfo(bucket, int64(cCount+eCount), 0)
 }
 
 func (m *Manager) pullAssetFromAWS(node *node.Node, bucket string) error {
@@ -326,10 +343,11 @@ func (m *Manager) removeNodesFromFillAsset(cid string, cleanCandidate bool) {
 	}
 }
 
-func (m *Manager) updateFillAssetInfo(bucket string, count int64) {
+func (m *Manager) updateFillAssetInfo(bucket string, count int64, replica int) {
 	info := &fillAssetInfo{
 		Expiration: time.Now().Add(2 * time.Hour),
 		Bucket:     bucket,
+		Replicas:   replica,
 	}
 
 	infoI, exist := m.fillAssets.Load(bucket)
@@ -389,6 +407,7 @@ type fillAssetInfo struct {
 	Expiration    time.Time
 	Cid           string
 	Bucket        string
+	Replicas      int
 }
 
 type fillAssetNodeInfo struct {
