@@ -136,6 +136,7 @@ type PullFailed struct{ error }
 func (evt PullFailed) FormatError(xerrors.Printer) (next error) { return evt.error }
 
 func (evt PullFailed) apply(state *AssetPullingInfo) {
+	state.RetryCount = 1
 }
 
 func (evt PullFailed) Ignore() {

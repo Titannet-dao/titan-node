@@ -20,11 +20,14 @@ type Storage interface {
 	StoreBlocksToCar(ctx context.Context, root cid.Cid) error
 	StoreUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error
 	GetAsset(root cid.Cid) (io.ReadSeekCloser, error)
+	GetAssetHashesForSyncData(ctx context.Context) ([]string, error)
 	AssetExists(root cid.Cid) (bool, error)
 	DeleteAsset(root cid.Cid) error
 	AssetCount() (int, error)
+
 	GetBlockCount(ctx context.Context, root cid.Cid) (uint32, error)
 	SetBlockCount(ctx context.Context, root cid.Cid, count uint32) error
+	DeleteBlockCount(ctx context.Context, root cid.Cid) error
 
 	// assets view
 	GetTopHash(ctx context.Context) (string, error)

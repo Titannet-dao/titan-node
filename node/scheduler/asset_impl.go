@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -209,9 +210,23 @@ func (s *Scheduler) GetAssetCount(ctx context.Context) (int, error) {
 
 // GetAssetsForNode retrieves a asset list of node
 func (s *Scheduler) GetAssetsForNode(ctx context.Context, nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) {
-	info, err := s.db.LoadReplicasByNodeID(nodeID, limit, offset)
+	info, err := s.db.LoadSucceedReplicasByNodeID(nodeID, limit, offset)
 	if err != nil {
-		return nil, xerrors.Errorf("LoadReplicasByNodeID err:%s", err.Error())
+		return nil, xerrors.Errorf("GetAssetsForNode err:%s", err.Error())
+	}
+
+	return info, nil
+}
+
+// GetReplicasForNode retrieves a asset list of node
+func (s *Scheduler) GetReplicasForNode(ctx context.Context, nodeID string, limit, offset int, statuses []types.ReplicaStatus) (*types.ListNodeReplicaRsp, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+
+	info, err := s.db.LoadAllReplicasByNodeID(nodeID, limit, offset, statuses)
+	if err != nil {
+		return nil, xerrors.Errorf("GetReplicasForNode err:%s", err.Error())
 	}
 
 	return info, nil
@@ -339,6 +354,55 @@ func (s *Scheduler) SwitchFillDiskTimer(ctx context.Context, open bool) error {
 		s.AssetManager.StartFillDiskTimer()
 	} else {
 		s.AssetManager.StopFillDiskTimer()
+	}
+
+	return nil
+}
+
+func splitSliceIntoChunks(slice []*types.ReplicaInfo, numChunks int) [][]*types.ReplicaInfo {
+	chunkSize := int(math.Ceil(float64(len(slice)) / float64(numChunks)))
+	chunks := make([][]*types.ReplicaInfo, 0, numChunks)
+
+	for i := 0; i < len(slice); i += chunkSize {
+		end := i + chunkSize
+		if end > len(slice) {
+			end = len(slice)
+		}
+		chunks = append(chunks, slice[i:end])
+	}
+
+	return chunks
+}
+
+func (s *Scheduler) RemoveNodeFailedReplica(ctx context.Context) error {
+	rList, err := s.db.LoadFailedReplicas()
+	if err != nil {
+		return err
+	}
+
+	log.Infof("remove replica len :%d", len(rList))
+	chunks := splitSliceIntoChunks(rList, 10)
+
+	for _, chunk := range chunks {
+		list := chunk
+		go func() {
+			for _, info := range list {
+				cid, err := cidutil.HashToCID(info.Hash)
+				if err != nil {
+					continue
+				}
+
+				node := s.NodeManager.GetNode(info.NodeID)
+				if node == nil {
+					log.Infof("remove replica node offline :%s", info.NodeID)
+					continue
+				}
+
+				log.Infof("remove replica node :%s", info.NodeID)
+
+				node.DeleteAsset(context.Background(), cid)
+			}
+		}()
 	}
 
 	return nil

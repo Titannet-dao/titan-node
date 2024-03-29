@@ -590,9 +590,9 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 			break
 		}
 
-		// if !rInfo.IsCandidate {
-		// 	continue
-		// }
+		if rInfo.IsCandidate {
+			continue
+		}
 
 		nodeID := rInfo.NodeID
 		cNode := s.NodeManager.GetNode(nodeID)
@@ -604,11 +604,8 @@ func (s *Scheduler) GetCandidateDownloadInfos(ctx context.Context, cid string) (
 			continue
 		}
 
-		// edge
-		if cNode.Type != types.NodeCandidate {
-			if cNode.NATType != types.NatTypeNo || cNode.ExternalIP == "" {
-				continue
-			}
+		if (cNode.NATType != types.NatTypeNo && cNode.NATType != types.NatTypeFullCone) || cNode.ExternalIP == "" {
+			continue
 		}
 
 		token, tkPayload, err := cNode.Token(cid, uuid.NewString(), titanRsa, s.NodeManager.PrivateKey)

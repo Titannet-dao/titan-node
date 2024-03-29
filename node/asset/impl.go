@@ -57,7 +57,7 @@ func (a *Asset) PullAsset(ctx context.Context, rootCID string, infos []*types.Ca
 		return nil
 	}
 
-	log.Debugf("Cache asset %s", rootCID)
+	log.Infof("Pull asset %s", rootCID)
 
 	a.mgr.addToWaitList(root, infos, false)
 	return nil
@@ -281,6 +281,7 @@ func (a *Asset) GetAssetView(ctx context.Context) (*types.AssetView, error) {
 
 	return &types.AssetView{TopHash: topHash, BucketHashes: bucketHashes}, nil
 }
+
 func (a *Asset) AddAssetView(ctx context.Context, assetCIDs []string) error {
 	for _, assetCID := range assetCIDs {
 		root, err := cid.Decode(assetCID)
@@ -313,4 +314,7 @@ func (a *Asset) GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, 
 		hashes = append(hashes, cid.Hash().String())
 	}
 	return hashes, nil
+}
+func (a *Asset) SyncAssetViewAndData(ctx context.Context) error {
+	return a.mgr.syncDataWithAssetView()
 }

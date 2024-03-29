@@ -268,15 +268,24 @@ var showAssetInfoCmd = &cli.Command{
 
 		fmt.Printf("--------\nProcesses:\n")
 		succeed := 0
+		pulling := 0
+		failed := 0
 		for _, replica := range info.ReplicaInfos {
-			fmt.Printf("%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), colorState(replica.Status.String()),
-				units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
-
 			if replica.Status == types.ReplicaStatusSucceeded {
 				succeed++
+				continue
 			}
+
+			if replica.Status == types.ReplicaStatusFailed {
+				failed++
+				continue
+			}
+
+			pulling++
+			fmt.Printf("%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), colorState(replica.Status.String()),
+				units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
 		}
-		fmt.Printf("Succeed: %d", succeed)
+		fmt.Printf("Succeed: %d ; Pulling: %d ; failed: %d\n", succeed, pulling, failed)
 
 		return nil
 	},
@@ -425,11 +434,11 @@ var listAssetRecordCmd = &cli.Command{
 			Usage: "only show the pulling assets",
 			Value: false,
 		},
-		&cli.BoolFlag{
-			Name:  "processes",
-			Usage: "show the assets processes",
-			Value: false,
-		},
+		// &cli.BoolFlag{
+		// 	Name:  "processes",
+		// 	Usage: "show the assets processes",
+		// 	Value: false,
+		// },
 		&cli.BoolFlag{
 			Name:  "failed",
 			Usage: "only show the failed state assets",
@@ -475,7 +484,7 @@ var listAssetRecordCmd = &cli.Command{
 			tablewriter.Col("Replicas"),
 			// tablewriter.Col("CreatedTime"),
 			tablewriter.Col("Note"),
-			tablewriter.NewLineCol("Processes"),
+			// tablewriter.NewLineCol("Processes"),
 		)
 
 		list, err := schedulerAPI.GetAssetRecords(ctx, limit, offset, states, "")
@@ -486,9 +495,9 @@ var listAssetRecordCmd = &cli.Command{
 		for w := 0; w < len(list); w++ {
 			info := list[w]
 
-			// if info.Note == "" {
-			// 	continue
-			// }
+			if info.Note == "" {
+				continue
+			}
 			m := map[string]interface{}{
 				"Num":      w + 1,
 				"CID":      info.CID,
@@ -496,22 +505,22 @@ var listAssetRecordCmd = &cli.Command{
 				"Size":     units.BytesSize(float64(info.TotalSize)),
 				"Replicas": info.NeedEdgeReplica,
 				// "CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
-				"Note": info.Note,
+				"Note": info.Hash,
 			}
 
 			sort.Slice(info.ReplicaInfos, func(i, j int) bool {
 				return info.ReplicaInfos[i].NodeID < info.ReplicaInfos[j].NodeID
 			})
 
-			if cctx.Bool("processes") {
-				processes := "\n"
-				for j := 0; j < len(info.ReplicaInfos); j++ {
-					replica := info.ReplicaInfos[j]
-					status := colorState(replica.Status.String())
-					processes += fmt.Sprintf("\t%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), status, units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
-				}
-				m["Processes"] = processes
-			}
+			// if cctx.Bool("processes") {
+			// 	processes := "\n"
+			// 	for j := 0; j < len(info.ReplicaInfos); j++ {
+			// 		replica := info.ReplicaInfos[j]
+			// 		status := colorState(replica.Status.String())
+			// 		processes += fmt.Sprintf("\t%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), status, units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+			// 	}
+			// 	m["Processes"] = processes
+			// }
 
 			tw.Write(m)
 		}

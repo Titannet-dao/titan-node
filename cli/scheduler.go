@@ -51,8 +51,8 @@ var (
 	limitFlag = &cli.IntFlag{
 		Name:        "limit",
 		Usage:       "the numbering of limit",
-		Value:       50,
-		DefaultText: "50",
+		Value:       500,
+		DefaultText: "500",
 	}
 
 	offsetFlag = &cli.IntFlag{

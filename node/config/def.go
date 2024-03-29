@@ -44,7 +44,7 @@ func DefaultEdgeCfg() *EdgeCfg {
 		PullBlockParallel: 5,
 
 		Storage: Storage{
-			StorageGB: 64,
+			StorageGB: 2,
 		},
 		Memory: Memory{
 			MemoryGB: 1,

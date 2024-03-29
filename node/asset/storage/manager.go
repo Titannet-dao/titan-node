@@ -130,6 +130,10 @@ func (m *Manager) GetAsset(root cid.Cid) (io.ReadSeekCloser, error) {
 	return m.asset.get(root)
 }
 
+func (m *Manager) GetAssetHashesForSyncData(ctx context.Context) ([]string, error) {
+	return m.asset.getAssetHashesForSyncData()
+}
+
 // AssetExists checks if an asset exists
 func (m *Manager) AssetExists(root cid.Cid) (bool, error) {
 	return m.asset.exists(root)
@@ -153,6 +157,11 @@ func (m *Manager) GetBlockCount(ctx context.Context, root cid.Cid) (uint32, erro
 // SetBlockCount sets the block count of an asset
 func (m *Manager) SetBlockCount(ctx context.Context, root cid.Cid, count uint32) error {
 	return m.blockCount.storeBlockCount(ctx, root, count)
+}
+
+// DeleteBlockCount delete the blcok count of asset
+func (m *Manager) DeleteBlockCount(ctx context.Context, root cid.Cid) error {
+	return m.blockCount.deleteBlockCount(ctx, root)
 }
 
 // AssetsView API

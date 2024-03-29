@@ -28,4 +28,6 @@ type Asset interface {
 	AddAssetView(ctx context.Context, assetCIDs []string) error //perm:admin
 	// GetAssetsInBucket get assets in bucket
 	GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, error) //perm:admin
+	// SyncAssetViewAndData sync assetView and local car
+	SyncAssetViewAndData(ctx context.Context) error //perm:admin
 }

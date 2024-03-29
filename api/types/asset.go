@@ -96,6 +96,7 @@ type ReplicaInfo struct {
 	IsCandidate bool          `db:"is_candidate"`
 	EndTime     time.Time     `db:"end_time"`
 	DoneSize    int64         `db:"done_size"`
+	StartTime   time.Time     `db:"start_time"`
 }
 
 // PullAssetReq represents a request to pull an asset to Titan
@@ -210,6 +211,23 @@ type NodeAssetInfo struct {
 	TotalSize  int64     `db:"total_size"`
 	Expiration time.Time `db:"expiration"`
 	EndTime    time.Time `db:"end_time"`
+}
+
+// NodeReplicaInfo node replica info of web
+type NodeReplicaInfo struct {
+	Hash      string        `db:"hash"`
+	Cid       string        `db:"cid"`
+	TotalSize int64         `db:"total_size"`
+	Status    ReplicaStatus `db:"status"`
+	DoneSize  int64         `db:"done_size"`
+	StartTime time.Time     `db:"start_time"`
+	EndTime   time.Time     `db:"end_time"`
+}
+
+// ListNodeReplicaRsp list node assets
+type ListNodeReplicaRsp struct {
+	Total            int                `json:"total"`
+	NodeReplicaInfos []*NodeReplicaInfo `json:"infos"`
 }
 
 // ListNodeAssetRsp list node assets

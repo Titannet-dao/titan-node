@@ -42,3 +42,16 @@ func (c *blockCount) getBlockCount(ctx context.Context, root cid.Cid) (uint32, e
 
 	return binary.LittleEndian.Uint32(val), nil
 }
+
+// deleteBlockCount delete the block count of asset
+func (c *blockCount) deleteBlockCount(ctx context.Context, root cid.Cid) error {
+	err := c.ds.Delete(ctx, ds.NewKey(root.Hash().String()))
+	if err != nil {
+		if err == ds.ErrNotFound {
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}

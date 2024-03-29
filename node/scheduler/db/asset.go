@@ -66,6 +66,18 @@ func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiratio
 	return tx.Commit()
 }
 
+// LoadNodesOfPullingReplica
+func (n *SQLDB) LoadNodesOfPullingReplica(hash string) ([]string, error) {
+	var nodes []string
+	query := fmt.Sprintf("SELECT node_id FROM %s WHERE hash=? AND (status=? or status=?)", replicaInfoTable)
+	err := n.db.Select(&nodes, query, hash, types.ReplicaStatusPulling, types.ReplicaStatusWaiting)
+	if err != nil {
+		return nil, err
+	}
+
+	return nodes, nil
+}
+
 // UpdateReplicasStatusToFailed updates the status of unfinished asset replicas
 func (n *SQLDB) UpdateReplicasStatusToFailed(hash string) error {
 	query := fmt.Sprintf(`UPDATE %s SET end_time=NOW(), status=? WHERE hash=? AND (status=? or status=?)`, replicaInfoTable)
@@ -90,9 +102,9 @@ func (n *SQLDB) SaveReplicasStatus(infos []*types.ReplicaInfo) error {
 
 	for _, info := range infos {
 		query := fmt.Sprintf(
-			`INSERT INTO %s (hash, node_id, status, is_candidate) 
-				VALUES (:hash, :node_id, :status, :is_candidate) 
-				ON DUPLICATE KEY UPDATE status=:status`, replicaInfoTable)
+			`INSERT INTO %s (hash, node_id, status, is_candidate, start_time) 
+				VALUES (:hash, :node_id, :status, :is_candidate, NOW()) 
+				ON DUPLICATE KEY UPDATE status=:status, start_time=NOW()`, replicaInfoTable)
 
 		_, err := tx.NamedExec(query, info)
 		if err != nil {
@@ -242,8 +254,8 @@ func (n *SQLDB) LoadReplicasByHash(hash string, limit, offset int) (*types.ListR
 	return res, nil
 }
 
-// LoadReplicasByNodeID load replicas of node.
-func (n *SQLDB) LoadReplicasByNodeID(nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) {
+// LoadSucceedReplicasByNodeID load replicas of node.
+func (n *SQLDB) LoadSucceedReplicasByNodeID(nodeID string, limit, offset int) (*types.ListNodeAssetRsp, error) {
 	res := new(types.ListNodeAssetRsp)
 	var infos []*types.NodeAssetInfo
 	query := fmt.Sprintf("SELECT a.hash,a.end_time,b.cid,b.total_size,b.expiration FROM %s a LEFT JOIN %s b ON a.hash = b.hash WHERE a.node_id=? AND a.status=? order by a.end_time desc LIMIT ? OFFSET ?", replicaInfoTable, assetRecordTable)
@@ -261,6 +273,59 @@ func (n *SQLDB) LoadReplicasByNodeID(nodeID string, limit, offset int) (*types.L
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE node_id=? AND status=?", replicaInfoTable)
 	var count int
 	err = n.db.Get(&count, countQuery, nodeID, types.ReplicaStatusSucceeded)
+	if err != nil {
+		return nil, err
+	}
+
+	res.Total = count
+
+	return res, nil
+}
+
+// LoadFailedReplicas load replicas .
+func (n *SQLDB) LoadFailedReplicas() ([]*types.ReplicaInfo, error) {
+	var infos []*types.ReplicaInfo
+	query := fmt.Sprintf("SELECT * FROM %s WHERE status=? ", replicaInfoTable)
+
+	err := n.db.Select(&infos, query, types.ReplicaStatusFailed)
+	if err != nil {
+		return nil, err
+	}
+
+	return infos, nil
+}
+
+// LoadAllReplicasByNodeID load replicas of node.
+func (n *SQLDB) LoadAllReplicasByNodeID(nodeID string, limit, offset int, statues []types.ReplicaStatus) (*types.ListNodeReplicaRsp, error) {
+	res := new(types.ListNodeReplicaRsp)
+	query := fmt.Sprintf("SELECT a.hash,a.start_time,a.status,a.done_size,a.end_time,b.cid,b.total_size FROM %s a LEFT JOIN %s b ON a.hash = b.hash WHERE a.node_id=? AND a.status in (?) order by a.start_time desc LIMIT ? OFFSET ?", replicaInfoTable, assetRecordTable)
+	if limit > loadReplicaDefaultLimit {
+		limit = loadReplicaDefaultLimit
+	}
+
+	srQuery, args, err := sqlx.In(query, nodeID, statues, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	var infos []*types.NodeReplicaInfo
+	srQuery = n.db.Rebind(srQuery)
+	err = n.db.Select(&infos, srQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	res.NodeReplicaInfos = infos
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE node_id=? AND status in (?)", replicaInfoTable)
+	srQuery, args, err = sqlx.In(countQuery, nodeID, statues)
+	if err != nil {
+		return nil, err
+	}
+
+	var count int
+	srQuery = n.db.Rebind(srQuery)
+	err = n.db.Get(&count, srQuery, args...)
 	if err != nil {
 		return nil, err
 	}

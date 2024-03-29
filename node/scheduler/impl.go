@@ -201,6 +201,11 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	cNode.DiskUsage = nodeInfo.DiskUsage
 	cNode.IncomeIncr = (cNode.CalculateMCx(s.NodeManager.TotalNetworkEdges) * 360)
 
+	pCount, err := s.db.GetNodePullingCount(nodeID)
+	if err == nil {
+		cNode.PullAssetCount = int(pCount)
+	}
+
 	if !alreadyConnect {
 		pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
 		if err != nil && err != sql.ErrNoRows {
@@ -355,21 +360,22 @@ func (s *Scheduler) GetValidationInfo(ctx context.Context) (*types.ValidationInf
 
 // SubmitUserWorkloadReport submits report of workload for User Asset Download
 func (s *Scheduler) SubmitUserWorkloadReport(ctx context.Context, r io.Reader) error {
-	nodeID := handler.GetNodeID(ctx)
-	node := s.NodeManager.GetNode(nodeID)
+	return nil
+	// nodeID := handler.GetNodeID(ctx)
+	// node := s.NodeManager.GetNode(nodeID)
 
-	cipherText, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
+	// cipherText, err := io.ReadAll(r)
+	// if err != nil {
+	// 	return err
+	// }
 
-	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	data, err := titanRsa.Decrypt(cipherText, s.PrivateKey)
-	if err != nil {
-		return xerrors.Errorf("decrypt error: %w", err)
-	}
+	// titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	// data, err := titanRsa.Decrypt(cipherText, s.PrivateKey)
+	// if err != nil {
+	// 	return xerrors.Errorf("decrypt error: %w", err)
+	// }
 
-	return s.WorkloadManager.HandleUserWorkload(data, node)
+	// return s.WorkloadManager.HandleUserWorkload(data, node)
 }
 
 // SubmitNodeWorkloadReport submits report of workload for node Asset Download
