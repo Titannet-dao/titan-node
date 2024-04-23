@@ -37,33 +37,24 @@ titan-candidate: $(BUILD_DEPS)
 	$(GOCC) build $(GOFLAGS) -o titan-candidate ./cmd/titan-candidate
 .PHONY: titan-candidate
 
-
 titan-edge: $(BUILD_DEPS)
 	rm -f titan-edge
 	$(GOCC) build $(GOFLAGS) -o titan-edge ./cmd/titan-edge
 .PHONY: titan-edge
 
-titan-edge-arm: $(BUILD_DEPS)
-	rm -f titan-edge-arm
-	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -o titan-edge-arm ./cmd/titan-edge
-.PHONY: titan-edge-arm
-
-titan-candidate-arm: $(BUILD_DEPS)
-	rm -f titan-candidate-arm
-	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -o titan-candidate-arm ./cmd/titan-candidate
-.PHONY: titan-candidate-arm
-
-
-titan-scheduler-arm: $(BUILD_DEPS)
-	rm -f titan-scheduler-arm
-	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -o titan-scheduler-arm ./cmd/titan-scheduler
-.PHONY: titan-scheduler-arm
-
-
 titan-locator: $(BUILD_DEPS)
 	rm -f titan-locator
 	$(GOCC) build $(GOFLAGS) -o titan-locator ./cmd/titan-locator
 .PHONY: titan-locator
+
+
+build-cross: $(BUILD_DEPS)
+	rm -f build/cross/
+	gox -gocmd=$(GOCC) $(GOFLAGS) -osarch="darwin/amd64 darwin/arm64 linux/amd64 linux/arm linux/arm64 windows/amd64" -output="build/cross/{{.OS}}/{{.Arch}}/titan-edge" ./cmd/titan-edge
+	gox -gocmd=$(GOCC) $(GOFLAGS) -osarch="darwin/amd64 darwin/arm64 linux/amd64 linux/arm linux/arm64 windows/amd64" -output="build/cross/{{.OS}}/{{.Arch}}/titan-candidate" ./cmd/titan-candidate
+	gox -gocmd=$(GOCC) $(GOFLAGS) -osarch="darwin/amd64 darwin/arm64 linux/amd64 linux/arm linux/arm64 windows/amd64" -output="build/cross/{{.OS}}/{{.Arch}}/titan-scheduler" ./cmd/titan-scheduler
+	gox -gocmd=$(GOCC) $(GOFLAGS) -osarch="darwin/amd64 darwin/arm64 linux/amd64 linux/arm linux/arm64 windows/amd64" -output="build/cross/{{.OS}}/{{.Arch}}/titan-locator" ./cmd/titan-locator
+.PHONY: build-cross
 
 
 api-gen:

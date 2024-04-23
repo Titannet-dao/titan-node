@@ -1,0 +1,139 @@
+name: build CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    types:
+      - closed
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Docker Image Task
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'workflow_dispatch' && true) || (github.event_name == 'push' && true) || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Checkout Git Repo
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      - name: Prepare Golang
+        id: golang
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.21.6
+
+      - name: Prepare Gox
+        id: gox
+        run: go install github.com/mitchellh/gox@latest
+
+      - name: Build the Executable
+        id: build
+        run: make build-cross
+
+
+      - name: Artifact with darwin/amd64
+        id: artifact_darwin_amd64
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-amd64
+          path: ./build/cross/darwin/amd64/
+          compression-level: 9
+
+      - name: Artifact with darwin/arm64
+        id: artifact_darwin_arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-arm64
+          path: ./build/cross/darwin/arm64/
+          compression-level: 9
+
+      - name: Artifact with linux/amd64
+        id: artifact_linux_amd64
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-amd64
+          path: ./build/cross/linux/amd64/
+          compression-level: 9
+
+      - name: Artifact with linux/arm
+        id: artifact_linux_arm
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm
+          path: ./build/cross/linux/arm/
+          compression-level: 9
+
+      - name: Artifact with linux/arm64
+        id: artifact_linux_arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: ./build/cross/linux/arm64/
+          compression-level: 9
+
+      - name: Artifact with windows/amd64
+        id: artifact_windows_amd64
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64
+          path: ./build/cross/windows/amd64/
+          compression-level: 9
+
+
+      - name: Prepare QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v3
+
+      - name: Prepare Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login GitHub Packages Docker Image Repository
+        id: login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Format Titan Edge Docker Image Meta
+        id: docker_meta_edge
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/titan-edge
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=nightly,enable={{is_default_branch}}
+
+      - name: Build and Push Titan Edge Docker Image
+        id: build_docker_edge
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./cmd/titan-edge/Dockerfile
+          platforms: linux/amd64,linux/arm/v7,linux/arm64/v8
+          push: true
+          provenance: false
+          tags: ${{ steps.docker_meta_edge.outputs.tags }}
+          labels: ${{ steps.docker_meta_edge.outputs.labels }}
