@@ -169,8 +169,11 @@ func NewHTTP3ClientWithPacketConn(tansport *quic.Transport) (*http.Client, error
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
-		QuicConfig: &quic.Config{},
-		Dial:       dial,
+		QuicConfig: &quic.Config{
+			MaxIncomingStreams:    3,
+			MaxIncomingUniStreams: 3,
+		},
+		Dial: dial,
 	}
 
 	return &http.Client{Transport: roundTripper, Timeout: 30 * time.Second}, nil

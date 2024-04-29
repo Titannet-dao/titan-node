@@ -73,7 +73,7 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 	var rows *sqlx.Rows
 	var err error
 
-	rows, err = d.assetDB.LoadAllAssetRecords(d.ServerID, checkAssetReplicaLimit, 0, PullingStates)
+	rows, err = d.assetDB.LoadAllAssetRecords(d.ServerID, 500, 0, PullingStates)
 	if err != nil {
 		log.Errorf("LoadAssets :%s", err.Error())
 		return nil, err

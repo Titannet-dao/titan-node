@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 )
@@ -33,7 +34,7 @@ func TestCache(t *testing.T) {
 		return
 	}
 
-	opts := &pullerOptions{root: c, dss: nil, storage: manger, ipfsAPIURL: testIPFS, parallel: 5, timeout: 3, retry: 2}
+	opts := &pullerOptions{root: c, dss: nil, storage: manger, ipfsAPIURL: testIPFS, config: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
 	assetPuller, err := newAssetPuller(opts)
 	if err != nil {
 		t.Errorf("newAssetPuller err:%s", err)

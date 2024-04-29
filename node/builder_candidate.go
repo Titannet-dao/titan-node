@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/Filecoin-Titan/titan/node/candidate"
@@ -15,7 +16,6 @@ import (
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 	"github.com/Filecoin-Titan/titan/node/validation"
 	"go.uber.org/fx"
-	"golang.org/x/time/rate"
 	"golang.org/x/xerrors"
 )
 
@@ -52,9 +52,8 @@ func ConfigCandidate(c interface{}) Option {
 		Override(new(dtypes.NodeMetadataPath), dtypes.NodeMetadataPath(cfg.MetadataPath)),
 		Override(new(*config.MinioConfig), &cfg.MinioConfig),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
-		Override(new(*asset.Manager), modules.NewAssetsManager(cfg.PullBlockParallel, cfg.PullBlockTimeout, cfg.PullBlockRetry, cfg.IPFSAPIURL)),
 		Override(new(*validation.Validation), modules.NewNodeValidation),
-		Override(new(*rate.Limiter), modules.NewRateLimiter),
+		Override(new(*types.RateLimiter), modules.NewRateLimiter),
 		Override(new(*asset.Asset), asset.NewAsset),
 		Override(new(*datasync.DataSync), modules.NewDataSync),
 		Override(new(*candidate.TCPServer), modules.NewTCPServer),

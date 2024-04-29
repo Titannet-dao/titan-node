@@ -206,7 +206,7 @@ func (a *asset) saveUserAsset(ctx context.Context, userID string, root cid.Cid, 
 		return nil
 	}
 
-	baseDir, err := a.assetsPaths.allocatePathWithSize(root, assetSize)
+	baseDir, err := a.assetsPaths.allocatePathWithAssetAndSize(root, assetSize)
 	if err != nil {
 		return err
 	}
@@ -382,4 +382,8 @@ func (a *asset) getAssetHashesForSyncData() ([]string, error) {
 	}
 
 	return hashes, nil
+}
+
+func (a *asset) allocatePathWithSize(size int64) (string, error) {
+	return a.assetsPaths.allocatePathWithSize(size)
 }

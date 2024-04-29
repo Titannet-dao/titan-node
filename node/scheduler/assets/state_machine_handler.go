@@ -1,6 +1,8 @@
 package assets
 
 import (
+	"bytes"
+	"encoding/gob"
 	"math"
 	"time"
 
@@ -8,6 +10,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/alecthomas/units"
 	"github.com/filecoin-project/go-statemachine"
+	"github.com/google/uuid"
 	"golang.org/x/xerrors"
 )
 
@@ -15,13 +18,15 @@ var (
 	// MinRetryTime defines the minimum time duration between retries
 	MinRetryTime = 1 * time.Minute
 
+	WaitTime = 5 * time.Second
+
 	// MaxRetryCount defines the maximum number of retries allowed
 	MaxRetryCount = 1
 )
 
 // failedCoolDown is called when a retry needs to be attempted and waits for the specified time duration
-func failedCoolDown(ctx statemachine.Context, info AssetPullingInfo) error {
-	retryStart := time.Now().Add(MinRetryTime)
+func failedCoolDown(ctx statemachine.Context, info AssetPullingInfo, t time.Duration) error {
+	retryStart := time.Now().Add(t)
 	if time.Now().Before(retryStart) {
 		log.Debugf("%s(%s), waiting %s before retrying", info.State, info.Hash, time.Until(retryStart))
 		select {
@@ -65,26 +70,68 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 		}
 	}
 
-	// save to db
-	err := m.saveReplicaInformation(nodes, info.Hash.String(), true)
-	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
+	cInfo := make([]*types.CandidateDownloadInfo, 0)
+	if info.Note != "" {
+		cInfo = append(cInfo, &types.CandidateDownloadInfo{AWSBucket: info.Note})
+	}
+
+	for _, node := range nodes {
+		cNode := node
+
+		err := cNode.PullAsset(ctx.Context(), info.CID, cInfo)
+		if err != nil {
+			log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
+			continue
+		}
+
+		err = m.SaveReplicaStatus(&types.ReplicaInfo{
+			NodeID:      cNode.NodeID,
+			Status:      types.ReplicaStatusWaiting,
+			Hash:        info.Hash.String(),
+			IsCandidate: true,
+		})
+		if err != nil {
+			log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
+		}
+
+		m.createSeedWorkload(info, cNode.NodeID)
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
 
-	// send a cache request to the node
-	go func() {
-		for _, node := range nodes {
-			err := node.PullAsset(ctx.Context(), info.CID, nil)
-			if err != nil {
-				log.Errorf("%s pull asset err:%s", node.NodeID, err.Error())
-				continue
-			}
-		}
-	}()
-
 	return ctx.Send(PullRequestSent{})
+}
+
+func (m *Manager) createSeedWorkload(info AssetPullingInfo, nodeID string) {
+	sID := types.DownloadSourceIPFS.String()
+	if info.Source == AssetSourceAWS {
+		sID = types.DownloadSourceAWS.String()
+	}
+
+	ws := []*types.Workload{{SourceID: sID}}
+	buffer := &bytes.Buffer{}
+	enc := gob.NewEncoder(buffer)
+	err := enc.Encode(ws)
+	if err != nil {
+		log.Errorf("encode error:%s", err.Error())
+	} else {
+		record := &types.WorkloadRecord{
+			WorkloadID: uuid.NewString(),
+			AssetCID:   info.CID,
+			ClientID:   nodeID,
+			AssetSize:  info.Size,
+			Workloads:  buffer.Bytes(),
+			Event:      types.WorkloadEventPull,
+			Status:     types.WorkloadStatusCreate,
+		}
+
+		workloads := []*types.WorkloadRecord{record}
+
+		err = m.SaveTokenPayload(workloads)
+		if err != nil {
+			log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(workloads), err.Error())
+		}
+	}
 }
 
 // handleSeedPulling handles the asset pulling process of seed nodes
@@ -116,17 +163,20 @@ func (m *Manager) handleUploadInit(ctx statemachine.Context, info AssetPullingIn
 		return ctx.Send(SelectFailed{})
 	}
 
-	nodes := map[string]*node.Node{
-		cNode.NodeID: cNode,
-	}
-
-	// save to db
-	err := m.saveReplicaInformation(nodes, info.Hash.String(), true)
+	err := m.SaveReplicaStatus(&types.ReplicaInfo{
+		NodeID:      cNode.NodeID,
+		Status:      types.ReplicaStatusWaiting,
+		Hash:        info.Hash.String(),
+		IsCandidate: true,
+	})
 	if err != nil {
+		log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
 		return ctx.Send(SelectFailed{error: err})
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
+
+	m.createSeedWorkload(info, cNode.NodeID)
 
 	return ctx.Send(PullRequestSent{})
 }
@@ -150,11 +200,6 @@ func (m *Manager) handleSeedUploading(ctx statemachine.Context, info AssetPullin
 func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
 	log.Debugf("handle candidates select, %s", info.Hash)
 
-	sources := m.getDownloadSources(info.Hash.String(), info.Note)
-	if len(sources) < 1 && info.Note == "" {
-		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
-	}
-
 	needCount := info.CandidateReplicas - int64(len(info.CandidateReplicaSucceeds))
 	if needCount < 1 {
 		err := m.DeleteReplenishBackup(info.Hash.String())
@@ -164,6 +209,11 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 
 		// The number of candidate node replicas has reached the requirement
 		return ctx.Send(SkipStep{})
+	}
+
+	sources := m.getDownloadSources(info.Hash.String(), info.Note, AssetSource(info.Source))
+	if len(sources) < 1 {
+		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
 	nodes := make(map[string]*node.Node)
@@ -185,7 +235,7 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 		}
 	}
 
-	downloadSources, payloads, err := m.GenerateToken(info.CID, sources, nodes)
+	downloadSources, workloads, err := m.GenerateToken(info.CID, sources, nodes, info.Size)
 	if err != nil {
 		return ctx.Send(SelectFailed{error: err})
 	}
@@ -196,28 +246,42 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 	// }
 
 	// save to db
-	err = m.saveReplicaInformation(nodes, info.Hash.String(), true)
-	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
+	// err = m.saveReplicaInformation(nodes, info.Hash.String(), true)
+	// if err != nil {
+	// 	return ctx.Send(SelectFailed{error: err})
+	// }
+
+	// send a pull request to the node
+
+	for _, node := range nodes {
+		cNode := node
+
+		err := cNode.PullAsset(ctx.Context(), info.CID, downloadSources[cNode.NodeID])
+		if err != nil {
+			log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
+			continue
+		}
+
+		err = m.SaveReplicaStatus(&types.ReplicaInfo{
+			NodeID:      cNode.NodeID,
+			Status:      types.ReplicaStatusWaiting,
+			Hash:        info.Hash.String(),
+			IsCandidate: true,
+		})
+		if err != nil {
+			log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
+		}
+
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
 
-	// send a pull request to the node
-	go func() {
-		err = m.SaveTokenPayload(payloads)
-		if err != nil {
-			log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(payloads), err.Error())
-		}
-
-		for _, node := range nodes {
-			err := node.PullAsset(ctx.Context(), info.CID, downloadSources[node.NodeID])
-			if err != nil {
-				log.Errorf("%s pull asset err:%s", node.NodeID, err.Error())
-				continue
-			}
-		}
-	}()
+	// go func() {
+	err = m.SaveTokenPayload(workloads)
+	if err != nil {
+		log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(workloads), err.Error())
+	}
+	// }()
 
 	return ctx.Send(PullRequestSent{})
 }
@@ -273,8 +337,8 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		return ctx.Send(SkipStep{})
 	}
 
-	sources := m.getDownloadSources(info.Hash.String(), info.Note)
-	if len(sources) < 1 && info.Note == "" {
+	sources := m.getDownloadSources(info.Hash.String(), info.Note, AssetSource(info.Source))
+	if len(sources) < 1 {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
@@ -288,13 +352,6 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 
 		m.removeNodesFromFillAsset(info.CID, false)
 	} else {
-		// if info.Note == "" {
-		// 	sLen := int64(len(sources))
-		// 	if needCount > sLen {
-		// 		needCount = sLen
-		// 	}
-		// }
-		// find nodes
 		str := ""
 		nodes, str = m.chooseEdgeNodes(int(needCount), needBandwidth, info.EdgeReplicaSucceeds, float64(info.Size))
 		if len(nodes) < 1 {
@@ -302,34 +359,44 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		}
 	}
 
-	downloadSources, payloads, err := m.GenerateToken(info.CID, sources, nodes)
+	downloadSources, workloads, err := m.GenerateToken(info.CID, sources, nodes, info.Size)
 	if err != nil {
 		return ctx.Send(SelectFailed{error: xerrors.Errorf("GenerateToken; %s", err.Error())})
 	}
 
-	// save to db
-	err = m.saveReplicaInformation(nodes, info.Hash.String(), false)
+	for _, node := range nodes {
+		cNode := node
+		go func() {
+			err := cNode.PullAsset(ctx.Context(), info.CID, downloadSources[cNode.NodeID])
+			if err != nil {
+				log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
+				return
+			}
+			err = m.SaveReplicaStatus(&types.ReplicaInfo{
+				NodeID:      cNode.NodeID,
+				Status:      types.ReplicaStatusWaiting,
+				Hash:        info.Hash.String(),
+				IsCandidate: false,
+			})
+			if err != nil {
+				log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
+			}
+		}()
+	}
+
+	// go func() {
+	err = m.SaveTokenPayload(workloads)
 	if err != nil {
-		return ctx.Send(SelectFailed{error: xerrors.Errorf("saveReplicaInformation; %s", err.Error())})
+		log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(workloads), err.Error())
+	}
+	// }()
+
+	// Wait send to node
+	if err := failedCoolDown(ctx, info, WaitTime); err != nil {
+		return err
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
-
-	// send a pull request to the node
-	go func() {
-		err = m.SaveTokenPayload(payloads)
-		if err != nil {
-			log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(payloads), err.Error())
-		}
-
-		for _, node := range nodes {
-			err := node.PullAsset(ctx.Context(), info.CID, downloadSources[node.NodeID])
-			if err != nil {
-				log.Errorf("%s pull asset err:%s", node.NodeID, err.Error())
-				continue
-			}
-		}
-	}()
 
 	return ctx.Send(PullRequestSent{})
 }
@@ -338,6 +405,10 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 func (m *Manager) handleEdgesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
 	needBandwidth := info.Bandwidth - m.getCurBandwidthUp(info.EdgeReplicaSucceeds)
 	log.Debugf("handle edges pulling, %s ; %d>=%d , %d", info.Hash, int64(len(info.EdgeReplicaSucceeds)), info.EdgeReplicas, needBandwidth)
+
+	if info.EdgeWaitings > 0 {
+		return nil
+	}
 
 	if int64(len(info.EdgeReplicaSucceeds)) >= info.EdgeReplicas && needBandwidth <= 0 {
 		return ctx.Send(PullSucceed{})
@@ -377,7 +448,7 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 
 	log.Debugf(": %s, retries: %d", info.Hash.String(), info.RetryCount)
 
-	if err := failedCoolDown(ctx, info); err != nil {
+	if err := failedCoolDown(ctx, info, MinRetryTime); err != nil {
 		return err
 	}
 

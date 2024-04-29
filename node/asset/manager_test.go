@@ -9,6 +9,7 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/blocks"
@@ -47,9 +48,9 @@ func TestManager(t *testing.T) {
 		return
 	}
 
-	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
 
-	mgr, err := NewManager(opts)
+	mgr, err := NewManager(context.Background(), opts)
 	if err != nil {
 		t.Errorf("new manager err:%s", err)
 		return
@@ -72,9 +73,9 @@ func TestGetAssetSize(t *testing.T) {
 		return
 	}
 
-	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
 
-	mgr, err := NewManager(opts)
+	mgr, err := NewManager(context.Background(), opts)
 	if err != nil {
 		t.Errorf("new asset manager error:%s", err)
 		return
@@ -128,9 +129,9 @@ func TestGetChecker(t *testing.T) {
 		return
 	}
 
-	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
 
-	mgr, err := NewManager(opts)
+	mgr, err := NewManager(context.Background(), opts)
 	if err != nil {
 		t.Errorf("new asset manager error:%s", err)
 		return
@@ -177,8 +178,8 @@ func checkBlocksFromCandidate(blockCIDs []string, root cid.Cid, randomSeed int64
 		return err
 	}
 
-	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
-	mgr, err := NewManager(opts)
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
+	mgr, err := NewManager(context.Background(), opts)
 	if err != nil {
 		return err
 	}
@@ -230,8 +231,8 @@ func TestBlocksFromCandidate(t *testing.T) {
 		return
 	}
 
-	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
-	mgr, err := NewManager(opts)
+	opts := &ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
+	mgr, err := NewManager(context.Background(), opts)
 	if err != nil {
 		t.Errorf("decode error %s", err.Error())
 		return

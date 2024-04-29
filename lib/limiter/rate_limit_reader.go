@@ -9,22 +9,22 @@ import (
 )
 
 type reader struct {
-	rs      io.ReadSeeker
+	r       io.Reader
 	limiter *rate.Limiter
 }
 
 // NewReader returns a reader that is rate limited by
 // the given token bucket. Each token in the bucket
 // represents one byte.
-func NewReader(rs io.ReadSeeker, l *rate.Limiter) io.ReadSeeker {
+func NewReader(r io.Reader, l *rate.Limiter) io.Reader {
 	return &reader{
-		rs:      rs,
+		r:       r,
 		limiter: l,
 	}
 }
 
 func (r *reader) Read(buf []byte) (int, error) {
-	n, err := r.rs.Read(buf)
+	n, err := r.r.Read(buf)
 	if n <= 0 {
 		return n, err
 	}
@@ -38,8 +38,4 @@ func (r *reader) Read(buf []byte) (int, error) {
 	delay := rv.DelayFrom(now)
 	time.Sleep(delay)
 	return n, err
-}
-
-func (r *reader) Seek(offset int64, whence int) (int64, error) {
-	return r.rs.Seek(offset, whence)
 }

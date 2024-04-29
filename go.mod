@@ -45,7 +45,7 @@ require (
 	github.com/multiformats/go-multihash v0.2.1
 	github.com/oschwald/geoip2-golang v1.7.0
 	github.com/prometheus/client_golang v1.14.0
-	github.com/quic-go/quic-go v0.41.0
+	github.com/quic-go/quic-go v0.42.0
 	github.com/shirou/gopsutil/v3 v3.23.1
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	github.com/urfave/cli/v2 v2.25.3
@@ -53,7 +53,7 @@ require (
 	go.opencensus.io v0.24.0
 	go.uber.org/fx v1.19.2
 	golang.org/x/sys v0.13.0
-	golang.org/x/time v0.0.0-20220922220347-f3bd1da661af
+	golang.org/x/time v0.5.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2
 )
 
@@ -140,6 +140,7 @@ require (
 	github.com/secure-io/sio-go v0.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/throttled/throttled v2.2.5+incompatible // indirect
 	github.com/tinylib/msgp v1.1.8 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
@@ -152,7 +153,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.13.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/dig v1.16.1 // indirect
-	go.uber.org/mock v0.3.0 // indirect
+	go.uber.org/mock v0.4.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect

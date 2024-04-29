@@ -3,9 +3,11 @@ package nat
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
@@ -26,6 +28,7 @@ type Manager struct {
 	retryList    []*retryNode
 	lock         *sync.Mutex
 	edgeMap      *sync.Map
+	http3Client  *http.Client
 }
 
 type retryNode struct {
@@ -34,12 +37,16 @@ type retryNode struct {
 }
 
 func NewManager(nodeMgr *node.Manager, config *config.SchedulerCfg) *Manager {
+	http3Client := client.NewHTTP3Client()
+	http3Client.Timeout = 5 * time.Second
+
 	m := &Manager{
 		nodeManager:  nodeMgr,
 		lock:         &sync.Mutex{},
 		retryList:    make([]*retryNode, 0),
 		edgeMap:      &sync.Map{},
 		schedulerCfg: config,
+		http3Client:  http3Client,
 	}
 	go m.startTicker()
 
@@ -134,7 +141,7 @@ func (m *Manager) retryDetectNatType(node *retryNode) {
 	}
 
 	cNodes := m.nodeManager.GetCandidateNodes(miniCandidateCount, false)
-	natType, err := determineEdgeNATType(context.Background(), eNode, cNodes)
+	natType, err := determineEdgeNATType(context.Background(), eNode, cNodes, m.http3Client)
 	if err != nil {
 		log.Errorf("DetermineNATType error:%s", err.Error())
 	}
@@ -166,9 +173,9 @@ func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
 		return
 	}
 
-	cNodes := m.nodeManager.GetCandidateNodes(miniCandidateCount, false)
+	cNodes := m.nodeManager.GetCandidateNodes(miniCandidateCount, true)
 
-	natType, err := determineEdgeNATType(ctx, eNode, cNodes)
+	natType, err := determineEdgeNATType(ctx, eNode, cNodes, m.http3Client)
 	if err != nil {
 		log.Errorf("DetermineNATType error:%s", err.Error())
 	}
@@ -185,7 +192,7 @@ func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
 func (m *Manager) GetCandidateURLsForDetectNat(ctx context.Context) ([]string, error) {
 	// minimum of 3 candidates is required for user detect nat
 	needCandidateCount := miniCandidateCount + 1
-	candidates := m.nodeManager.GetCandidateNodes(needCandidateCount, false)
+	candidates := m.nodeManager.GetCandidateNodes(needCandidateCount, true)
 	if len(candidates) < needCandidateCount {
 		return nil, fmt.Errorf("minimum of %d candidates is required", needCandidateCount)
 	}

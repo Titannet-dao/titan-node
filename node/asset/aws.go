@@ -7,8 +7,10 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/lib/limiter"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -17,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
+	"golang.org/x/time/rate"
 )
 
 const defaultRegion = "us-east-1"
@@ -26,10 +29,11 @@ type AWS interface {
 	PullAssetFromAWS(ctx context.Context, bucket, key string) error
 }
 
-func NewAWS(scheduler api.Scheduler, storage storage.Storage) AWS {
+func NewAWS(scheduler api.Scheduler, storage storage.Storage, rateLimiter *rate.Limiter) AWS {
 	return &awsClient{
-		scheduler: scheduler,
-		storage:   storage,
+		scheduler:   scheduler,
+		storage:     storage,
+		rateLimiter: rateLimiter,
 	}
 }
 
@@ -50,15 +54,22 @@ func getRegion(bucket string) (string, error) {
 }
 
 type awsClient struct {
-	isRunning bool
-	object    awsObject
-	scheduler api.Scheduler
-	storage   storage.Storage
+	isRunning   bool
+	object      awsObject
+	scheduler   api.Scheduler
+	storage     storage.Storage
+	rateLimiter *rate.Limiter
 }
 
 type awsObject struct {
 	bucket string
 	key    string
+}
+
+type bucketSummary struct {
+	bucket    string
+	keys      []string
+	totalSize int64
 }
 
 // PullAssetWithURL download the file locally from the url and save it as car file
@@ -110,14 +121,34 @@ func (ac *awsClient) pullAssetFromAWS(ctx context.Context, bucket, key string) (
 
 	svc := newS3(region)
 
-	tempFilePath := path.Join(os.TempDir(), uuid.NewString())
-	if err := ac.downloadAssets(ctx, svc, bucket, key, tempFilePath); err != nil {
+	summary, err := ac.getBucketSummary(ctx, svc, bucket, key)
+	if err != nil {
 		return cid.Cid{}, 0, err
 	}
-	defer os.RemoveAll(tempFilePath)
 
-	tempCarFile := path.Join(os.TempDir(), uuid.NewString())
-	rootCID, err := createCar(tempFilePath, tempCarFile)
+	if summary.totalSize >= ac.usableDiskSpace() {
+		return cid.Cid{}, 0, fmt.Errorf("not enough disk space, need %d, usable %d, bucket %s", summary.totalSize, ac.usableDiskSpace(), bucket)
+	}
+
+	log.Debugf("bucket %s size %d, keys len %d", summary.bucket, summary.totalSize, len(summary.keys))
+
+	assetDir, err := ac.storage.AllocatePathWithSize(summary.totalSize)
+	if err != nil {
+		return cid.Cid{}, 0, err
+	}
+
+	assetTempDirPath := path.Join(assetDir, uuid.NewString())
+	if err = os.Mkdir(assetTempDirPath, 0755); err != nil {
+		return cid.Cid{}, 0, err
+	}
+	defer os.RemoveAll(assetTempDirPath)
+
+	if err := ac.downloadObjects(ctx, svc, summary, assetTempDirPath); err != nil {
+		return cid.Cid{}, 0, err
+	}
+
+	tempCarFile := path.Join(assetDir, uuid.NewString())
+	rootCID, err := createCar(assetTempDirPath, tempCarFile)
 	if err != nil {
 		return cid.Cid{}, 0, err
 	}
@@ -161,26 +192,22 @@ func (ac *awsClient) saveCarFile(ctx context.Context, tempCarFile string, root c
 	}
 	return nil
 }
-func (ac *awsClient) downloadAssets(ctx context.Context, svc *s3.S3, bucket, key string, tempFilePath string) error {
-	if len(bucket) == 0 && len(key) == 0 {
-		return fmt.Errorf("bucket and key can not empty")
-	}
 
-	if len(key) == 0 {
-		return ac.downloadObjects(ctx, svc, bucket, key, tempFilePath)
-	}
-
-	return ac.downloadObject(ctx, svc, bucket, key, tempFilePath)
-}
-
-func (ac *awsClient) downloadObjects(ctx context.Context, svc *s3.S3, bucket, key string, tempFilePath string) error {
+func (ac *awsClient) getBucketSummary(ctx context.Context, svc *s3.S3, bucket, key string) (*bucketSummary, error) {
 	var prefix string
 	var parts = strings.SplitN(strings.TrimSpace(bucket), "/", 2)
 	if len(parts) > 1 {
 		bucket = parts[0]
 		prefix = parts[1]
 	}
-	log.Debugf("downloadObjects bucket=[%s], prefix=[%s]", bucket, prefix)
+
+	if len(key) > 0 {
+		prefix = strings.TrimSuffix(prefix, "/")
+		prefix = fmt.Sprintf("%s/%s", prefix, key)
+	}
+
+	log.Debugf("getBucketSummary bucket=[%s], prefix=[%s]", bucket, prefix)
+
 	var totalSize = int64(0)
 	var objectKeys = make([]string, 0)
 	var listObjects = &s3.ListObjectsInput{Bucket: &bucket, Prefix: &prefix}
@@ -191,25 +218,23 @@ func (ac *awsClient) downloadObjects(ctx context.Context, svc *s3.S3, bucket, ke
 		}
 		return true
 	})
+
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if len(objectKeys) == 0 {
-		return fmt.Errorf("no key in bucket %s", bucket)
+		return nil, fmt.Errorf("no key in bucket %s", bucket)
 	}
 
-	if totalSize >= ac.usableDiskSpace() {
-		return fmt.Errorf("not enough disk space, need %d, usable %d, bucket %s", totalSize, ac.usableDiskSpace(), bucket)
-	}
+	return &bucketSummary{bucket: bucket, keys: objectKeys, totalSize: totalSize}, nil
 
-	if err := os.Mkdir(tempFilePath, 0755); err != nil {
-		return err
-	}
+}
 
-	for _, key := range objectKeys {
-		filePath := path.Join(tempFilePath, strings.ReplaceAll(key, "/", "-"))
-		if err := ac.downloadObject(ctx, svc, bucket, key, filePath); err != nil {
+func (ac *awsClient) downloadObjects(ctx context.Context, svc *s3.S3, summary *bucketSummary, assetsTempDirPath string) error {
+	for _, key := range summary.keys {
+		filePath := path.Join(assetsTempDirPath, strings.ReplaceAll(key, "/", "-"))
+		if err := ac.downloadObject(ctx, svc, summary.bucket, key, filePath); err != nil {
 			return err
 		}
 	}
@@ -219,6 +244,8 @@ func (ac *awsClient) downloadObjects(ctx context.Context, svc *s3.S3, bucket, ke
 
 func (ac *awsClient) downloadObject(ctx context.Context, svc *s3.S3, bucket, key string, tempFilePath string) error {
 	log.Debugf("downloadObject bucket=[%s], key[%s]", bucket, key)
+
+	start := time.Now()
 
 	result, err := svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -240,10 +267,16 @@ func (ac *awsClient) downloadObject(ctx context.Context, svc *s3.S3, bucket, key
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, result.Body)
+	reader := limiter.NewReader(result.Body, ac.rateLimiter)
+	_, err = io.Copy(file, reader)
 	if err != nil {
 		return err
 	}
+
+	cost := time.Since(start)
+	speed := float64(aws.Int64Value(result.ContentLength)) / float64(cost) * float64(time.Second)
+	log.Infof("downloadObject complete bucket=[%s], key[%s] size %d cost %dms speed %.2f/s", bucket, key, *result.ContentLength, cost/time.Millisecond, speed)
+
 	return nil
 }
 

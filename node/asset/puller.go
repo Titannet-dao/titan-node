@@ -1,9 +1,7 @@
 package asset
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"fmt"
 	"net/http"
 	"time"
@@ -11,20 +9,17 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/ipld"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/blocks"
+	"golang.org/x/time/rate"
 )
 
 type pulledResult struct {
 	nextLayerCIDs []string
 	linksSize     uint64
 	doneSize      uint64
-}
-
-type workloadReport struct {
-	*types.WorkloadReport
-	count int
 }
 
 // assetPuller represents a struct that is responsible for downloading and managing the progress of an asset pull operation
@@ -43,27 +38,23 @@ type assetPuller struct {
 
 	cancel context.CancelFunc
 	// pull block async
-	parallel int
-	timeout  int
-	retry    int
+	config *config.Puller
 
-	workloadReports map[string]*workloadReport
-	startTime       time.Time
+	workloads map[string]*types.Workload
+	startTime time.Time
 
-	errMsgs []*fetcher.ErrMsg
+	errMsgs     []*fetcher.ErrMsg
+	rateLimiter *rate.Limiter
 }
 
 type pullerOptions struct {
-	root       cid.Cid
-	dss        []*types.CandidateDownloadInfo
-	storage    storage.Storage
-	ipfsAPIURL string
-	parallel   int
-	// pull block time out
-	timeout int
-	// retry times of pull block on failed
-	retry      int
-	httpClient *http.Client
+	root        cid.Cid
+	dss         []*types.CandidateDownloadInfo
+	storage     storage.Storage
+	ipfsAPIURL  string
+	config      *config.Puller
+	httpClient  *http.Client
+	rateLimiter *rate.Limiter
 }
 
 // newAssetPuller creates a new asset puller with the given options
@@ -83,11 +74,11 @@ func newAssetPuller(opts *pullerOptions) (*assetPuller, error) {
 		storage:         opts.storage,
 		downloadSources: opts.dss,
 		bFetcher:        blockFetcher,
-		parallel:        opts.parallel,
-		timeout:         opts.timeout,
-		retry:           opts.retry,
+		config:          opts.config,
+		rateLimiter:     opts.rateLimiter,
 		startTime:       time.Now(),
 		errMsgs:         make([]*fetcher.ErrMsg, 0),
+		workloads:       make(map[string]*types.Workload),
 	}, nil
 }
 
@@ -148,8 +139,8 @@ func (ap *assetPuller) pullBlocksWithBreadthFirst(layerCIDs []string) (result *p
 	result = &pulledResult{nextLayerCIDs: ap.nextLayerCIDs}
 	for len(ap.blocksWaitList) > 0 {
 		doLen := len(ap.blocksWaitList)
-		if doLen > ap.parallel {
-			doLen = ap.parallel
+		if doLen > ap.config.PullBlockParallel {
+			doLen = ap.config.PullBlockParallel
 		}
 
 		blocks := ap.getBlocksFromWaitList(doLen)
@@ -175,12 +166,12 @@ func (ap *assetPuller) pullBlocksWithBreadthFirst(layerCIDs []string) (result *p
 
 // pullBlocks fetches blocks for given cids, stores them in the storage
 func (ap *assetPuller) pullBlocks(cids []string) (*pulledResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ap.timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ap.config.PullBlockTimeout)*time.Second)
 	defer cancel()
 
 	ap.cancel = cancel
 
-	errMsgs, workloadReports, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
+	errMsgs, workloads, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
 	if err != nil {
 		log.Errorf("fetch blocks err: %s", err.Error())
 		return nil, err
@@ -190,11 +181,11 @@ func (ap *assetPuller) pullBlocks(cids []string) (*pulledResult, error) {
 		ap.errMsgs = append(ap.errMsgs, errMsgs...)
 	}
 
-	ap.mergeWorkloadReports(workloadReports)
+	ap.mergeWorkloads(workloads)
 	// retry
 	retryCount := 0
 	cidMap := ap.toMap(cids)
-	for len(blks) < len(cids) && retryCount < ap.retry {
+	for len(blks) < len(cids) && retryCount < ap.config.PullBlockRetry {
 		unPullBlocks := ap.filterUnPulledBlocks(blks, cidMap)
 		bs, err := ap.retryFetchBlocks(unPullBlocks)
 		if err != nil {
@@ -267,12 +258,12 @@ func (ap *assetPuller) filterUnPulledBlocks(blks []blocks.Block, cidMap map[stri
 }
 
 func (ap *assetPuller) retryFetchBlocks(cids []string) ([]blocks.Block, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ap.timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ap.config.PullBlockTimeout)*time.Second)
 	defer cancel()
 
 	ap.cancel = cancel
 
-	errMsgs, workloadReports, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
+	errMsgs, workloads, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
 	if err != nil {
 		log.Errorf("retry fetch blocks err %s", err.Error())
 		return nil, err
@@ -282,7 +273,7 @@ func (ap *assetPuller) retryFetchBlocks(cids []string) ([]blocks.Block, error) {
 		ap.errMsgs = append(ap.errMsgs, errMsgs...)
 	}
 
-	ap.mergeWorkloadReports(workloadReports)
+	ap.mergeWorkloads(workloads)
 	return blks, nil
 }
 
@@ -359,55 +350,18 @@ func (ap *assetPuller) getAssetProgress() *types.AssetPullProgress {
 	}
 }
 
-func (ap *assetPuller) mergeWorkloadReports(reports []*types.WorkloadReport) {
-	if ap.workloadReports == nil {
-		ap.workloadReports = make(map[string]*workloadReport)
-	}
-
-	for _, report := range reports {
-		rp, ok := ap.workloadReports[report.TokenID]
+func (ap *assetPuller) mergeWorkloads(workloads []*types.Workload) {
+	for _, w := range workloads {
+		worload, ok := ap.workloads[w.SourceID]
 		if !ok {
-			rp = &workloadReport{WorkloadReport: &types.WorkloadReport{TokenID: report.TokenID, NodeID: report.NodeID, Workload: &types.Workload{}}}
-		}
-		rp.count++
-		rp.Workload.DownloadSpeed += report.Workload.DownloadSpeed
-		rp.Workload.DownloadSize += report.Workload.DownloadSize
-
-		if rp.Workload.StartTime.IsZero() || report.Workload.StartTime.Before(rp.Workload.StartTime) {
-			rp.Workload.StartTime = report.Workload.StartTime
+			worload = &types.Workload{SourceID: w.SourceID}
 		}
 
-		if rp.Workload.EndTime.Before(report.Workload.EndTime) {
-			rp.Workload.EndTime = report.Workload.EndTime
-		}
-
-		ap.workloadReports[report.TokenID] = rp
+		worload.DownloadSize += w.DownloadSize
+		worload.CostTime += w.CostTime
+		ap.workloads[w.SourceID] = worload
 
 	}
-}
-
-func (ap *assetPuller) encodeWorkloadReports() ([]byte, error) {
-	if len(ap.workloadReports) == 0 {
-		return nil, fmt.Errorf("workload report is empty")
-	}
-
-	reports := make([]*types.WorkloadReport, 0, len(ap.workloadReports))
-	for _, report := range ap.workloadReports {
-		workloadReport := report.WorkloadReport
-		if report.count > 0 {
-			workloadReport.Workload.DownloadSpeed = workloadReport.Workload.DownloadSpeed / int64(report.count)
-		}
-		reports = append(reports, workloadReport)
-	}
-
-	var buffer bytes.Buffer
-	enc := gob.NewEncoder(&buffer)
-	err := enc.Encode(reports)
-	if err != nil {
-		return nil, err
-	}
-
-	return buffer.Bytes(), nil
 }
 
 func (ap *assetPuller) usableDiskSpace() int64 {
@@ -431,7 +385,9 @@ func (ap *assetPuller) pullAssetFromAWS() error {
 	ap.totalSize = 0
 	ap.doneSize = 0
 
-	awsClient := &awsClient{storage: ap.storage}
+	startTime := time.Now()
+
+	awsClient := &awsClient{storage: ap.storage, rateLimiter: ap.rateLimiter}
 	cid, size, err := awsClient.pullAssetFromAWS(ctx, bucket, key)
 	if err != nil {
 		ap.errMsgs = append(ap.errMsgs, &fetcher.ErrMsg{Cid: ap.root.String(), Source: bucket, Msg: err.Error()})
@@ -451,6 +407,9 @@ func (ap *assetPuller) pullAssetFromAWS() error {
 
 	ap.totalSize = uint64(size)
 	ap.doneSize = uint64(size)
+
+	costTime := time.Since(startTime) / time.Millisecond
+	ap.workloads["aws"] = &types.Workload{SourceID: "aws", DownloadSize: int64(size), CostTime: int64(costTime)}
 
 	return nil
 }

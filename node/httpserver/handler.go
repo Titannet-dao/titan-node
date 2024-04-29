@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/lib/limiter"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipfs/interface-go-ipfs-core/path"
@@ -85,7 +86,8 @@ func (hs *HttpServer) handler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodHead:
 		hs.headHandler(w, r)
 	case http.MethodGet:
-		hs.getHandler(w, r)
+		limiter := limiter.NewWriter(w, hs.rateLimiter.BandwidthUpLimiter)
+		hs.getHandler(limiter, r)
 	default:
 		http.Error(w, fmt.Sprintf("method %s not allowed", r.Method), http.StatusBadRequest)
 	}

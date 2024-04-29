@@ -289,20 +289,7 @@ func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*SchedulerAPI, cid
 }
 
 func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*types.CandidateDownloadInfo, error) {
-	remoteAddr := handler.GetRemoteAddr(ctx)
-	areaID, err := l.getAreaID(remoteAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	configs, err := l.GetSchedulerConfigs(areaID)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(configs) == 0 {
-		configs = l.GetAllSchedulerConfigs()
-	}
+	configs := l.GetAllSchedulerConfigs()
 
 	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
 	if err != nil {
@@ -310,7 +297,7 @@ func (l *Locator) CandidateDownloadInfos(ctx context.Context, cid string) ([]*ty
 	}
 
 	if len(schedulerAPIs) == 0 {
-		return nil, fmt.Errorf("area %s no scheduler exist", areaID)
+		return nil, fmt.Errorf("CandidateDownloadInfos no scheduler exist")
 	}
 
 	log.Debugf("CandidateDownloadInfos, schedulerAPIs %#v", schedulerAPIs)
@@ -347,7 +334,7 @@ func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*SchedulerAPI
 					lock.Unlock()
 				}
 			} else {
-				log.Errorf("GetCandidateDownloadInfos cid %s, error: %s", cid, err.Error())
+				log.Errorf("GetCandidateDownloadInfos cid %s scheduler %s, error: %s", cid, s.config.SchedulerURL, err.Error())
 			}
 
 		}(ctx, api)
@@ -356,6 +343,55 @@ func (l *Locator) getCandidateDownloadInfoFromBestScheduler(apis []*SchedulerAPI
 	wg.Wait()
 	return infoList, nil
 
+}
+
+// GetAssetSourceDownloadInfo
+func (l *Locator) GetAssetSourceDownloadInfos(ctx context.Context, cid string) ([]*types.AssetSourceDownloadInfoRsp, error) {
+	configs := l.GetAllSchedulerConfigs()
+
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(schedulerAPIs) == 0 {
+		return nil, fmt.Errorf("CandidateDownloadInfos no scheduler exist")
+	}
+
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	defer cancel()
+
+	downloadInfos := make([]*types.AssetSourceDownloadInfoRsp, 0)
+	lock := &sync.Mutex{}
+	wg := &sync.WaitGroup{}
+	for _, api := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(ctx context.Context, s *SchedulerAPI) {
+			defer wg.Done()
+
+			if info, err := s.GetAssetSourceDownloadInfo(ctx, cid); err == nil {
+				if len(info.SourceList) > 0 {
+					info.SchedulerURL = s.config.SchedulerURL
+
+					lock.Lock()
+					downloadInfos = append(downloadInfos, info)
+					lock.Unlock()
+				}
+			} else {
+				log.Errorf("GetCandidateDownloadInfos cid %s scheduler %s, error: %s", cid, s.config.SchedulerURL, err.Error())
+			}
+
+		}(ctx, api)
+	}
+
+	wg.Wait()
+	return downloadInfos, nil
 }
 
 // GetUserAccessPoint get user access point for special user ip

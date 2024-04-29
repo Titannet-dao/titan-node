@@ -27,12 +27,12 @@ type Asset struct {
 }
 
 // NewAsset creates a new Asset instance
-func NewAsset(storageMgr *storage.Manager, scheduler api.Scheduler, assetMgr *Manager, apiSecret *jwt.HMACSHA) *Asset {
+func NewAsset(storageMgr *storage.Manager, scheduler api.Scheduler, assetMgr *Manager, apiSecret *jwt.HMACSHA, rateLimiter *types.RateLimiter) *Asset {
 	return &Asset{
 		scheduler: scheduler,
 		mgr:       assetMgr,
 		apiSecret: apiSecret,
-		AWS:       NewAWS(scheduler, storageMgr),
+		AWS:       NewAWS(scheduler, storageMgr, rateLimiter.BandwidthDownLimiter),
 	}
 }
 

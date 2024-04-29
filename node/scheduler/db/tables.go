@@ -20,7 +20,8 @@ var cReplicaInfoTable = `
 		end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		start_time    DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (hash,node_id),
-		KEY idx_node_id (node_id)
+		KEY idx_node_id (node_id),
+		KEY idx_hash (hash)
 	) ENGINE=InnoDB COMMENT='asset replica info';`
 
 var cNodeInfoTable = `
@@ -30,6 +31,7 @@ var cNodeInfoTable = `
 	    mac_location         VARCHAR(32)     DEFAULT '',
 	    cpu_cores            INT             DEFAULT 0,
 	    cpu_info             VARCHAR(128)    DEFAULT '',
+	    gpu_info             VARCHAR(128)    DEFAULT '',
 	    memory               FLOAT           DEFAULT 0,
 	    node_name            VARCHAR(64)     DEFAULT '',
 	    disk_type            VARCHAR(64)     DEFAULT '',
@@ -39,8 +41,8 @@ var cNodeInfoTable = `
 	    disk_space           FLOAT           DEFAULT 0,
 		available_disk_space FLOAT           DEFAULT 0,
 		titan_disk_usage     FLOAT           DEFAULT 0,
-    	bandwidth_up         INT             DEFAULT 0,
-    	bandwidth_down       INT             DEFAULT 0,
+    	bandwidth_up         BIGINT          DEFAULT 0,
+    	bandwidth_down       BIGINT          DEFAULT 0,
 	    scheduler_sid        VARCHAR(128)    NOT NULL,
 		first_login_time     DATETIME        DEFAULT CURRENT_TIMESTAMP,
 	    online_duration      INT             DEFAULT 0,
@@ -103,8 +105,9 @@ var cAssetRecordTable = `
 		expiration         DATETIME     NOT NULL,
 		created_time       DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		end_time           DATETIME     DEFAULT CURRENT_TIMESTAMP,
-		bandwidth          INT          DEFAULT 0,
+		bandwidth          BIGINT       DEFAULT 0,
 		note               VARCHAR(128) DEFAULT '',
+		source             TINYINT      DEFAULT 0,
 		PRIMARY KEY (hash)
 	) ENGINE=InnoDB COMMENT='asset record';`
 
@@ -144,21 +147,18 @@ var cBucketTable = `
 
 var cWorkloadTable = `
 	CREATE TABLE if not exists %s (
-		token_id        VARCHAR(128) NOT NULL UNIQUE,
-		node_id         VARCHAR(128) NOT NULL,
-		client_id       VARCHAR(128) NOT NULL,
-		asset_id        VARCHAR(128) NOT NULL,
-		limit_rate      INT          DEFAULT 0,
-		created_time    DATETIME     NOT NULL,
-		expiration      DATETIME     NOT NULL,
-		client_workload BLOB ,
-		node_workload   BLOB ,
+		workload_id     VARCHAR(128) NOT NULL UNIQUE,
+		client_id       VARCHAR(128) DEFAULT '',
+		asset_cid       VARCHAR(128) NOT NULL,
+		created_time    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		workloads       BLOB ,
+		client_end_time DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		asset_size      BIGINT       DEFAULT 0,
 		status          TINYINT      DEFAULT 0,
-		client_end_time INT          DEFAULT 0,
-		PRIMARY KEY (token_id),
-		KEY idx_node_id (node_id),
-		KEY idx_status (status),
-		KEY idx_created_time (created_time)
+		event           TINYINT      DEFAULT 0,
+		PRIMARY KEY (workload_id),
+		KEY idx_client_id (client_id),
+		KEY idx_end_time (client_end_time)
 	) ENGINE=InnoDB COMMENT='workload report';`
 
 var cUserAssetTable = `
@@ -201,6 +201,7 @@ var cReplicaEventTable = `
 		total_size    BIGINT       DEFAULT 0,
 	    end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		expiration    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		source        TINYINT      DEFAULT 0,
 		KEY idx_hash (hash),
 		KEY idx_node_id (node_id),
 		KEY idx_end_time (end_time)
@@ -256,3 +257,18 @@ var cAWSDataTable = `
 		size            FLOAT        DEFAULT 0,
 		PRIMARY KEY (bucket)
     ) ENGINE=InnoDB COMMENT='aws data';`
+
+var cProfitDetailsTable = `
+    CREATE TABLE if not exists %s (
+		id            INT UNSIGNED   AUTO_INCREMENT,
+		node_id       VARCHAR(128)   DEFAULT '',
+		profit        DECIMAL(14, 6) DEFAULT 0,
+		created_time  DATETIME       DEFAULT CURRENT_TIMESTAMP,
+		size          BIGINT         DEFAULT 0,
+		profit_type   INT            NOT NULL,
+		note          VARCHAR(1024)  DEFAULT '', 
+		cid           VARCHAR(128)   DEFAULT '',
+		PRIMARY KEY (id),
+	    KEY idx_node_id (node_id),
+	    KEY idx_time (created_time)
+    ) ENGINE=InnoDB COMMENT='profit details';`

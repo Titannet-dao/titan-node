@@ -265,7 +265,7 @@ func (u *User) DeleteAsset(ctx context.Context, cid string) error {
 func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI api.Scheduler, nodeManager *node.Manager) (map[string]string, error) {
 	urls := make(map[string]string)
 	for _, assetCID := range assetCIDs {
-		downloadInfos, err := schedulerAPI.GetCandidateDownloadInfos(context.Background(), assetCID)
+		downloadInfos, err := schedulerAPI.GetCandidateDownloadInfos(ctx, assetCID)
 		if err != nil {
 			return nil, err
 		}
@@ -288,8 +288,14 @@ func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI
 			return nil, err
 		}
 
-		nodeID := downloadInfos[0].NodeID
-		node := nodeManager.GetCandidateNode(nodeID)
+		var node *node.Node
+		for _, info := range downloadInfos {
+			n := nodeManager.GetCandidateNode(info.NodeID)
+			if n != nil {
+				node = n
+				break
+			}
+		}
 
 		url := fmt.Sprintf("http://%s/ipfs/%s?token=%s&filename=%s", downloadInfos[0].Address, assetCID, tk, assetName)
 		if node != nil && len(node.ExternalURL) > 0 {

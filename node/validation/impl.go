@@ -2,18 +2,16 @@ package validation
 
 import (
 	"context"
-	"net"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/device"
 	"github.com/ipfs/go-libipfs/blocks"
 	logging "github.com/ipfs/go-log/v2"
-	"golang.org/x/time/rate"
 	"golang.org/x/xerrors"
 )
 
-var log = logging.Logger("validate")
+var log = logging.Logger("validation")
 
 type Validation struct {
 	checker    Checker
@@ -36,14 +34,20 @@ func NewValidation(c Checker, device *device.Device) *Validation {
 
 // ExecuteValidation performs the validation process
 func (v *Validation) ExecuteValidation(ctx context.Context, req *api.ValidateReq) error {
-	conn, err := newTCPClient(req.TCPSrvAddr)
+	log.Debugf("ExecuteValidation req %#v", *req)
+	nodeID, err := v.device.GetNodeID(ctx)
 	if err != nil {
-		log.Errorf("new tcp client err:%v", err)
+		return err
+	}
+
+	ws, err := newWSClient(req.WSURL, nodeID)
+	if err != nil {
+		log.Errorf("new ws client err:%v, wsURL %s", err, req.WSURL)
 		return err
 	}
 
 	go func() {
-		if err = v.sendBlocks(conn, req, v.device.GetBandwidthUp()); err != nil {
+		if err = v.sendBlocks(ws, req, v.device.GetBandwidthUp()); err != nil {
 			log.Errorf("send blocks error %s", err.Error())
 		}
 	}()
@@ -56,15 +60,15 @@ func (v *Validation) SetFunc(fun func() string) {
 }
 
 // sendBlocks sends blocks over a TCP connection with rate limiting
-func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRate int64) error {
+func (v *Validation) sendBlocks(ws *WebSocket, req *api.ValidateReq, speedRate int64) error {
 	defer func() {
-		if err := conn.Close(); err != nil {
+		if err := ws.conn.Close(); err != nil {
 			log.Errorf("close tcp error: %s", err.Error())
 		}
 	}()
 
-	t := time.NewTimer(time.Duration(req.Duration) * time.Second)
-	limiter := rate.NewLimiter(rate.Limit(speedRate), int(speedRate))
+	// t := time.NewTimer(time.Duration(req.Duration) * time.Second)
+	// limiter := rate.NewLimiter(rate.Limit(speedRate), int(speedRate))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -74,26 +78,16 @@ func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRa
 		return xerrors.Errorf("get checker error %w", err)
 	}
 
-	nodeID, err := v.device.GetNodeID(ctx)
-	if err != nil {
-		return err
-	}
+	// if err := sendNodeID(conn, nodeID, limiter); err != nil {
+	// 	return err
+	// }
 
-	if err := sendNodeID(conn, nodeID, limiter); err != nil {
-		return err
-	}
-
-	for {
-		select {
-		case <-t.C:
-			return nil
-		default:
-		}
-
+	endTime := time.Now().Add(10 * time.Second)
+	for time.Now().Before(endTime) {
 		token := v.firstToken()
 		if len(token) > 0 {
 			log.Debugf("user is downloading, cancel validation, token %d", token)
-			return sendData(conn, []byte(token), api.TCPMsgTypeCancel, limiter)
+			return ws.cancelValidate([]byte(token))
 		}
 
 		blk, err := asset.GetBlock(ctx)
@@ -106,9 +100,11 @@ func (v *Validation) sendBlocks(conn *net.TCPConn, req *api.ValidateReq, speedRa
 			continue
 		}
 
-		err = sendData(conn, blk.RawData(), api.TCPMsgTypeBlock, limiter)
+		err = ws.sendData(blk.RawData())
 		if err != nil {
 			return err
 		}
 	}
+
+	return nil
 }

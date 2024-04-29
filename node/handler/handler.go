@@ -12,6 +12,21 @@ import (
 
 var log = logging.Logger("handler")
 
+// ipLimiter = make(map[string]*rate.Limiter)
+// mu        sync.Mutex
+
+// func getLimiter(ip string) *rate.Limiter {
+// 	mu.Lock()
+// 	defer mu.Unlock()
+
+// 	limiter, exists := ipLimiter[ip]
+// 	if !exists {
+// 		limiter = rate.NewLimiter(2, 2)
+// 		ipLimiter[ip] = limiter
+// 	}
+// 	return limiter
+// }
+
 type (
 	// RemoteAddr client address
 	RemoteAddr struct{}
@@ -102,6 +117,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(401)
 			return
 		}
+
+		// host, _, err := net.SplitHostPort(remoteAddr)
+		// if err != nil {
+		// 	log.Warnf("SplitHostPort %s ", remoteAddr)
+		// 	w.WriteHeader(401)
+		// 	return
+		// }
+
+		// if payload.ID != "" {
+		// 	limiter := getLimiter(host)
+		// 	if !limiter.Allow() {
+		// 		log.Warnf("Too Many Requests %s, %s ", host, payload.ID)
+		// 		w.WriteHeader(http.StatusTooManyRequests)
+		// 		return
+		// 	}
+		// }
 
 		ctx = context.WithValue(ctx, ID{}, payload.ID)
 		ctx = api.WithPerm(ctx, payload.Allow)

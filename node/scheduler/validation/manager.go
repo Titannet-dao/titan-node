@@ -88,21 +88,37 @@ type Manager struct {
 	isCacheValid    bool // use cache to reduce 'ChainHead' calls
 	cachedEpoch     uint64
 	cachedTimestamp time.Time
+
+	validatorBaseBwDn float64
+	lotusRPCAddress   string
+
+	enableValidation bool
+	validationProfit float64
+
+	validationProfits     map[string]float64
+	validationProfitsLock sync.Mutex
+
+	l2ValidatorCount int
+	validatorRatio   float64
+	electionCycle    time.Duration
 }
 
 // NewManager return new node manager instance
 func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *Manager {
 	manager := &Manager{
-		nodeMgr:       nodeMgr,
-		assetMgr:      assetMgr,
-		config:        configFunc,
-		close:         make(chan struct{}),
-		unpairedGroup: newValidatableGroup(),
-		updateCh:      make(chan struct{}, 1),
-		notify:        p,
-		resultQueue:   make(chan *api.ValidationResult),
-		leadershipMgr: lmgr,
+		nodeMgr:           nodeMgr,
+		assetMgr:          assetMgr,
+		config:            configFunc,
+		close:             make(chan struct{}),
+		unpairedGroup:     newValidatableGroup(),
+		updateCh:          make(chan struct{}, 1),
+		notify:            p,
+		resultQueue:       make(chan *api.ValidationResult),
+		leadershipMgr:     lmgr,
+		validationProfits: make(map[string]float64),
 	}
+
+	manager.initCfg()
 
 	return manager
 }
@@ -110,16 +126,15 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 // Start start validate and elect task
 func (m *Manager) Start(ctx context.Context) {
 	go m.startValidationTicker()
-	// go m.startElectionTicker()
-	go m.startHandleResultsTimer()
+	go m.startElectionTicker()
 
 	m.subscribeNodeEvents()
-	m.pullResults()
+	m.handleResults()
 }
 
 // Stop stop
 func (m *Manager) Stop(ctx context.Context) error {
-	return m.stopValidation(ctx)
+	return m.stopValidation()
 }
 
 func (m *Manager) subscribeNodeEvents() {
@@ -151,17 +166,8 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 
 	nodeID := node.NodeID
 
-	isValidator, err := m.nodeMgr.IsValidator(nodeID)
-	if err != nil {
-		log.Errorf("onNodeStateChange IsValidator %s err:%s", node.NodeID, err.Error())
-		return
-	}
-
+	isValidator := node.Type == types.NodeValidator
 	if isOnline {
-		// if node.IsAbnormal() {
-		// 	return
-		// }
-
 		if isValidator {
 			// m.addValidator(nodeID, node.BandwidthDown)
 
@@ -170,20 +176,7 @@ func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
 			if err != nil {
 				log.Errorf("UpdateValidatorInfo err:%s", err.Error())
 			}
-			// 	} else {
-			// if node.Type == types.NodeCandidate {
-			// 	return
-			// }
-			// 		m.addValidatableNode(nodeID, node.BandwidthDown)
-			// 	}
-
-			// 	return
 		}
-
-		// if isValidator {
-		// 	m.removeValidator(nodeID)
-		// } else {
-		// 	m.removeValidatableNode(nodeID)
 	}
 }
 
@@ -198,7 +191,7 @@ func (m *Manager) getGameEpoch() (uint64, error) {
 
 	if !m.isCacheValid {
 		m.cachedTimestamp = time.Now()
-		h, err := lotuscli.ChainHead(m.getLotusURL())
+		h, err := lotuscli.ChainHead(m.lotusRPCAddress)
 		if err != nil {
 			return 0, err
 		}
@@ -248,7 +241,7 @@ func (m *Manager) getSeedFromFilecoin() (int64, error) {
 func (m *Manager) getTipsetByHeight(height uint64) (*lotuscli.TipSet, error) {
 	iheight := int64(height)
 	for i := 0; i < GAME_CHAIN_EPOCH_LOOKBACK && iheight > 0; i++ {
-		tps, err := lotuscli.ChainGetTipSetByHeight(m.getLotusURL(), iheight)
+		tps, err := lotuscli.ChainGetTipSetByHeight(m.lotusRPCAddress, iheight)
 		if err != nil {
 			return nil, err
 		}

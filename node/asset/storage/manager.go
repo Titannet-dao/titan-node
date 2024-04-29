@@ -21,7 +21,6 @@ const (
 	pullerDir     = "asset-puller"
 	waitListFile  = "wait-list"
 	assetsDir     = "assets"
-	countDir      = "count"
 	assetSuffix   = ".car"
 	assetsViewDir = "assets-view"
 	sizeOfBucket  = 128
@@ -33,7 +32,6 @@ type Manager struct {
 	asset        *asset
 	wl           *waitList
 	puller       *puller
-	blockCount   *blockCount
 	assetsView   *assetsView
 	minioService IMinioService
 }
@@ -68,11 +66,6 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		return nil, err
 	}
 
-	blockCount, err := newBlockCount(filepath.Join(opts.MetaDataPath, countDir))
-	if err != nil {
-		return nil, err
-	}
-
 	assetsView, err := newAssetsView(filepath.Join(opts.MetaDataPath, assetsViewDir), sizeOfBucket)
 	if err != nil {
 		return nil, err
@@ -84,7 +77,6 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		assetsView:   assetsView,
 		wl:           waitList,
 		puller:       puller,
-		blockCount:   blockCount,
 		opts:         opts,
 		minioService: minio,
 	}, nil
@@ -108,6 +100,10 @@ func (m *Manager) PullerExists(c cid.Cid) (bool, error) {
 // DeletePuller removes an puller from storage
 func (m *Manager) DeletePuller(c cid.Cid) error {
 	return m.puller.remove(c)
+}
+
+func (m *Manager) AllocatePathWithSize(size int64) (string, error) {
+	return m.asset.allocatePathWithSize(size)
 }
 
 // asset api
@@ -149,21 +145,6 @@ func (m *Manager) AssetCount() (int, error) {
 	return m.asset.count()
 }
 
-// GetBlockCount retrieves the block count of an asset
-func (m *Manager) GetBlockCount(ctx context.Context, root cid.Cid) (uint32, error) {
-	return m.blockCount.getBlockCount(ctx, root)
-}
-
-// SetBlockCount sets the block count of an asset
-func (m *Manager) SetBlockCount(ctx context.Context, root cid.Cid, count uint32) error {
-	return m.blockCount.storeBlockCount(ctx, root, count)
-}
-
-// DeleteBlockCount delete the blcok count of asset
-func (m *Manager) DeleteBlockCount(ctx context.Context, root cid.Cid) error {
-	return m.blockCount.deleteBlockCount(ctx, root)
-}
-
 // AssetsView API
 // GetTopHash retrieves the top hash of assets
 func (m *Manager) GetTopHash(ctx context.Context) (string, error) {
@@ -202,6 +183,10 @@ func (m *Manager) AddAssetToView(ctx context.Context, root cid.Cid) error {
 // RemoveAssetFromView removes an asset from the assets view
 func (m *Manager) RemoveAssetFromView(ctx context.Context, root cid.Cid) error {
 	return m.assetsView.removeAsset(ctx, root)
+}
+
+func (m *Manager) CloseAssetView() error {
+	return m.assetsView.ds.Close()
 }
 
 // WaitList API

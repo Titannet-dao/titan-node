@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -31,6 +32,8 @@ const (
 	tcpPackMaxLength         = 52428800
 	connectivityCheckTimeout = 3
 )
+
+var http3Client *http.Client
 
 // Candidate represents the c node.
 type Candidate struct {
@@ -69,12 +72,37 @@ func (c *Candidate) GetExternalAddress(ctx context.Context) (string, error) {
 func (c *Candidate) CheckNetworkConnectivity(ctx context.Context, network, targetURL string) error {
 	switch network {
 	case "tcp":
+		ok, err := c.verifyTCPConnectivity(targetURL)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("tcp can not connect to %s", targetURL)
+		}
+		return nil
+	case "udp":
+		ok, err := c.verifyUDPConnectivity(targetURL)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("tcp can not connect to %s", targetURL)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unknow network %s type", network)
+}
+
+func (c *Candidate) CheckNetworkConnectable(ctx context.Context, network, targetURL string) (bool, error) {
+	switch network {
+	case "tcp":
 		return c.verifyTCPConnectivity(targetURL)
 	case "udp":
 		return c.verifyUDPConnectivity(targetURL)
 	}
 
-	return fmt.Errorf("unknow network %s type", network)
+	return false, fmt.Errorf("unknow network %s type", network)
 }
 
 func (c *Candidate) GetMinioConfig(ctx context.Context) (*types.MinioConfig, error) {
@@ -85,31 +113,34 @@ func (c *Candidate) GetMinioConfig(ctx context.Context) (*types.MinioConfig, err
 	}, nil
 }
 
-func (c *Candidate) verifyTCPConnectivity(targetURL string) error {
+func (c *Candidate) verifyTCPConnectivity(targetURL string) (bool, error) {
 	url, err := url.ParseRequestURI(targetURL)
 	if err != nil {
-		return xerrors.Errorf("parse uri error: %w, url: %s", err, targetURL)
+		return false, xerrors.Errorf("parse uri error: %s, url: %s", err.Error(), targetURL)
 	}
 
 	conn, err := net.DialTimeout("tcp", url.Host, connectivityCheckTimeout*time.Second)
 	if err != nil {
-		return xerrors.Errorf("dial tcp %w, addr %s", err, url.Host)
+		log.Infof("verifyTCPConnectivity, dial tcp %s, addr %s", err.Error(), url.Host)
+		return false, nil
 	}
 	defer conn.Close()
 
-	return nil
+	return true, nil
 }
 
-func (c *Candidate) verifyUDPConnectivity(targetURL string) error {
-	httpClient := client.NewHTTP3Client()
+func (c *Candidate) verifyUDPConnectivity(targetURL string) (bool, error) {
+	if http3Client == nil {
+		http3Client = client.NewHTTP3Client()
+		http3Client.Timeout = connectivityCheckTimeout * time.Second
+	}
 
-	httpClient.Timeout = connectivityCheckTimeout * time.Second
-
-	resp, err := httpClient.Get(targetURL)
+	resp, err := http3Client.Get(targetURL)
 	if err != nil {
-		return xerrors.Errorf("http3 client get error: %w, url: %s", err, targetURL)
+		log.Infof("verifyUDPConnectivity, http3 client get error: %s, url: %s", err.Error(), targetURL)
+		return false, nil
 	}
 	defer resp.Body.Close()
 
-	return nil
+	return true, nil
 }

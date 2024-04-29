@@ -3,6 +3,7 @@ package assets
 import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	cbg "github.com/whyrusleeping/cbor-gen"
 )
 
 // AssetHash is an identifier for a asset.
@@ -19,6 +20,20 @@ type NodePulledResult struct {
 	Size        int64
 	NodeID      string
 }
+
+// AssetSource aws or storage
+type AssetSource int64
+
+const (
+	// AssetSourceIPFS
+	AssetSourceIPFS AssetSource = iota
+	// AssetSourceAWS status
+	AssetSourceAWS
+	// AssetSourceStorage status
+	AssetSourceStorage
+	// AssetSourceMinio status
+	AssetSourceMinio
+)
 
 // AssetPullingInfo represents asset pull information
 type AssetPullingInfo struct {
@@ -42,6 +57,8 @@ type AssetPullingInfo struct {
 	Details    string
 	SeedNodeID string
 
+	Source AssetSource
+
 	Note string
 }
 
@@ -58,6 +75,7 @@ func (state *AssetPullingInfo) ToAssetRecord() *types.AssetRecord {
 		RetryCount:            state.RetryCount,
 		ReplenishReplicas:     state.ReplenishReplicas,
 		Note:                  state.Note,
+		Source:                int64(state.Source),
 	}
 }
 
@@ -75,6 +93,7 @@ func assetPullingInfoFrom(info *types.AssetRecord, assetDB *db.SQLDB) *AssetPull
 		ReplenishReplicas: info.ReplenishReplicas,
 		Bandwidth:         info.NeedBandwidth,
 		Note:              info.Note,
+		Source:            AssetSource(info.Source),
 	}
 
 	for _, r := range info.ReplicaInfos {
@@ -86,7 +105,9 @@ func assetPullingInfoFrom(info *types.AssetRecord, assetDB *db.SQLDB) *AssetPull
 					cInfo.CandidateReplicaSucceeds = append(cInfo.CandidateReplicaSucceeds, r.NodeID)
 				}
 			} else {
-				cInfo.EdgeReplicaSucceeds = append(cInfo.EdgeReplicaSucceeds, r.NodeID)
+				if len(cInfo.EdgeReplicaSucceeds) < cbg.MaxLength {
+					cInfo.EdgeReplicaSucceeds = append(cInfo.EdgeReplicaSucceeds, r.NodeID)
+				}
 			}
 		case types.ReplicaStatusPulling, types.ReplicaStatusWaiting:
 			if r.IsCandidate {

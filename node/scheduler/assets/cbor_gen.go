@@ -26,7 +26,7 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 
 	cw := cbg.NewCborWriter(w)
 
-	if _, err := cw.Write([]byte{177}); err != nil {
+	if _, err := cw.Write([]byte{178}); err != nil {
 		return err
 	}
 
@@ -162,6 +162,28 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 		}
 	} else {
 		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Blocks-1)); err != nil {
+			return err
+		}
+	}
+
+	// t.Source (assets.AssetSource) (int64)
+	if len("Source") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"Source\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Source"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("Source")); err != nil {
+		return err
+	}
+
+	if t.Source >= 0 {
+		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.Source)); err != nil {
+			return err
+		}
+	} else {
+		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Source-1)); err != nil {
 			return err
 		}
 	}
@@ -565,6 +587,32 @@ func (t *AssetPullingInfo) UnmarshalCBOR(r io.Reader) (err error) {
 				}
 
 				t.Blocks = int64(extraI)
+			}
+			// t.Source (assets.AssetSource) (int64)
+		case "Source":
+			{
+				maj, extra, err := cr.ReadHeader()
+				var extraI int64
+				if err != nil {
+					return err
+				}
+				switch maj {
+				case cbg.MajUnsignedInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 positive overflow")
+					}
+				case cbg.MajNegativeInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 negative overflow")
+					}
+					extraI = -1 - extraI
+				default:
+					return fmt.Errorf("wrong type for int64 field: %d", maj)
+				}
+
+				t.Source = AssetSource(extraI)
 			}
 			// t.Details (string) (string)
 		case "Details":

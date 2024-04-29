@@ -28,7 +28,7 @@ func NewCandidateFetcher(httpClient *http.Client) *CandidateFetcher {
 }
 
 // FetchBlocks fetches blocks for the given cids and candidate download info
-func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.WorkloadReport, []blocks.Block, error) {
+func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
 	return c.retrieveBlocks(ctx, cids, dss)
 }
 
@@ -87,12 +87,12 @@ func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource 
 }
 
 // retrieveBlocks retrieves multiple blocks using the given cids and candidate download info
-func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.WorkloadReport, []blocks.Block, error) {
+func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
 	if len(dss) == 0 {
 		return nil, nil, nil, fmt.Errorf("download infos can not empty")
 	}
 
-	workloadReports := make([]*types.WorkloadReport, 0, len(cids))
+	workloads := make([]*types.Workload, 0, len(cids))
 	blks := make([]blocks.Block, 0, len(cids))
 	lock := &sync.Mutex{}
 
@@ -115,18 +115,12 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, ds
 				return
 			}
 
-			downloadSpeed := float64(0)
-			duration := time.Since(startTime)
-			if duration > 0 {
-				downloadSpeed = float64(len(b.RawData())) / float64(duration) * float64(time.Second)
-			}
-
-			workload := &types.Workload{DownloadSpeed: int64(downloadSpeed), DownloadSize: int64(len(b.RawData())), StartTime: startTime, EndTime: time.Now()}
-			workloadReport := &types.WorkloadReport{TokenID: ds.Tk.ID, NodeID: ds.NodeID, Workload: workload}
+			costTime := time.Since(startTime) / time.Millisecond
+			workload := &types.Workload{SourceID: ds.NodeID, DownloadSize: int64(len(b.RawData())), CostTime: int64(costTime)}
 
 			lock.Lock()
 			blks = append(blks, b)
-			workloadReports = append(workloadReports, workloadReport)
+			workloads = append(workloads, workload)
 			lock.Unlock()
 		}()
 	}
@@ -136,7 +130,7 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, ds
 		return errMsgs, nil, blks, ctx.Err()
 	}
 
-	return errMsgs, workloadReports, blks, nil
+	return errMsgs, workloads, blks, nil
 }
 
 func encode(esc *types.Token) (*bytes.Buffer, error) {

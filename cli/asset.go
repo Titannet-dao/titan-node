@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/lib/tablewriter"
+	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/docker/go-units"
 	"github.com/fatih/color"
@@ -74,10 +78,10 @@ var addAWSDataCmd = &cli.Command{
 			Name:  "bucket",
 			Usage: "aws data bucket",
 		},
-		// &cli.StringFlag{
-		// 	Name:  "path",
-		// 	Usage: "aws data path",
-		// },
+		&cli.StringFlag{
+			Name:  "path",
+			Usage: "aws data path",
+		},
 		&cli.IntFlag{
 			Name:  "size",
 			Usage: "aws data size",
@@ -88,7 +92,7 @@ var addAWSDataCmd = &cli.Command{
 	Action: func(cctx *cli.Context) error {
 		bucket := cctx.String("bucket")
 		cid := cctx.String("cid")
-		// path := cctx.String("path")
+		path := cctx.String("path")
 		size := cctx.Int("size")
 		replica := cctx.Int("replica-count")
 
@@ -102,35 +106,60 @@ var addAWSDataCmd = &cli.Command{
 
 		list := make([]types.AWSDataInfo, 0)
 
-		replacer := strings.NewReplacer("\n", "", "\r\n", "", "\r", "")
+		replacer := strings.NewReplacer("\n", "", "\r\n", "", "\r", "", " ", "")
 
-		// if path != "" {
-		// 	content, err := os.ReadFile(path)
-		// 	if err != nil {
-		// 		return err
-		// 	}
+		if path != "" {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
 
-		// 	contentStr := string(content)
-		// 	stringsList := strings.Split(contentStr, ",")
+			contentStr := string(content)
+			stringsList := strings.Split(contentStr, ";")
 
-		// 	for _, b := range stringsList {
-		// 		if b == "" {
-		// 			continue
-		// 		}
-		// 		b = replacer.Replace(b)
-		// 		list = append(list, types.AWSDataInfo{Bucket: b, Replicas: replica})
-		// 	}
-		// }
+			for _, str := range stringsList {
+				if str == "" {
+					continue
+				}
+				str = replacer.Replace(str)
 
-		if bucket != "" {
-			bucket = replacer.Replace(bucket)
+				s := strings.Split(str, ",")
 
-			list = append(list, types.AWSDataInfo{Bucket: bucket, Replicas: replica, Cid: cid, Size: float64(size)})
+				if len(s) != 3 {
+					fmt.Println("list len is ", len(s))
+					continue
+				}
+
+				num, err := strconv.Atoi(s[1])
+				if err != nil {
+					fmt.Println("list err: ", err.Error())
+					continue
+				}
+
+				replica, err := strconv.Atoi(s[2])
+				if err != nil {
+					fmt.Println("list err: ", err.Error())
+					continue
+				}
+
+				list = append(list, types.AWSDataInfo{Bucket: s[0], Replicas: replica, Size: float64(num)})
+			}
+		} else {
+			if bucket != "" {
+				bucket = replacer.Replace(bucket)
+
+				list = append(list, types.AWSDataInfo{Bucket: bucket, Replicas: replica, Cid: cid, Size: float64(size)})
+			}
 		}
 
 		if len(list) == 0 {
+			fmt.Println("list is nil")
 			return nil
 		}
+
+		// for _, info := range list {
+		// 	fmt.Printf("Bucket:%s, Size:%.2f, replica:%d \n", info.Bucket, info.Size, info.Replicas)
+		// }
 
 		return schedulerAPI.AddAWSData(ctx, list)
 	},
@@ -273,6 +302,12 @@ var showAssetInfoCmd = &cli.Command{
 		for _, replica := range info.ReplicaInfos {
 			if replica.Status == types.ReplicaStatusSucceeded {
 				succeed++
+
+				if replica.IsCandidate {
+					fmt.Printf("%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), colorState(replica.Status.String()),
+						units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+				}
+
 				continue
 			}
 
@@ -282,8 +317,10 @@ var showAssetInfoCmd = &cli.Command{
 			}
 
 			pulling++
-			fmt.Printf("%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), colorState(replica.Status.String()),
-				units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+			if replica.IsCandidate {
+				fmt.Printf("%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), colorState(replica.Status.String()),
+					units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+			}
 		}
 		fmt.Printf("Succeed: %d ; Pulling: %d ; failed: %d\n", succeed, pulling, failed)
 
@@ -434,11 +471,11 @@ var listAssetRecordCmd = &cli.Command{
 			Usage: "only show the pulling assets",
 			Value: false,
 		},
-		// &cli.BoolFlag{
-		// 	Name:  "processes",
-		// 	Usage: "show the assets processes",
-		// 	Value: false,
-		// },
+		&cli.BoolFlag{
+			Name:  "processes",
+			Usage: "show the assets processes",
+			Value: false,
+		},
 		&cli.BoolFlag{
 			Name:  "failed",
 			Usage: "only show the failed state assets",
@@ -482,9 +519,9 @@ var listAssetRecordCmd = &cli.Command{
 			tablewriter.Col("State"),
 			tablewriter.Col("Size"),
 			tablewriter.Col("Replicas"),
-			// tablewriter.Col("CreatedTime"),
+			tablewriter.Col("CreatedTime"),
 			tablewriter.Col("Note"),
-			// tablewriter.NewLineCol("Processes"),
+			tablewriter.NewLineCol("Processes"),
 		)
 
 		list, err := schedulerAPI.GetAssetRecords(ctx, limit, offset, states, "")
@@ -495,32 +532,32 @@ var listAssetRecordCmd = &cli.Command{
 		for w := 0; w < len(list); w++ {
 			info := list[w]
 
-			if info.Note == "" {
-				continue
-			}
 			m := map[string]interface{}{
-				"Num":      w + 1,
-				"CID":      info.CID,
-				"State":    colorState(info.State),
-				"Size":     units.BytesSize(float64(info.TotalSize)),
-				"Replicas": info.NeedEdgeReplica,
-				// "CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
-				"Note": info.Hash,
+				"Num":         w + 1,
+				"CID":         info.CID,
+				"State":       colorState(info.State),
+				"Size":        units.BytesSize(float64(info.TotalSize)),
+				"Replicas":    info.NeedEdgeReplica,
+				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
+				"Note":        info.Note,
 			}
 
 			sort.Slice(info.ReplicaInfos, func(i, j int) bool {
 				return info.ReplicaInfos[i].NodeID < info.ReplicaInfos[j].NodeID
 			})
 
-			// if cctx.Bool("processes") {
-			// 	processes := "\n"
-			// 	for j := 0; j < len(info.ReplicaInfos); j++ {
-			// 		replica := info.ReplicaInfos[j]
-			// 		status := colorState(replica.Status.String())
-			// 		processes += fmt.Sprintf("\t%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), status, units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
-			// 	}
-			// 	m["Processes"] = processes
-			// }
+			if cctx.Bool("processes") {
+				processes := "\n"
+				for j := 0; j < len(info.ReplicaInfos); j++ {
+					replica := info.ReplicaInfos[j]
+					if !replica.IsCandidate {
+						continue
+					}
+					status := colorState(replica.Status.String())
+					processes += fmt.Sprintf("\t%s(%s): %s\t%s/%s\n", replica.NodeID, edgeOrCandidate(replica.IsCandidate), status, units.BytesSize(float64(replica.DoneSize)), units.BytesSize(float64(info.TotalSize)))
+				}
+				m["Processes"] = processes
+			}
 
 			tw.Write(m)
 		}
@@ -562,8 +599,16 @@ var assetViewCmd = &cli.Command{
 	Usage: "Get asset view of node",
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
+			Name:  "sync",
+			Usage: "sync assetViwe",
+		},
+		&cli.BoolFlag{
 			Name:  "from-node",
 			Usage: "get asset view from node",
+		},
+		&cli.BoolFlag{
+			Name:  "compare",
+			Usage: "Comparing asset view of scheduler vs. node",
 		},
 
 		&cli.IntFlag{
@@ -585,6 +630,16 @@ var assetViewCmd = &cli.Command{
 		defer closer()
 
 		nodeID := cctx.Args().First()
+		isSync := cctx.Bool("sync")
+		if isSync {
+			return schedulerAPI.PerformSyncData(ctx, nodeID)
+		}
+
+		isCompare := cctx.Bool("compare")
+		if isCompare {
+			return compareAssetView(ctx, schedulerAPI, nodeID)
+		}
+
 		fromNode := cctx.Bool("from-node")
 		assetView, err := schedulerAPI.GetAssetView(ctx, nodeID, fromNode)
 		if err != nil {
@@ -649,4 +704,151 @@ var assetViewCmd = &cli.Command{
 		}
 		return nil
 	},
+}
+
+func compareAssetView(ctx context.Context, schedulerAPI api.Scheduler, nodeID string) error {
+	schedulerAssetView, err := schedulerAPI.GetAssetView(ctx, nodeID, false)
+	if err != nil {
+		return err
+	}
+
+	nodeAssetView, err := schedulerAPI.GetAssetView(ctx, nodeID, true)
+	if err != nil {
+		return err
+	}
+
+	if schedulerAssetView.TopHash == nodeAssetView.TopHash {
+		fmt.Println("Asset view is sync")
+		return nil
+	}
+
+	bucketIDs := make([]uint32, 0, len(schedulerAssetView.BucketHashes))
+	for id := range schedulerAssetView.BucketHashes {
+		bucketIDs = append(bucketIDs, id)
+	}
+
+	misMatchBucketIDs := make([]uint32, 0)
+	for _, id := range bucketIDs {
+		if hash, ok := nodeAssetView.BucketHashes[id]; ok {
+			targetHash := schedulerAssetView.BucketHashes[id]
+			if hash != targetHash {
+				misMatchBucketIDs = append(misMatchBucketIDs, id)
+			}
+			delete(nodeAssetView.BucketHashes, id)
+			delete(schedulerAssetView.BucketHashes, id)
+		}
+	}
+
+	lostAssets := make(map[uint32][]string)
+	for id := range schedulerAssetView.BucketHashes {
+		assetHashs, err := schedulerAPI.GetAssetsInBucket(ctx, nodeID, int(id), false)
+		if err != nil {
+			return err
+		}
+		lostAssets[id] = assetHashs
+	}
+
+	extraAssets := make(map[uint32][]string)
+	for id := range nodeAssetView.BucketHashes {
+		assetHashs, err := schedulerAPI.GetAssetsInBucket(ctx, nodeID, int(id), true)
+		if err != nil {
+			return err
+		}
+		extraAssets[id] = assetHashs
+	}
+
+	for _, id := range misMatchBucketIDs {
+		assetHashes1, err := schedulerAPI.GetAssetsInBucket(ctx, nodeID, int(id), false)
+		if err != nil {
+			return err
+		}
+
+		assetHashes2, err := schedulerAPI.GetAssetsInBucket(ctx, nodeID, int(id), true)
+		if err != nil {
+			return err
+		}
+
+		complement1, complement2 := complement(assetHashes1, assetHashes2)
+		if len(complement1) > 0 {
+			lostAssets[id] = complement1
+		}
+
+		if len(complement2) > 0 {
+			extraAssets[id] = complement2
+		}
+	}
+
+	lostTw := tablewriter.New(
+		tablewriter.Col("Bucket"),
+		tablewriter.Col("Cids"),
+	)
+
+	for bucket, hashes := range lostAssets {
+		m := map[string]interface{}{
+			"Bucket": bucket,
+			"Cids":   hashesToCids(hashes),
+		}
+		lostTw.Write(m)
+	}
+
+	if len(lostAssets) > 0 {
+		fmt.Println("Lost asset")
+		lostTw.Flush(os.Stdout)
+	}
+
+	extraTw := tablewriter.New(
+		tablewriter.Col("Bucket"),
+		tablewriter.Col("Cids"),
+	)
+
+	for bucket, hashes := range extraAssets {
+		m := map[string]interface{}{
+			"Bucket": bucket,
+			"Cids":   hashesToCids(hashes),
+		}
+		extraTw.Write(m)
+	}
+
+	if len(extraAssets) > 0 {
+		fmt.Println("Extra asset")
+		extraTw.Flush(os.Stdout)
+	}
+	return nil
+}
+
+func complement(array1 []string, array2 []string) ([]string, []string) {
+	array2Map := make(map[string]struct{})
+	for _, element := range array2 {
+		array2Map[element] = struct{}{}
+	}
+
+	complement1 := make([]string, 0)
+	for _, element := range array1 {
+		if _, ok := array2Map[element]; ok {
+			delete(array2Map, element)
+		} else {
+			complement1 = append(complement1, element)
+		}
+	}
+
+	complement2 := make([]string, 0)
+	for element := range array2Map {
+		complement2 = append(complement2, element)
+	}
+
+	return complement1, complement2
+}
+
+func hashesToCids(hashes []string) []string {
+	cids := make([]string, 0)
+	for _, hash := range hashes {
+		c, err := cidutil.HashToCID(hash)
+		if err != nil {
+			fmt.Println("can not convert hash %s to cid", hash)
+			continue
+		}
+
+		cids = append(cids, c)
+	}
+	return cids
 }

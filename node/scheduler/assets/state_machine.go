@@ -1,7 +1,6 @@
 package assets
 
 import (
-	"context"
 	"reflect"
 
 	"github.com/filecoin-project/go-statemachine"
@@ -205,7 +204,7 @@ func apply(mut mutator) func() (mutator, func(*AssetPullingInfo) (bool, error)) 
 }
 
 // initStateMachines init all asset state machines
-func (m *Manager) initStateMachines(ctx context.Context) error {
+func (m *Manager) initStateMachines( ) error {
 	// initialization
 	defer m.stateMachineWait.Done()
 
@@ -213,6 +212,8 @@ func (m *Manager) initStateMachines(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	pullingHashs := make([]string, 0)
 
 	for _, asset := range list {
 		if asset.State == Remove || asset.State == Servicing || asset.State == Stop {
@@ -224,8 +225,12 @@ func (m *Manager) initStateMachines(ctx context.Context) error {
 			continue
 		}
 
+		pullingHashs = append(pullingHashs, asset.Hash.String())
+
 		m.startAssetTimeoutCounting(asset.Hash.String(), 0, asset.Size)
 	}
+
+	m.DeleteReplicaOfTimeout(PullingStates, pullingHashs)
 
 	return nil
 }

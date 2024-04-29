@@ -22,6 +22,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/httpserver"
+	"github.com/Filecoin-Titan/titan/node/modules"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/gbrlsnchs/jwt/v3"
@@ -198,7 +199,7 @@ var daemonStartCmd = &cli.Command{
 				return fmt.Errorf("Must set --url for --init")
 			}
 
-			if err := lcli.RegitsterNode(cctx, lr, locatorURL, types.NodeCandidate); err != nil {
+			if err := lcli.RegitsterNode(lr, locatorURL, types.NodeCandidate); err != nil {
 				return err
 			}
 		}
@@ -284,6 +285,7 @@ var daemonStartCmd = &cli.Command{
 			node.Override(new(dtypes.NodeID), dtypes.NodeID(nodeID)),
 			node.Override(new(api.Scheduler), schedulerAPI),
 			node.Override(new(dtypes.ShutdownChan), shutdownChan),
+			node.Override(new(*asset.Manager), modules.NewAssetsManager(ctx, &candidateCfg.Puller, candidateCfg.IPFSAPIURL)),
 			node.Override(new(dtypes.NodeMetadataPath), func() dtypes.NodeMetadataPath {
 				metadataPath := candidateCfg.MetadataPath
 				if len(metadataPath) == 0 {
@@ -319,7 +321,7 @@ var daemonStartCmd = &cli.Command{
 
 				return dtypes.InternalIP(strings.Split(localAddr.IP.String(), ":")[0]), nil
 			}),
-			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA) error {
+			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA, limiter *types.RateLimiter) error {
 				opts := &httpserver.HttpServerOptions{
 					Asset: assetMgr, Scheduler: schedulerAPI,
 					PrivateKey:          privateKey,
@@ -327,6 +329,7 @@ var daemonStartCmd = &cli.Command{
 					APISecret:           apiSecret,
 					MaxSizeOfUploadFile: candidateCfg.MaxSizeOfUploadFile,
 					WebRedirect:         candidateCfg.WebRedirect,
+					RateLimiter:         limiter,
 				}
 				httpServer = httpserver.NewHttpServer(opts)
 				return nil
@@ -349,6 +352,7 @@ var daemonStartCmd = &cli.Command{
 
 		handler := CandidateHandler(candidateAPI.AuthVerify, candidateAPI, true)
 		handler = httpServer.NewHandler(handler)
+		handler = validation.AppendHandler(handler, schedulerAPI, privateKey)
 
 		httpSrv := &http.Server{
 			ReadHeaderTimeout: 30 * time.Second,

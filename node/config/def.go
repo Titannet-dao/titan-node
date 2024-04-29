@@ -39,9 +39,11 @@ func DefaultEdgeCfg() *EdgeCfg {
 		CaCertificatePath:  "",
 		InsecureSkipVerify: true,
 
-		PullBlockTimeout:  180,
-		PullBlockRetry:    5,
-		PullBlockParallel: 5,
+		Puller: Puller{
+			PullBlockTimeout:  180,
+			PullBlockRetry:    5,
+			PullBlockParallel: 5,
+		},
 
 		Storage: Storage{
 			StorageGB: 2,
@@ -77,13 +79,16 @@ func DefaultCandidateCfg() *CandidateCfg {
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
 
-		PullBlockTimeout:    180,
-		PullBlockRetry:      5,
-		PullBlockParallel:   5,
 		TCPSrvAddr:          "0.0.0.0:9000",
 		IPFSAPIURL:          "http://127.0.0.1:5001",
 		ValidateDuration:    10,
 		MaxSizeOfUploadFile: 104857600, // 100 MB
+
+		Puller: Puller{
+			PullBlockTimeout:  180,
+			PullBlockRetry:    5,
+			PullBlockParallel: 5,
+		},
 
 		Storage: Storage{
 			StorageGB: 64,
@@ -152,10 +157,12 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		LotusToken:              "",
 		EdgeDownloadRatio:       0.7,
 		AssetPullTaskLimit:      100,
-		UploadAssetReplicaCount: 20,
+		UploadAssetReplicaCount: 10,
 		UploadAssetExpiration:   150,
 		IPLimit:                 5,
 		FillAssetEdgeCount:      4000,
+		L2ValidatorCount:        0,
+		StorageCandidates:       []string{},
 		NodeScoreLevel: map[string][]int{
 			"A": {90, 100},
 			"B": {50, 89},

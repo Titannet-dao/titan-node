@@ -112,6 +112,8 @@ type NodeAPI interface {
 	GetEdgeDownloadInfos(ctx context.Context, cid string) (*types.EdgeDownloadInfoList, error) //perm:default
 	// GetCandidateDownloadInfos retrieves download information for the candidate with the asset with the specified CID.
 	GetCandidateDownloadInfos(ctx context.Context, cid string) ([]*types.CandidateDownloadInfo, error) //perm:edge,candidate,web,locator
+	// GetAssetSourceDownloadInfo
+	GetAssetSourceDownloadInfo(ctx context.Context, cid string) (*types.AssetSourceDownloadInfoRsp, error) //perm:edge,candidate,web,locator
 	// NodeExists checks if the node with the specified ID exists.
 	NodeExists(ctx context.Context, nodeID string) error //perm:web
 	// NodeKeepalive
@@ -144,6 +146,12 @@ type NodeAPI interface {
 	GetAssetsInBucket(ctx context.Context, nodeID string, bucketID int, isFromNode bool) ([]string, error) //perm:admin
 	// GetNodeOfIP get nodes
 	GetNodeOfIP(ctx context.Context, ip string) ([]string, error) //perm:admin,web,locator
+	// PerformSyncData sync the assetView of scheduler and node
+	PerformSyncData(ctx context.Context, nodeID string) error //perm:admin
+	// AddProfits
+	AddProfits(ctx context.Context, nodes []string, profit float64) error //perm:admin
+	// GetProfitDetailsForNode retrieves a profit list of node
+	GetProfitDetailsForNode(ctx context.Context, nodeID string, limit, offset int, ts []int) (*types.ListNodeProfitDetailsRsp, error) //perm:web,admin
 }
 
 // UserAPI is an interface for user
@@ -201,19 +209,23 @@ type Scheduler interface {
 	UserAPI
 
 	// NodeValidationResult processes the validation result for a node
-	NodeValidationResult(ctx context.Context, r io.Reader, sign string) error //perm:candidate
+	NodeValidationResult(ctx context.Context, r io.Reader, sign string) error //perm:edge,candidate
 	// GetValidationResults retrieves a list of validation results with pagination using the specified node, page number, and page size
 	GetValidationResults(ctx context.Context, nodeID string, limit, offset int) (*types.ListValidationResultRsp, error) //perm:web,admin
+	// SubmitWorkloadReport
+	SubmitWorkloadReport(ctx context.Context, workload *types.WorkloadRecordReq) error //perm:default
+	// SubmitWorkloadReportV2
+	SubmitWorkloadReportV2(ctx context.Context, workload *types.WorkloadRecordReq) error //perm:default
 	// SubmitUserWorkloadReport submits report of workload for User Download asset
 	// r is buffer of []*types.WorkloadReport encode by gob
-	SubmitUserWorkloadReport(ctx context.Context, r io.Reader) error //perm:default
+	// SubmitUserWorkloadReport(ctx context.Context, r io.Reader) error //perm:default
 	// SubmitNodeWorkloadReport submits report of workload for node provide Asset Download
 	// r is buffer of types.NodeWorkloadReport encode by gob
-	SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) error //perm:edge,candidate
+	// SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) error //perm:edge,candidate
 	// GetWorkloadRecords retrieves a list of workload results with pagination using the specified limit, offset, and node
 	GetWorkloadRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListWorkloadRecordRsp, error) //perm:web,admin
 	// GetWorkloadRecord retrieves result with tokenID
-	GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) //perm:web,admin
+	// GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) //perm:web,admin
 	// GetRetrieveEventRecords retrieves a list of retrieve event with pagination using the specified limit, offset, and node
 	GetRetrieveEventRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListRetrieveEventRsp, error) //perm:web,admin
 

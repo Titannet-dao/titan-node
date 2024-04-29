@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"net"
+	"runtime"
 	"strings"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -19,9 +20,9 @@ var log = logging.Logger("device")
 
 const (
 	// 1MB/s
-	bandwidthUnit = 1024 * 1024
-	// 1GB/s
-	storageUnit = 1024 * 1024 * 1024
+	BandwidthUnit = 1024 * 1024
+	// 1GB
+	StorageUnit = 1024 * 1024 * 1024
 )
 
 // Device represents a device and its properties
@@ -91,21 +92,21 @@ func (device *Device) GetNodeInfo(ctx context.Context) (types.NodeInfo, error) {
 	info.InternalIP = device.internalIP
 
 	if device.resources.Bandwidth != nil {
-		info.BandwidthDown = device.resources.Bandwidth.BandwidthDown * bandwidthUnit
-		info.BandwidthUp = device.resources.Bandwidth.BandwidthUp * bandwidthUnit
+		info.BandwidthDown = device.resources.Bandwidth.BandwidthDown * BandwidthUnit
+		info.BandwidthUp = device.resources.Bandwidth.BandwidthUp * BandwidthUnit
 	}
 
 	if device.resources.Storage != nil {
-		info.AvailableDiskSpace = float64(device.resources.Storage.StorageGB) * storageUnit
+		info.AvailableDiskSpace = float64(device.resources.Storage.StorageGB) * StorageUnit
 	}
 
-	mac, err := getMacAddr(info.InternalIP)
-	if err != nil {
-		log.Errorf("NodeInfo getMacAddr err:%s", err.Error())
-		return types.NodeInfo{}, err
-	}
+	// mac, err := getMacAddr(info.InternalIP)
+	// if err != nil {
+	// 	log.Errorf("NodeInfo getMacAddr err:%s", err.Error())
+	// 	return types.NodeInfo{}, err
+	// }
 
-	info.MacLocation = mac
+	// info.MacLocation = mac
 
 	vmStat, err := mem.VirtualMemory()
 	if err != nil {
@@ -135,7 +136,8 @@ func (device *Device) GetNodeInfo(ctx context.Context) (types.NodeInfo, error) {
 	}
 	info.CPUCores, _ = cpu.Counts(false)
 	info.DiskSpace, info.DiskUsage = device.storage.GetDiskUsageStat()
-	info.IoSystem = device.storage.GetFileSystemType()
+	info.IoSystem = runtime.GOOS
+	info.DiskType = device.storage.GetFileSystemType()
 	return info, nil
 }
 
@@ -166,12 +168,12 @@ func getMacAddr(ip string) (string, error) {
 
 // GetBandwidthUp returns the bandwidth upload limit for the device.
 func (device *Device) GetBandwidthUp() int64 {
-	return device.resources.Bandwidth.BandwidthUp * bandwidthUnit
+	return device.resources.Bandwidth.BandwidthUp * BandwidthUnit
 }
 
 // GetBandwidthDown returns the bandwidth download limit for the device.
 func (device *Device) GetBandwidthDown() int64 {
-	return device.resources.Bandwidth.BandwidthDown * bandwidthUnit
+	return device.resources.Bandwidth.BandwidthDown * BandwidthUnit
 }
 
 // GetInternalIP returns the internal IP address for the device.

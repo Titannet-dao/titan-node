@@ -337,7 +337,7 @@ func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.Minio
 
 	log.Debugf("MinioUploadFileEvent nodeID:%s, assetCID:", nodeID, event.AssetCID)
 
-	return s.db.SaveReplicaEvent(hash, event.AssetCID, nodeID, event.Size, event.Expiration, types.MinioEventAdd)
+	return s.db.SaveReplicaEvent(hash, event.AssetCID, nodeID, event.Size, event.Expiration, types.MinioEventAdd, int64(types.AssetSourceMinio))
 }
 
 func (s *Scheduler) AddAWSData(ctx context.Context, list []types.AWSDataInfo) error {

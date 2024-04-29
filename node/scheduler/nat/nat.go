@@ -3,24 +3,20 @@ package nat
 import (
 	"context"
 	"fmt"
-	"time"
+	"net/http"
 
-	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 )
 
 // checks if an edge node is behind a Full Cone NAT
-func detectFullConeNAT(ctx context.Context, candidate *node.Node, edgeURL string) error {
-	return candidate.API.CheckNetworkConnectivity(ctx, "udp", edgeURL)
+func detectFullConeNAT(ctx context.Context, candidate *node.Node, edgeURL string) (bool, error) {
+	return candidate.API.CheckNetworkConnectable(ctx, "udp", edgeURL)
 }
 
 // checks if an edge node is behind a Restricted NAT
-func detectRestrictedNAT(ctx context.Context, edgeURL string) (bool, error) {
-	httpClient := client.NewHTTP3Client()
-	httpClient.Timeout = 5 * time.Second
-
-	resp, err := httpClient.Get(edgeURL)
+func detectRestrictedNAT(ctx context.Context, http3Client *http.Client, edgeURL string) (bool, error) {
+	resp, err := http3Client.Get(edgeURL)
 	if err != nil {
 		log.Debugf("detectRestrictedNAT failed: %s", err.Error())
 		return false, nil
@@ -31,7 +27,7 @@ func detectRestrictedNAT(ctx context.Context, edgeURL string) (bool, error) {
 }
 
 // determines the NAT type of an edge node
-func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateNodes []*node.Node) (types.NatType, error) {
+func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateNodes []*node.Node, http3Client *http.Client) (types.NatType, error) {
 	if len(candidateNodes) < miniCandidateCount {
 		return types.NatTypeUnknown, fmt.Errorf("a minimum of %d candidates is required for nat detect", miniCandidateCount)
 	}
@@ -49,21 +45,33 @@ func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateN
 	edgeURL := fmt.Sprintf("https://%s/rpc/v0", edgeNode.RemoteAddr)
 
 	candidate2 := candidateNodes[1]
-	if err = candidate2.API.CheckNetworkConnectivity(ctx, "tcp", edgeURL); err == nil {
-		if err = candidate2.API.CheckNetworkConnectivity(ctx, "udp", edgeURL); err == nil {
+	ok, err := candidate2.API.CheckNetworkConnectable(ctx, "tcp", edgeURL)
+	if err != nil {
+		return types.NatTypeUnknown, err
+	}
+
+	if ok {
+		ok, err = candidate2.API.CheckNetworkConnectable(ctx, "udp", edgeURL)
+		if err != nil {
+			return types.NatTypeUnknown, err
+		}
+
+		if ok {
 			return types.NatTypeNo, nil
 		}
 	}
 
-	log.Debugf("check candidate %s to edge %s direct connectivity failed: %s", candidate2.NodeID, edgeURL, err.Error())
+	log.Debugf("check candidate %s to edge %s tcp connectivity failed", candidate2.NodeID, edgeURL)
 
-	if err = detectFullConeNAT(ctx, candidate2, edgeURL); err == nil {
+	if ok, err := detectFullConeNAT(ctx, candidate2, edgeURL); err != nil {
+		return types.NatTypeFullCone, err
+	} else if ok {
 		return types.NatTypeFullCone, nil
 	}
 
-	log.Debugf("check candidate %s to edge %s udp connectivity failed: %s", candidate2.NodeID, edgeURL, err.Error())
+	log.Debugf("check candidate %s to edge %s udp connectivity failed", candidate2.NodeID, edgeURL)
 
-	if isBehindRestrictedNAT, err := detectRestrictedNAT(ctx, edgeURL); err != nil {
+	if isBehindRestrictedNAT, err := detectRestrictedNAT(ctx, http3Client, edgeURL); err != nil {
 		return types.NatTypeUnknown, err
 	} else if isBehindRestrictedNAT {
 		return types.NatTypeRestricted, nil
@@ -73,8 +81,8 @@ func analyzeEdgeNodeNATType(ctx context.Context, edgeNode *node.Node, candidateN
 }
 
 // determineNATType detect the NAT type of an edge node
-func determineEdgeNATType(ctx context.Context, edgeNode *node.Node, candidateNodes []*node.Node) (types.NatType, error) {
-	natType, err := analyzeEdgeNodeNATType(ctx, edgeNode, candidateNodes)
+func determineEdgeNATType(ctx context.Context, edgeNode *node.Node, candidateNodes []*node.Node, http3Client *http.Client) (types.NatType, error) {
+	natType, err := analyzeEdgeNodeNATType(ctx, edgeNode, candidateNodes, http3Client)
 	if err != nil {
 		log.Warnf("determineNATType, error: %s", err.Error())
 		natType = types.NatTypeUnknown
