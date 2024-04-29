@@ -16,9 +16,12 @@ type Candidate interface {
 	WaitQuiet(ctx context.Context) error                                                                             //perm:admin
 	GetBlocksWithAssetCID(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error) //perm:admin
 	// GetExternalAddress retrieves the external address of the caller.
-	GetExternalAddress(ctx context.Context) (string, error)                        //perm:default
+	GetExternalAddress(ctx context.Context) (string, error) //perm:default
+	// CheckNetworkConnectivity deprecated
 	CheckNetworkConnectivity(ctx context.Context, network, targetURL string) error //perm:default
-	GetMinioConfig(ctx context.Context) (*types.MinioConfig, error)                //perm:admin
+	// CheckNetworkConnectable check network if connectable
+	CheckNetworkConnectable(ctx context.Context, network, targetURL string) (bool, error) //perm:admin
+	GetMinioConfig(ctx context.Context) (*types.MinioConfig, error)                       //perm:admin
 }
 
 // ValidationResult node Validation result

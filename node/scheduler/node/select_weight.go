@@ -25,6 +25,8 @@ type weightManager struct {
 	edgeMax            int            // Edge select weight , Distribute from 1
 	distributedEdges   map[int]string // Already allocated edge select weights
 	undistributedEdges map[int]string // Undistributed edge select weights
+
+	levelSelectWeight map[string]int
 }
 
 func newWeightManager(config dtypes.GetSchedulerConfigFunc) *weightManager {
@@ -41,6 +43,8 @@ func newWeightManager(config dtypes.GetSchedulerConfigFunc) *weightManager {
 		undistributedEdges:      make(map[int]string),
 		config:                  config,
 	}
+
+	manager.initWeightScale()
 
 	return manager
 }
@@ -105,24 +109,31 @@ func (wm *weightManager) repayWeight(weights []int, lock *sync.RWMutex, distribu
 	}
 }
 
-func (wm *weightManager) getCandidateWeightRandom() (string, int) {
-	return wm.getWeightRandom(wm.candidateLock, wm.candidateRand, wm.candidateMax, wm.distributedCandidates)
+func (wm *weightManager) getCandidateWeightRandom(count int) map[string]int {
+	return wm.getWeightRandoms(wm.candidateLock, wm.candidateRand, wm.candidateMax, wm.distributedCandidates, count)
 }
 
-func (wm *weightManager) getEdgeWeightRandom() (string, int) {
-	return wm.getWeightRandom(wm.edgeLock, wm.edgeRand, wm.edgeMax, wm.distributedEdges)
+func (wm *weightManager) getEdgeWeightRandom(count int) map[string]int {
+	return wm.getWeightRandoms(wm.edgeLock, wm.edgeRand, wm.edgeMax, wm.distributedEdges, count)
 }
 
-func (wm *weightManager) getWeightRandom(lock *sync.RWMutex, r *rand.Rand, max int, distributed map[int]string) (string, int) {
+func (wm *weightManager) getWeightRandoms(lock *sync.RWMutex, r *rand.Rand, max int, distributed map[int]string, count int) map[string]int {
 	lock.Lock()
 	defer lock.Unlock()
 
+	outS := make(map[string]int, 0)
+
 	if max <= 0 {
-		return "", -1
+		return outS
 	}
 
-	w := r.Intn(max) + 1
-	return distributed[w], w
+	for i := 0; i < count; i++ {
+		w := r.Intn(max) + 1
+
+		outS[distributed[w]] = w
+	}
+
+	return outS
 }
 
 func (wm *weightManager) cleanWeights() {
@@ -141,18 +152,19 @@ func (wm *weightManager) cleanWeights() {
 	wm.edgeMax = 0
 }
 
-func (wm *weightManager) getWeightScale() map[string]int {
+func (wm *weightManager) initWeightScale() {
+	wm.levelSelectWeight = map[string]int{}
 	cfg, err := wm.config()
 	if err != nil {
 		log.Errorf("get config err:%s", err.Error())
-		return map[string]int{}
+		return
 	}
 
-	return cfg.LevelSelectWeight
+	wm.levelSelectWeight = cfg.LevelSelectWeight
 }
 
 func (wm *weightManager) getWeightNum(scoreLevel string) int {
-	num, exist := wm.getWeightScale()[scoreLevel]
+	num, exist := wm.levelSelectWeight[scoreLevel]
 	if exist {
 		return num
 	}

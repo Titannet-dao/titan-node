@@ -3,8 +3,6 @@ package httpserver
 import (
 	"net/http"
 	"time"
-
-	"github.com/Filecoin-Titan/titan/api/types"
 )
 
 type SpeedCountWriter struct {
@@ -47,23 +45,4 @@ func (w *SpeedCountWriter) speed() int64 {
 	}
 
 	return int64(speed)
-}
-
-func (w *SpeedCountWriter) generateReport(payload *types.TokenPayload) *report {
-	if len(payload.ID) == 0 {
-		return nil
-	}
-
-	workload := &types.Workload{
-		DownloadSpeed: w.speed(),
-		DownloadSize:  int64(w.dataSize),
-		StartTime:     w.startTime,
-		EndTime:       time.Now(),
-	}
-
-	return &report{
-		TokenID:  payload.ID,
-		ClientID: payload.ClientID,
-		Workload: workload,
-	}
 }

@@ -1,7 +1,10 @@
 package modules
 
 import (
+	"context"
+
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/Filecoin-Titan/titan/node/config"
@@ -21,8 +24,11 @@ func NewDevice(cpu *config.CPU, memory *config.Memory, storageCfg *config.Storag
 }
 
 // NewRateLimiter creates a new rate limiter based on the given device's bandwidth limits.
-func NewRateLimiter(device *device.Device) *rate.Limiter {
-	return rate.NewLimiter(rate.Limit(device.GetBandwidthUp()), int(device.GetBandwidthUp()))
+func NewRateLimiter(device *device.Device) *types.RateLimiter {
+	return &types.RateLimiter{
+		BandwidthUpLimiter:   rate.NewLimiter(rate.Limit(device.GetBandwidthUp()), int(device.GetBandwidthUp())),
+		BandwidthDownLimiter: rate.NewLimiter(rate.Limit(device.GetBandwidthDown()), int(device.GetBandwidthDown())),
+	}
 }
 
 // NewNodeStorageManager creates a new instance of storage.Manager with the given carfile store path.
@@ -37,17 +43,16 @@ func NewNodeStorageManager(metadataPaths dtypes.NodeMetadataPath, assetsPaths dt
 }
 
 // NewAssetsManager creates a function that generates new instances of asset.Manager.
-func NewAssetsManager(pullParallel int, pullTimeout int, pullRetry int, ipfsAPIURL string) func(storageMgr *storage.Manager, schedulerAPI api.Scheduler) (*asset.Manager, error) {
-	return func(storageMgr *storage.Manager, schedulerAPI api.Scheduler) (*asset.Manager, error) {
+func NewAssetsManager(ctx context.Context, pullerConfig *config.Puller, ipfsAPIURL string) func(storageMgr *storage.Manager, schedulerAPI api.Scheduler, rateLimiter *types.RateLimiter) (*asset.Manager, error) {
+	return func(storageMgr *storage.Manager, schedulerAPI api.Scheduler, rateLimiter *types.RateLimiter) (*asset.Manager, error) {
 		opts := &asset.ManagerOptions{
 			Storage:      storageMgr,
 			IPFSAPIURL:   ipfsAPIURL,
 			SchedulerAPI: schedulerAPI,
-			PullParallel: pullParallel,
-			PullTimeout:  pullTimeout,
-			PullRetry:    pullRetry,
+			PullerConfig: pullerConfig,
+			RateLimiter:  rateLimiter,
 		}
-		return asset.NewManager(opts)
+		return asset.NewManager(ctx, opts)
 	}
 }
 

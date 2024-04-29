@@ -6,6 +6,7 @@ import (
 
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/interface-go-ipfs-core/path"
 )
@@ -36,9 +37,9 @@ func TestResolvePath(t *testing.T) {
 		return
 	}
 
-	opts := &asset.ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &asset.ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
 
-	mgr, err := asset.NewManager(opts)
+	mgr, err := asset.NewManager(context.Background(), opts)
 	if err != nil {
 		t.Errorf("TestResolvePath error:%s", err.Error())
 		return
@@ -73,9 +74,9 @@ func TestGetBlock(t *testing.T) {
 		return
 	}
 
-	opts := &asset.ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullParallel: 5, PullTimeout: 3, PullRetry: 2}
+	opts := &asset.ManagerOptions{Storage: storageMgr, IPFSAPIURL: testIPFSAddress, PullerConfig: &config.Puller{PullBlockTimeout: 3, PullBlockRetry: 2, PullBlockParallel: 5}}
 
-	mgr, err := asset.NewManager(opts)
+	mgr, err := asset.NewManager(context.Background(), opts)
 	if err != nil {
 		t.Errorf("TestResolvePath error:%s", err.Error())
 		return

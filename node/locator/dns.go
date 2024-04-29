@@ -18,7 +18,8 @@ import (
 
 const (
 	prefixOfCandidateNodeID = "c_"
-	lengthOfNodeID          = 32
+	lengthOfNodeIDV1        = 32
+	lengthOfNodeIDV2        = 36
 	maxTXTRecord            = 10000
 	txtRecordExpireTime     = 30 * time.Minute
 )
@@ -278,7 +279,7 @@ func (h *dnsHandler) getIPList(downloadInfos []*types.CandidateDownloadInfo) []s
 
 func (h *dnsHandler) isMatchNodeID(id string) bool {
 	id = strings.TrimSpace(id)
-	return len(id) == lengthOfNodeID
+	return len(id) == lengthOfNodeIDV1 || len(id) == lengthOfNodeIDV2
 }
 
 func (h *dnsHandler) isValidCID(cidString string) bool {

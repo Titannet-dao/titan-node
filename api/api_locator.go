@@ -18,6 +18,8 @@ type Locator interface {
 	GetUserAccessPoint(ctx context.Context, userIP string) (*AccessPoint, error) //perm:default
 	// CandidateDownloadInfos retrieves information about candidate's download interface
 	CandidateDownloadInfos(ctx context.Context, cid string) ([]*types.CandidateDownloadInfo, error) //perm:default
+	// GetAssetSourceDownloadInfo
+	GetAssetSourceDownloadInfos(ctx context.Context, cid string) ([]*types.AssetSourceDownloadInfoRsp, error) //perm:default
 	// GetCandidateIP retrieves ip of candidate, used in the locator dns
 	GetCandidateIP(ctx context.Context, nodeID string) (string, error) //perm:admin
 	// GetSchedulerWithNode get the scheduler that the node is already connected to

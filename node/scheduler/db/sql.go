@@ -45,6 +45,7 @@ const (
 	replenishBackupTable  = "replenish_backup"
 	userAssetGroupTable   = "user_asset_group"
 	awsDataTable          = "aws_data"
+	profitDetailsTable    = "profit_details"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 1000
@@ -99,6 +100,7 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cReplenishBackupTable, replenishBackupTable))
 	tx.MustExec(fmt.Sprintf(cUserAssetGroupTable, userAssetGroupTable))
 	tx.MustExec(fmt.Sprintf(cAWSDataTable, awsDataTable))
+	tx.MustExec(fmt.Sprintf(cProfitDetailsTable, profitDetailsTable))
 
 	return tx.Commit()
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/types"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/ipfs/go-blockservice"
@@ -36,12 +37,12 @@ type HttpServer struct {
 	scheduler           api.Scheduler
 	privateKey          *rsa.PrivateKey
 	schedulerPublicKey  *rsa.PublicKey
-	reporter            *reporter
 	validation          Validation
 	tokens              *sync.Map
 	apiSecret           *jwt.HMACSHA
 	maxSizeOfUploadFile int
 	webRedirect         string
+	rateLimiter         *types.RateLimiter
 }
 
 type HttpServerOptions struct {
@@ -52,6 +53,7 @@ type HttpServerOptions struct {
 	APISecret           *jwt.HMACSHA
 	MaxSizeOfUploadFile int
 	WebRedirect         string
+	RateLimiter         *types.RateLimiter
 }
 
 // NewHttpServer creates a new HttpServer with the given Asset, Scheduler, and RSA private key.
@@ -65,8 +67,8 @@ func NewHttpServer(opts *HttpServerOptions) *HttpServer {
 		tokens:              &sync.Map{},
 		maxSizeOfUploadFile: opts.MaxSizeOfUploadFile,
 		webRedirect:         opts.WebRedirect,
+		rateLimiter:         opts.RateLimiter,
 	}
-	hs.reporter = newReporter(hs)
 
 	if hs.validation != nil {
 		hs.validation.SetFunc(hs.FirstToken)

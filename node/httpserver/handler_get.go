@@ -101,11 +101,6 @@ func (hs *HttpServer) getHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Debugf("tokenID:%s, clientID:%s, download size %d, speed %d, cost time %fms", tkPayload.ID, tkPayload.ClientID, speedCountWriter.dataSize, speedCountWriter.speed(), speedCountWriter.CostTime())
-	// stat upload speed
-	report := speedCountWriter.generateReport(tkPayload)
-	if report != nil {
-		hs.reporter.addReport(report)
-	}
 
 	if len(tkPayload.ID) == 0 && len(tkPayload.ClientID) != 0 && speedCountWriter.speed() > 0 {
 		hs.scheduler.UserAssetDownloadResult(context.Background(), tkPayload.ClientID, tkPayload.AssetCID, speedCountWriter.dataSize, speedCountWriter.speed())

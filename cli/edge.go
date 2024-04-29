@@ -44,6 +44,7 @@ var EdgeCmds = []*cli.Command{
 	signCmd,
 	bindCmd,
 	syncDataCmd,
+	deleteLocalAssetCmd,
 }
 
 var showCmds = &cli.Command{
@@ -686,7 +687,7 @@ var mergeConfigCmd = &cli.Command{
 			}
 			defer lr.Close()
 
-			if err := RegitsterNode(cctx, lr, newEdgeConfig.Network.LocatorURL, types.NodeEdge); err != nil {
+			if err := RegitsterNode(lr, newEdgeConfig.Network.LocatorURL, types.NodeEdge); err != nil {
 				return xerrors.Errorf("import private key error %w", err)
 			}
 
@@ -703,6 +704,8 @@ var mergeConfigCmd = &cli.Command{
 		edgeConfig.Memory = newEdgeConfig.Memory
 		edgeConfig.CPU = newEdgeConfig.CPU
 		edgeConfig.Bandwidth.BandwidthMB = newEdgeConfig.Bandwidth.BandwidthMB
+		edgeConfig.Bandwidth.BandwidthUp = newEdgeConfig.Bandwidth.BandwidthMB
+		edgeConfig.Bandwidth.BandwidthDown = newEdgeConfig.Bandwidth.BandwidthMB
 
 		configBytes, err := config.GenerateConfigUpdate(edgeConfig, config.DefaultEdgeCfg(), true)
 		if err != nil {
@@ -732,8 +735,8 @@ func checkPath(path string) error {
 	return nil
 }
 
-func RegitsterNode(cctx *cli.Context, lr repo.LockedRepo, locatorURL string, nodeType types.NodeType) error {
-	schedulerURL, err := getUserAccessPoint(cctx, client.NewHTTP3Client(), locatorURL)
+func RegitsterNode(lr repo.LockedRepo, locatorURL string, nodeType types.NodeType) error {
+	schedulerURL, err := getUserAccessPoint(locatorURL)
 	if err != nil {
 		return err
 	}
@@ -744,10 +747,7 @@ func RegitsterNode(cctx *cli.Context, lr repo.LockedRepo, locatorURL string, nod
 	}
 	defer closer()
 
-	bits := cctx.Int("bits")
-	if bits == 0 {
-		bits = 1024
-	}
+	var bits = 1024
 
 	privateKey, err := titanrsa.GeneratePrivateKey(bits)
 	if err != nil {
@@ -986,8 +986,8 @@ var bindCmd = &cli.Command{
 }
 
 // getNodeAccessPoint get scheduler url by user ip
-func getUserAccessPoint(cctx *cli.Context, httpClient *http.Client, locatorURL string) (string, error) {
-	locator, close, err := client.NewLocator(cctx.Context, locatorURL, nil, jsonrpc.WithHTTPClient(httpClient))
+func getUserAccessPoint(locatorURL string) (string, error) {
+	locator, close, err := client.NewLocator(context.Background(), locatorURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 	if err != nil {
 		return "", err
 	}
@@ -1018,6 +1018,32 @@ var syncDataCmd = &cli.Command{
 		ctx := ReqContext(cctx)
 
 		err = api.SyncAssetViewAndData(ctx)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	},
+}
+
+var deleteLocalAssetCmd = &cli.Command{
+	Name:  "delete",
+	Usage: "delete local asset",
+	Action: func(cctx *cli.Context) error {
+		api, closer, err := getEdgeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		assetCID := cctx.Args().Get(0)
+		if len(assetCID) == 0 {
+			return fmt.Errorf("Asset cid can not empty")
+		}
+
+		ctx := ReqContext(cctx)
+
+		err = api.DeleteAsset(ctx, assetCID)
 		if err != nil {
 			return err
 		}

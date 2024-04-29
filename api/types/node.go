@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
+	"golang.org/x/time/rate"
 )
 
 // NodeSnapshot contains the real-time status information of a node,
@@ -63,6 +64,7 @@ type NodeInfo struct {
 	SchedulerID        dtypes.ServerID `db:"scheduler_sid"`
 	DeactivateTime     int64           `db:"deactivate_time"`
 	CPUInfo            string          `json:"cpu_info" form:"cpuInfo" gorm:"column:cpu_info;comment:;" db:"cpu_info"`
+	GPUInfo            string          `json:"gpu_info" form:"gpuInfo" gorm:"column:gpu_info;comment:;" db:"gpu_info"`
 
 	NodeDynamicInfo
 }
@@ -161,6 +163,27 @@ type EdgeDownloadInfoList struct {
 	SchedulerKey string
 }
 
+type DownloadSource int
+
+const (
+	DownloadSourceIPFS DownloadSource = iota
+	DownloadSourceAWS
+	DownloadSourceSDK
+)
+
+func (n DownloadSource) String() string {
+	switch n {
+	case DownloadSourceIPFS:
+		return "ipfs"
+	case DownloadSourceAWS:
+		return "aws"
+	case DownloadSourceSDK:
+		return "sdk"
+	}
+
+	return ""
+}
+
 // CandidateDownloadInfo represents download information for a candidate
 type CandidateDownloadInfo struct {
 	NodeID  string
@@ -170,6 +193,25 @@ type CandidateDownloadInfo struct {
 	AWSBucket string
 	// download from aws
 	AWSKey string
+}
+
+type SourceDownloadInfo struct {
+	NodeID  string
+	Address string
+	Tk      *Token
+}
+
+type AssetSourceDownloadInfoRsp struct {
+	WorkloadID string
+
+	// download from aws
+	AWSBucket string
+	// download from aws
+	AWSKey string
+
+	SchedulerURL string
+
+	SourceList []*SourceDownloadInfo
 }
 
 // NodeIPInfo
@@ -200,13 +242,13 @@ const (
 	// NatTypeNo not  nat
 	NatTypeNo
 	// NatTypeSymmetric Symmetric NAT
-	NatTypeSymmetric
+	NatTypeSymmetric // NAT4
 	// NatTypeFullCone Full cone NAT
-	NatTypeFullCone
+	NatTypeFullCone // NAT1
 	// NatTypeRestricted Restricted NAT
-	NatTypeRestricted
+	NatTypeRestricted // NAT2
 	// NatTypePortRestricted Port-restricted NAT
-	NatTypePortRestricted
+	NatTypePortRestricted // NAT3
 )
 
 func (n NatType) String() string {
@@ -344,13 +386,13 @@ type Token struct {
 	Sign string
 }
 
-type Workload struct {
-	DownloadSpeed int64
-	DownloadSize  int64
-	StartTime     time.Time
-	EndTime       time.Time
-	BlockCount    int64
-}
+type WorkloadEvent int
+
+const (
+	WorkloadEventPull WorkloadEvent = iota
+	WorkloadEventSync
+	WorkloadEventRetrieve
+)
 
 // WorkloadStatus Workload Status
 type WorkloadStatus int
@@ -366,20 +408,30 @@ const (
 	WorkloadStatusInvalid
 )
 
-type WorkloadReport struct {
-	TokenID  string
-	ClientID string
-	NodeID   string
-	Workload *Workload
+type Workload struct {
+	SourceID     string
+	DownloadSize int64
+	CostTime     int64 // Millisecond
 }
 
 // WorkloadReportRecord use to store workloadReport
 type WorkloadRecord struct {
-	TokenPayload
-	Status         WorkloadStatus `db:"status"`
-	ClientEndTime  int64          `db:"client_end_time"`
-	ClientWorkload []byte         `db:"client_workload"`
-	NodeWorkload   []byte         `db:"node_workload"`
+	WorkloadID    string         `db:"workload_id"`
+	AssetCID      string         `db:"asset_cid"`
+	ClientID      string         `db:"client_id"`
+	AssetSize     int64          `db:"asset_size"`
+	CreatedTime   time.Time      `db:"created_time"`
+	ClientEndTime time.Time      `db:"client_end_time"`
+	Workloads     []byte         `db:"workloads"`
+	Status        WorkloadStatus `db:"status"`
+	Event         WorkloadEvent  `db:"event"`
+}
+
+// WorkloadRecordReq use to store workloadReport
+type WorkloadRecordReq struct {
+	WorkloadID string
+	AssetCID   string
+	Workloads  []Workload
 }
 
 type NodeWorkloadReport struct {
@@ -462,4 +514,42 @@ type RetrieveEvent struct {
 type ListRetrieveEventRsp struct {
 	Total              int              `json:"total"`
 	RetrieveEventInfos []*RetrieveEvent `json:"retrieve_event_infos"`
+}
+
+// ProfitType represents the type of profit
+type ProfitType int
+
+const (
+	// ProfitTypeBase
+	ProfitTypeBase ProfitType = iota
+	// ProfitTypePull
+	ProfitTypePull
+	// ProfitTypeBePull
+	ProfitTypeBePull
+	// ProfitTypeValidatable
+	ProfitTypeValidatable
+	// ProfitTypeValidator
+	ProfitTypeValidator
+)
+
+type ProfitDetails struct {
+	ID          int64      `db:"id"`
+	NodeID      string     `db:"node_id"`
+	Profit      float64    `db:"profit"`
+	CreatedTime time.Time  `db:"created_time"`
+	PType       ProfitType `db:"profit_type"`
+	Size        int64      `db:"size"`
+	Note        string     `db:"note"`
+	CID         string     `db:"cid"`
+}
+
+// ListNodeProfitDetailsRsp list node profit
+type ListNodeProfitDetailsRsp struct {
+	Total int              `json:"total"`
+	Infos []*ProfitDetails `json:"infos"`
+}
+
+type RateLimiter struct {
+	BandwidthUpLimiter   *rate.Limiter
+	BandwidthDownLimiter *rate.Limiter
 }

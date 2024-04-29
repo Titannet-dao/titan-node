@@ -118,7 +118,7 @@ func (ap *assetsPaths) allocatePathWithBlocks(root cid.Cid, blks []blocks.Block)
 	return path, nil
 }
 
-func (ap *assetsPaths) allocatePathWithSize(root cid.Cid, size int64) (string, error) {
+func (ap *assetsPaths) allocatePathWithAssetAndSize(root cid.Cid, size int64) (string, error) {
 	if len(ap.baseDirs) == 1 {
 		return ap.baseDirs[0], nil
 	}
@@ -140,6 +140,34 @@ func (ap *assetsPaths) allocatePathWithSize(root cid.Cid, size int64) (string, e
 	path := validPaths[n]
 	ap.assetPaths[root.Hash().String()] = path
 
+	return path, nil
+}
+
+func (ap *assetsPaths) allocatePathWithSize(size int64) (string, error) {
+	if len(ap.baseDirs) == 1 {
+		path := ap.baseDirs[0]
+		usageStat, err := disk.Usage(path)
+		if err != nil {
+			log.Errorf("get disk usage stat error: %s", err)
+			return "", err
+		}
+
+		if usageStat.Free > uint64(size) {
+			return path, nil
+		}
+		return "", fmt.Errorf("no free space enough for size %d", size)
+	}
+
+	validPaths, err := ap.filterValidPaths(uint64(size) * 2)
+	if err != nil {
+		return "", err
+	}
+	if len(validPaths) == 0 {
+		return "", fmt.Errorf("no free space enough for size %d", size)
+	}
+
+	n := ap.rand.Intn(len(validPaths))
+	path := validPaths[n]
 	return path, nil
 }
 

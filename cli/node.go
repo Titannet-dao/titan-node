@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/lib/tablewriter"
@@ -29,6 +30,53 @@ var nodeCmds = &cli.Command{
 		listReplicaCmd,
 		nodeCleanReplicasCmd,
 		listValidationResultsCmd,
+		addProfitCmd,
+		listProfitDetailsCmd,
+	},
+}
+
+var addProfitCmd = &cli.Command{
+	Name:  "ap",
+	Usage: "add nodes profit",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "path",
+			Usage: "nodes list",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		path := cctx.String("path")
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		list := make([]string, 0)
+		replacer := strings.NewReplacer("\n", "", "\r\n", "", "\r", "", " ", "")
+
+		if path != "" {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			contentStr := string(content)
+			stringsList := strings.Split(contentStr, ";")
+
+			for _, str := range stringsList {
+				if str == "" {
+					continue
+				}
+				str = replacer.Replace(str)
+
+				list = append(list, str)
+			}
+		}
+
+		return schedulerAPI.AddProfits(ctx, list, 1000)
 	},
 }
 
@@ -51,7 +99,7 @@ var deactivateCmd = &cli.Command{
 		}
 		defer closer()
 
-		return schedulerAPI.DeactivateNode(ctx, nodeID, 24)
+		return schedulerAPI.DeactivateNode(ctx, nodeID, 24*7)
 	},
 }
 
@@ -129,18 +177,22 @@ var listNodeCmd = &cli.Command{
 			tablewriter.Col("NodeType"),
 			tablewriter.Col("Status"),
 			tablewriter.Col("Nat"),
-			tablewriter.Col("ExternalIP"),
+			tablewriter.Col("IP"),
+			tablewriter.Col("Profit"),
+			tablewriter.Col("OnlineDuration"),
 		)
 
 		for w := 0; w < len(r.Data); w++ {
 			info := r.Data[w]
 
 			m := map[string]interface{}{
-				"NodeID":     info.NodeID,
-				"NodeType":   info.Type.String(),
-				"Status":     colorOnline(info.Status),
-				"Nat":        info.NATType,
-				"ExternalIP": info.ExternalIP,
+				"NodeID":         info.NodeID,
+				"NodeType":       info.Type.String(),
+				"Status":         colorOnline(info.Status),
+				"Nat":            info.NATType,
+				"IP":             info.ExternalIP,
+				"Profit":         fmt.Sprintf("%.4f", info.Profit),
+				"OnlineDuration": fmt.Sprintf("%d", info.OnlineDuration),
 			}
 
 			tw.Write(m)
@@ -349,6 +401,8 @@ var showNodeInfoCmd = &cli.Command{
 		fmt.Printf("upload bandwidth: %s \n", units.BytesSize(float64(info.BandwidthUp)))
 		fmt.Printf("cpu percent: %.2f %s \n", info.CPUUsage, "%")
 		fmt.Printf("NatType: %s \n", info.NATType)
+		fmt.Printf("OnlineDuration: %d \n", info.OnlineDuration)
+		fmt.Printf("Profit: %.4f \n", info.Profit)
 
 		return nil
 	},
@@ -436,6 +490,66 @@ var edgeExternalAddrCmd = &cli.Command{
 		}
 
 		fmt.Printf("edge external addr:%s\n", addr)
+		return nil
+	},
+}
+
+var listProfitDetailsCmd = &cli.Command{
+	Name:  "lpd",
+	Usage: "List Profit Details",
+	Flags: []cli.Flag{
+		limitFlag,
+		offsetFlag,
+		nodeIDFlag,
+		&cli.IntSliceFlag{
+			Name:  "type",
+			Usage: "profit type",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		limit := cctx.Int("limit")
+		offset := cctx.Int("offset")
+		nID := cctx.String("node-id")
+		types := cctx.IntSlice("type")
+
+		tw := tablewriter.New(
+			tablewriter.Col("NodeID"),
+			tablewriter.Col("PType"),
+			tablewriter.Col("Size"),
+			tablewriter.Col("Profit"),
+			tablewriter.Col("CreatedTime"),
+			tablewriter.Col("Note"),
+			// tablewriter.NewLineCol("Processes"),
+		)
+
+		info, err := schedulerAPI.GetProfitDetailsForNode(ctx, nID, limit, offset, types)
+		if err != nil {
+			return err
+		}
+
+		for w := 0; w < len(info.Infos); w++ {
+			info := info.Infos[w]
+
+			m := map[string]interface{}{
+				"NodeID":      info.NodeID,
+				"PType":       info.PType,
+				"Size":        units.BytesSize(float64(info.Size)),
+				"Profit":      info.Profit,
+				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
+				"Note":        info.Note,
+			}
+
+			tw.Write(m)
+		}
+
+		tw.Flush(os.Stdout)
 		return nil
 	},
 }

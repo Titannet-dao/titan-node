@@ -20,7 +20,9 @@ import (
 
 	"github.com/Filecoin-Titan/titan/node"
 	"github.com/Filecoin-Titan/titan/node/asset"
+	"github.com/Filecoin-Titan/titan/node/edge/clib"
 	"github.com/Filecoin-Titan/titan/node/httpserver"
+	"github.com/Filecoin-Titan/titan/node/modules"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/gbrlsnchs/jwt/v3"
@@ -114,6 +116,7 @@ var daemonCmd = &cli.Command{
 	Subcommands: []*cli.Command{
 		daemonStartCmd,
 		daemonStopCmd,
+		// daemonTestCmd,
 	},
 }
 
@@ -153,304 +156,10 @@ var daemonStartCmd = &cli.Command{
 		return nil
 	},
 	Action: func(cctx *cli.Context) error {
-		log.Info("Starting titan edge node")
-
-		// Register all metric views
-		if err := view.Register(
-			metrics.DefaultViews...,
-		); err != nil {
-			log.Fatalf("Cannot register the view: %v", err)
-		}
-
 		repoPath := cctx.String(FlagEdgeRepo)
-
-		r, err := repo.NewFS(repoPath)
-		if err != nil {
-			return err
-		}
-
-		ok, err := r.Exists()
-		if err != nil {
-			return err
-		}
-		if !ok {
-			if err := r.Init(repo.Edge); err != nil {
-				return err
-			}
-		}
-
-		lr, err := r.Lock(repo.Edge)
-		if err != nil {
-			return err
-		}
-
-		_, nodeIDErr := r.NodeID()
-		isNeedInit := cctx.Bool("init")
-		if nodeIDErr == repo.ErrNodeIDNotExist && isNeedInit {
-			locatorURL := cctx.String("url")
-			if len(locatorURL) == 0 {
-				return fmt.Errorf("Must set --url for --init")
-			}
-
-			if err := lcli.RegitsterNode(cctx, lr, locatorURL, types.NodeEdge); err != nil {
-				return err
-			}
-		}
-
-		cfg, err := lr.Config()
-		if err != nil {
-			return err
-		}
-
-		edgeCfg := cfg.(*config.EdgeCfg)
-
-		err = lr.Close()
-		if err != nil {
-			return err
-		}
-
-		privateKey, err := loadPrivateKey(r)
-		if err != nil {
-			return fmt.Errorf(`please initialize edge, example: 
-			titan-edge daemon start --init --url https://titan-network-url/rpc/v0`)
-		}
-
-		if len(edgeCfg.AreaID) == 0 {
-			return fmt.Errorf(`please config node id and area id, example:
-			titan-edge config set --node-id=your_node_id --area-id=your_area_id `)
-		}
-
-		nodeIDBuf, err := r.NodeID()
-		if err != nil {
-			return err
-		}
-		nodeID := string(nodeIDBuf)
-
-		connectTimeout, err := time.ParseDuration(edgeCfg.Network.Timeout)
-		if err != nil {
-			return err
-		}
-
-		udpPacketConn, err := net.ListenPacket("udp", edgeCfg.Network.ListenAddress)
-		if err != nil {
-			return err
-		}
-		defer udpPacketConn.Close() //nolint:errcheck  // ignore error
-
-		transport := &quic.Transport{
-			Conn: udpPacketConn,
-		}
-
-		schedulerURL, _, _ := lcli.GetRawAPI(cctx, repo.Scheduler, "v0")
-		if len(schedulerURL) == 0 {
-			schedulerURL, err = getAccessPoint(cctx, edgeCfg.Network.LocatorURL, nodeID, edgeCfg.AreaID)
-			if err != nil {
-				return err
-			}
-		}
-
-		schedulerAPI, closer, err := newSchedulerAPI(cctx, transport, schedulerURL, nodeID, privateKey)
-		if err != nil {
-			return xerrors.Errorf("new scheduler api: %w", err)
-		}
-		defer closer()
-
-		ctx := lcli.ReqContext(cctx)
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-		v, err := getSchedulerVersion(schedulerAPI, connectTimeout)
-		if err != nil {
-			return err
-		}
-
-		if v.APIVersion != api.SchedulerAPIVersion0 {
-			return xerrors.Errorf("titan-scheduler API version doesn't match: expected: %s", api.APIVersion{APIVersion: api.SchedulerAPIVersion0})
-		}
-		log.Infof("Remote version %s", v)
-
-		var shutdownChan = make(chan struct{})
-		var httpServer *httpserver.HttpServer
-		var edgeAPI api.Edge
-		stop, err := node.New(cctx.Context,
-			node.Edge(&edgeAPI),
-			node.Base(),
-			node.Repo(r),
-			node.Override(new(dtypes.NodeID), dtypes.NodeID(nodeID)),
-			node.Override(new(api.Scheduler), schedulerAPI),
-			node.Override(new(dtypes.ShutdownChan), shutdownChan),
-			node.Override(new(*quic.Transport), transport),
-			node.Override(new(dtypes.NodeMetadataPath), func() dtypes.NodeMetadataPath {
-				metadataPath := edgeCfg.Storage.Path
-				if len(metadataPath) == 0 {
-					metadataPath = path.Join(lr.Path(), DefaultStorageDir)
-				}
-
-				log.Debugf("metadataPath:%s", metadataPath)
-				return dtypes.NodeMetadataPath(metadataPath)
-			}),
-			node.Override(new(dtypes.AssetsPaths), func() dtypes.AssetsPaths {
-				var assetsPaths = []string{path.Join(lr.Path(), DefaultStorageDir)}
-				if len(edgeCfg.Storage.Path) > 0 {
-					assetsPaths = []string{edgeCfg.Storage.Path}
-				}
-
-				log.Debugf("storage path:%#v", assetsPaths)
-				return dtypes.AssetsPaths(assetsPaths)
-			}),
-			node.Override(new(dtypes.InternalIP), func() (dtypes.InternalIP, error) {
-				schedulerAddr := strings.Split(schedulerURL, "/")
-				conn, err := net.DialTimeout("tcp", schedulerAddr[2], connectTimeout)
-				if err != nil {
-					return "", err
-				}
-
-				defer conn.Close() //nolint:errcheck
-				localAddr := conn.LocalAddr().(*net.TCPAddr)
-
-				return dtypes.InternalIP(strings.Split(localAddr.IP.String(), ":")[0]), nil
-			}),
-
-			node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA) error {
-				opts := &httpserver.HttpServerOptions{
-					Asset: assetMgr, Scheduler: schedulerAPI,
-					PrivateKey:          privateKey,
-					Validation:          validation,
-					APISecret:           apiSecret,
-					MaxSizeOfUploadFile: edgeCfg.MaxSizeOfUploadFile,
-				}
-				httpServer = httpserver.NewHttpServer(opts)
-
-				return err
-			}),
-
-			node.Override(node.SetApiEndpointKey, func(lr repo.LockedRepo) error {
-				return setEndpointAPI(lr, edgeCfg.Network.ListenAddress)
-			}),
-		)
-		if err != nil {
-			return xerrors.Errorf("creating node: %w", err)
-		}
-
-		handler := EdgeHandler(edgeAPI.AuthVerify, edgeAPI, true)
-		handler = httpServer.NewHandler(handler)
-
-		httpSrv := &http.Server{
-			ReadHeaderTimeout: 30 * time.Second,
-			Handler:           handler,
-			BaseContext: func(listener net.Listener) context.Context {
-				ctx, _ := tag.New(context.Background(), tag.Upsert(metrics.APIInterface, "titan-edge"))
-				return ctx
-			},
-		}
-
-		go startHTTP3Server(transport, handler, edgeCfg)
-
-		go func() {
-			<-ctx.Done()
-			log.Warn("Shutting down...")
-
-			if err := transport.Close(); err != nil {
-				log.Errorf("shutting down http3Srv failed: %s", err)
-			}
-
-			if err := httpSrv.Shutdown(context.TODO()); err != nil {
-				log.Errorf("shutting down RPC server failed: %s", err)
-			}
-
-			stop(ctx) //nolint:errcheck
-			log.Warn("Graceful shutdown successful")
-		}()
-
-		nl, err := net.Listen("tcp", edgeCfg.Network.ListenAddress)
-		if err != nil {
-			return err
-		}
-
-		log.Infof("Edge listen on tcp/udp %s", edgeCfg.Network.ListenAddress)
-
-		schedulerSession, err := schedulerAPI.Session(ctx)
-		if err != nil {
-			return xerrors.Errorf("getting scheduler session: %w", err)
-		}
-
-		token, err := edgeAPI.AuthNew(cctx.Context, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: nodeID})
-		if err != nil {
-			return xerrors.Errorf("generate token for scheduler error: %w", err)
-		}
-
-		waitQuietCh := func() chan struct{} {
-			out := make(chan struct{})
-			go func() {
-				ctx2 := context.Background()
-				err = edgeAPI.WaitQuiet(ctx2)
-				if err != nil {
-					log.Errorf("wait quiet error %s", err.Error())
-				}
-				close(out)
-			}()
-			return out
-		}
-
-		go func() {
-			heartbeats := time.NewTicker(HeartbeatInterval)
-			defer heartbeats.Stop()
-
-			var readyCh chan struct{}
-			for {
-				// TODO: we could get rid of this, but that requires tracking resources for restarted tasks correctly
-				if readyCh == nil {
-					log.Info("Making sure no local tasks are running")
-					readyCh = waitQuietCh()
-				}
-
-				for {
-					select {
-					case <-readyCh:
-						opts := &types.ConnectOptions{Token: token}
-						if err := schedulerAPI.EdgeConnect(ctx, opts); err != nil {
-							log.Errorf("Registering edge failed: %s", err.Error())
-							cancel()
-							return
-						}
-
-						log.Info("Edge registered successfully, waiting for tasks")
-						readyCh = nil
-					case <-heartbeats.C:
-					case <-ctx.Done():
-						return // graceful shutdown
-					case <-shutdownChan:
-						cancel()
-						return
-					}
-
-					curSession, err := keepalive(schedulerAPI, connectTimeout)
-					if err != nil {
-						log.Errorf("heartbeat: keepalive failed: %+v", err)
-						errNode, ok := err.(*api.ErrNode)
-						if ok {
-							if errNode.Code == int(terrors.NodeDeactivate) {
-								cancel()
-								return
-							} else if errNode.Code == int(terrors.NodeIPInconsistent) {
-								break
-							} else if errNode.Code == int(terrors.NodeOffline) && readyCh == nil {
-								break
-							}
-						}
-					} else if curSession != schedulerSession {
-						log.Warn("change session id")
-						schedulerSession = curSession
-						break
-
-					}
-				}
-
-				log.Errorf("TITAN-EDGE CONNECTION LOST")
-			}
-		}()
-
-		return httpSrv.Serve(nl)
+		locatorURL := cctx.String("url")
+		ds := clib.DaemonSwitch{StopChan: make(chan bool)}
+		return daemonStart(lcli.ReqContext(cctx), &ds, repoPath, locatorURL)
 	},
 }
 
@@ -485,8 +194,8 @@ func newAuthTokenFromScheduler(schedulerURL, nodeID string, privateKey *rsa.Priv
 	return schedulerAPI.NodeLogin(context.Background(), nodeID, hex.EncodeToString(sign))
 }
 
-func getAccessPoint(cctx *cli.Context, locatorURL, nodeID, areaID string) (string, error) {
-	locator, close, err := client.NewLocator(cctx.Context, locatorURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
+func getAccessPoint(locatorURL, nodeID, areaID string) (string, error) {
+	locator, close, err := client.NewLocator(context.Background(), locatorURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 	if err != nil {
 		return "", err
 	}
@@ -504,7 +213,7 @@ func getAccessPoint(cctx *cli.Context, locatorURL, nodeID, areaID string) (strin
 	return schedulerURLs[0], nil
 }
 
-func newSchedulerAPI(cctx *cli.Context, transport *quic.Transport, schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (api.Scheduler, jsonrpc.ClientCloser, error) {
+func newSchedulerAPI(transport *quic.Transport, schedulerURL, nodeID string, privateKey *rsa.PrivateKey) (api.Scheduler, jsonrpc.ClientCloser, error) {
 	token, err := newAuthTokenFromScheduler(schedulerURL, nodeID, privateKey)
 	if err != nil {
 		return nil, nil, err
@@ -553,7 +262,7 @@ func defaultTLSConfig() (*tls.Config, error) {
 	}, nil
 }
 
-func loadPrivateKey(r *repo.FsRepo) (*rsa.PrivateKey, error) {
+func loadPrivateKey(r repo.Repo) (*rsa.PrivateKey, error) {
 	pem, err := r.PrivateKey()
 	if err != nil {
 		return nil, err
@@ -617,4 +326,353 @@ func startHTTP3Server(transport *quic.Transport, handler http.Handler, config *c
 		log.Warn("http3 server ", err.Error())
 	}
 	return err
+}
+
+func openRepoOrNew(repoPath string) (repo.Repo, error) {
+	r, err := repo.NewFS(repoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	ok, err := r.Exists()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if err := r.Init(repo.Edge); err != nil {
+			return nil, err
+		}
+	}
+
+	return r, nil
+}
+
+func waitQuietCh(edgeAPI api.Edge) chan struct{} {
+	out := make(chan struct{})
+	go func() {
+		ctx2 := context.Background()
+		err := edgeAPI.WaitQuiet(ctx2)
+		if err != nil {
+			log.Errorf("wait quiet error %s", err.Error())
+		}
+		close(out)
+	}()
+	return out
+}
+
+type heartbeatParams struct {
+	shutdownChan chan struct{}
+	edgeAPI      api.Edge
+	schedulerAPI api.Scheduler
+	nodeID       string
+	daemonSwitch *clib.DaemonSwitch
+}
+
+func heartbeat(ctx context.Context, hbp heartbeatParams) error {
+	schedulerSession, err := hbp.schedulerAPI.Session(ctx)
+	if err != nil {
+		return xerrors.Errorf("getting scheduler session: %w", err)
+	}
+
+	token, err := hbp.edgeAPI.AuthNew(ctx, &types.JWTPayload{Allow: []auth.Permission{api.RoleAdmin}, ID: hbp.nodeID})
+	if err != nil {
+		return xerrors.Errorf("generate token for scheduler error: %w", err)
+	}
+
+	heartbeats := time.NewTicker(HeartbeatInterval)
+	defer heartbeats.Stop()
+	// var isStop = false
+	var readyCh chan struct{}
+	for {
+		// TODO: we could get rid of this, but that requires tracking resources for restarted tasks correctly
+		if readyCh == nil {
+			log.Info("Making sure no local tasks are running")
+			readyCh = waitQuietCh(hbp.edgeAPI)
+		}
+
+		for {
+			select {
+			case <-readyCh:
+				opts := &types.ConnectOptions{Token: token}
+				if err := hbp.schedulerAPI.EdgeConnect(ctx, opts); err != nil {
+					log.Errorf("Registering edge failed: %s", err.Error())
+					hbp.shutdownChan <- struct{}{}
+					return err
+				}
+				hbp.daemonSwitch.IsOnline = true
+				log.Info("Edge registered successfully, waiting for tasks")
+				readyCh = nil
+			case <-heartbeats.C:
+			case <-ctx.Done():
+				return nil // graceful shutdown
+			case isStop := <-hbp.daemonSwitch.StopChan:
+				hbp.daemonSwitch.IsOnline = !isStop
+				hbp.daemonSwitch.IsStop = isStop
+				if isStop {
+					log.Info("stop daemon")
+				} else {
+					log.Info("start daemon")
+				}
+			}
+
+			if hbp.daemonSwitch.IsStop {
+				continue
+			}
+
+			curSession, err := keepalive(hbp.schedulerAPI, 10*time.Second)
+			if err != nil {
+				log.Errorf("heartbeat: keepalive failed: %+v", err)
+				errNode, ok := err.(*api.ErrNode)
+				if ok {
+					if errNode.Code == int(terrors.NodeDeactivate) {
+						hbp.shutdownChan <- struct{}{}
+						return nil
+					} else if errNode.Code == int(terrors.NodeIPInconsistent) {
+						break
+					} else if errNode.Code == int(terrors.NodeOffline) && readyCh == nil {
+						break
+					}
+				} else {
+					hbp.daemonSwitch.IsOnline = false
+				}
+			} else if curSession != schedulerSession {
+				log.Warn("change session id")
+				schedulerSession = curSession
+				break
+			} else {
+				hbp.daemonSwitch.IsOnline = true
+			}
+
+			// log.Infof("cur session id %s", curSession.String())
+		}
+
+		log.Errorf("TITAN-EDGE CONNECTION LOST")
+	}
+
+}
+
+func daemonStart(ctx context.Context, daemonSwitch *clib.DaemonSwitch, repoPath, locatorURL string) error {
+	log.Info("Starting titan edge node")
+
+	// Register all metric views
+	if err := view.Register(
+		metrics.DefaultViews...,
+	); err != nil {
+		log.Fatalf("Cannot register the view: %v", err)
+	}
+
+	// repoPath := cctx.String(FlagEdgeRepo)
+
+	r, err := openRepoOrNew(repoPath)
+	if err != nil {
+		return err
+	}
+
+	lr, err := r.Lock(repo.Edge)
+	if err != nil {
+		return err
+	}
+
+	_, nodeIDErr := r.NodeID()
+	if nodeIDErr == repo.ErrNodeIDNotExist {
+		if len(locatorURL) == 0 {
+			return fmt.Errorf("Must set --url")
+		}
+		if err := lcli.RegitsterNode(lr, locatorURL, types.NodeEdge); err != nil {
+			return err
+		}
+	}
+
+	cfg, err := lr.Config()
+	if err != nil {
+		return err
+	}
+
+	edgeCfg := cfg.(*config.EdgeCfg)
+
+	err = lr.Close()
+	if err != nil {
+		return err
+	}
+
+	privateKey, err := loadPrivateKey(r)
+	if err != nil {
+		return fmt.Errorf(`please initialize edge, example: 
+		titan-edge daemon start --init --url https://titan-network-url/rpc/v0`)
+	}
+
+	nodeIDBuf, err := r.NodeID()
+	if err != nil {
+		return err
+	}
+	nodeID := string(nodeIDBuf)
+
+	connectTimeout, err := time.ParseDuration(edgeCfg.Network.Timeout)
+	if err != nil {
+		return err
+	}
+
+	udpPacketConn, err := net.ListenPacket("udp", edgeCfg.Network.ListenAddress)
+	if err != nil {
+		return err
+	}
+	defer udpPacketConn.Close() //nolint:errcheck  // ignore error
+
+	transport := &quic.Transport{
+		Conn: udpPacketConn,
+	}
+
+	schedulerURL, err := getAccessPoint(edgeCfg.Network.LocatorURL, nodeID, edgeCfg.AreaID)
+	if err != nil {
+		return err
+	}
+
+	schedulerAPI, closer, err := newSchedulerAPI(transport, schedulerURL, nodeID, privateKey)
+	if err != nil {
+		return xerrors.Errorf("new scheduler api: %w", err)
+	}
+	defer closer()
+
+	// ctx := lcli.ReqContext(cctx)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	v, err := getSchedulerVersion(schedulerAPI, connectTimeout)
+	if err != nil {
+		return err
+	}
+
+	if v.APIVersion != api.SchedulerAPIVersion0 {
+		return xerrors.Errorf("titan-scheduler API version doesn't match: expected: %s", api.APIVersion{APIVersion: api.SchedulerAPIVersion0})
+	}
+	log.Infof("Remote version %s", v)
+
+	var shutdownChan = make(chan struct{})
+	var lockRepo repo.LockedRepo
+	var httpServer *httpserver.HttpServer
+	var edgeAPI api.Edge
+	stop, err := node.New(ctx,
+		node.Edge(&edgeAPI),
+		node.Base(),
+		node.Repo(r),
+		node.Override(new(dtypes.NodeID), dtypes.NodeID(nodeID)),
+		node.Override(new(api.Scheduler), schedulerAPI),
+		node.Override(new(dtypes.ShutdownChan), shutdownChan),
+		node.Override(new(*quic.Transport), transport),
+		node.Override(new(*asset.Manager), modules.NewAssetsManager(ctx, &edgeCfg.Puller, edgeCfg.IPFSAPIURL)),
+
+		node.Override(new(dtypes.NodeMetadataPath), func() dtypes.NodeMetadataPath {
+			metadataPath := edgeCfg.Storage.Path
+			if len(metadataPath) == 0 {
+				metadataPath = path.Join(lr.Path(), DefaultStorageDir)
+			}
+
+			log.Debugf("metadataPath:%s", metadataPath)
+			return dtypes.NodeMetadataPath(metadataPath)
+		}),
+		node.Override(new(dtypes.AssetsPaths), func() dtypes.AssetsPaths {
+			var assetsPaths = []string{path.Join(lr.Path(), DefaultStorageDir)}
+			if len(edgeCfg.Storage.Path) > 0 {
+				assetsPaths = []string{edgeCfg.Storage.Path}
+			}
+
+			log.Debugf("storage path:%#v", assetsPaths)
+			return dtypes.AssetsPaths(assetsPaths)
+		}),
+		node.Override(new(dtypes.InternalIP), func() (dtypes.InternalIP, error) {
+			schedulerAddr := strings.Split(schedulerURL, "/")
+			conn, err := net.DialTimeout("tcp", schedulerAddr[2], connectTimeout)
+			if err != nil {
+				return "", err
+			}
+
+			defer conn.Close() //nolint:errcheck
+			localAddr := conn.LocalAddr().(*net.TCPAddr)
+
+			return dtypes.InternalIP(strings.Split(localAddr.IP.String(), ":")[0]), nil
+		}),
+
+		node.Override(node.RunGateway, func(assetMgr *asset.Manager, validation *validation.Validation, apiSecret *jwt.HMACSHA, limiter *types.RateLimiter) error {
+			opts := &httpserver.HttpServerOptions{
+				Asset: assetMgr, Scheduler: schedulerAPI,
+				PrivateKey:          privateKey,
+				Validation:          validation,
+				APISecret:           apiSecret,
+				MaxSizeOfUploadFile: edgeCfg.MaxSizeOfUploadFile,
+				RateLimiter:         limiter,
+			}
+			httpServer = httpserver.NewHttpServer(opts)
+
+			return err
+		}),
+
+		node.Override(node.SetApiEndpointKey, func(lr repo.LockedRepo) error {
+			lockRepo = lr
+			return setEndpointAPI(lr, edgeCfg.Network.ListenAddress)
+		}),
+	)
+	if err != nil {
+		return xerrors.Errorf("creating node: %w", err)
+	}
+
+	handler := EdgeHandler(edgeAPI.AuthVerify, edgeAPI, true)
+	handler = httpServer.NewHandler(handler)
+	handler = validation.AppendHandler(handler, schedulerAPI, privateKey)
+
+	httpSrv := &http.Server{
+		ReadHeaderTimeout: 30 * time.Second,
+		Handler:           handler,
+		BaseContext: func(listener net.Listener) context.Context {
+			ctx, _ := tag.New(context.Background(), tag.Upsert(metrics.APIInterface, "titan-edge"))
+			return ctx
+		},
+	}
+
+	go startHTTP3Server(transport, handler, edgeCfg)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Warn("Shutting down...")
+
+				if err := transport.Close(); err != nil {
+					log.Errorf("shutting down http3Srv failed: %s", err)
+				}
+
+				if err := lockRepo.Close(); err != nil {
+					log.Errorf("LockRepo close: %s", err.Error())
+				}
+
+				stop(ctx) //nolint:errcheck
+
+				if err := httpSrv.Shutdown(context.TODO()); err != nil {
+					log.Errorf("shutting down RPC server failed: %s", err)
+				}
+				log.Warn("Graceful shutdown successful")
+				return
+			case <-shutdownChan:
+				cancel()
+			}
+		}
+
+	}()
+
+	nl, err := net.Listen("tcp", edgeCfg.Network.ListenAddress)
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Edge listen on tcp/udp %s", edgeCfg.Network.ListenAddress)
+
+	hbp := heartbeatParams{
+		shutdownChan: shutdownChan,
+		edgeAPI:      edgeAPI,
+		schedulerAPI: schedulerAPI,
+		nodeID:       nodeID,
+		daemonSwitch: daemonSwitch,
+	}
+	go heartbeat(ctx, hbp)
+
+	return httpSrv.Serve(nl)
 }

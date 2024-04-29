@@ -14,6 +14,7 @@ type ValidateReq struct {
 	TCPSrvAddr string
 	RandomSeed int64
 	Duration   int
+	WSURL      string
 }
 
 // TODO: new tcp package, add these to tcp package

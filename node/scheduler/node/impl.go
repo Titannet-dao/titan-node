@@ -4,8 +4,37 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 )
 
-// GetAllValidCandidateNodes  Get all valid candidate nodes
-func (m *Manager) GetAllValidCandidateNodes() ([]string, []*Node) {
+// GetAllNodes  Get all valid candidate and edge nodes
+func (m *Manager) GetAllNodes() []*Node {
+	var nodes []*Node
+
+	m.candidateNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+
+		if node.IsAbnormal() {
+			return true
+		}
+
+		nodes = append(nodes, node)
+		return true
+	})
+
+	m.edgeNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+
+		if node.IsAbnormal() {
+			return true
+		}
+
+		nodes = append(nodes, node)
+		return true
+	})
+
+	return nodes
+}
+
+// GetAllCandidateNodes  Get all valid candidate nodes
+func (m *Manager) GetAllCandidateNodes() ([]string, []*Node) {
 	var ids []string
 	var nodes []*Node
 	m.candidateNodes.Range(func(key, value interface{}) bool {
@@ -31,12 +60,7 @@ func (m *Manager) GetCandidateNodes(num int, filterValidators bool) []*Node {
 		node := value.(*Node)
 
 		if filterValidators {
-			isValidator, err := m.IsValidator(node.NodeID)
-			if err != nil {
-				return true
-			}
-
-			if isValidator {
+			if node.Type == types.NodeValidator {
 				return true
 			}
 		}
@@ -120,14 +144,12 @@ func (m *Manager) NodeOnline(node *Node, info *types.NodeInfo) error {
 	return nil
 }
 
-// GetRandomCandidate returns a random candidate node
-func (m *Manager) GetRandomCandidate() (*Node, int) {
-	nodeID, weight := m.weightMgr.getCandidateWeightRandom()
-	return m.GetCandidateNode(nodeID), weight
+// GetRandomCandidates returns a random candidate node
+func (m *Manager) GetRandomCandidates(count int) map[string]int {
+	return m.weightMgr.getCandidateWeightRandom(count)
 }
 
-// GetRandomEdge returns a random edge node
-func (m *Manager) GetRandomEdge() (*Node, int) {
-	nodeID, weight := m.weightMgr.getEdgeWeightRandom()
-	return m.GetEdgeNode(nodeID), weight
+// GetRandomEdges returns a random edge node
+func (m *Manager) GetRandomEdges(count int) map[string]int {
+	return m.weightMgr.getEdgeWeightRandom(count)
 }

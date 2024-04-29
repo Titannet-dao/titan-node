@@ -40,10 +40,11 @@ import (
 var log = logging.Logger("scheduler")
 
 const (
-	cpuLimit         = 140
-	memoryLimit      = 2250 * units.GiB
-	diskSpaceLimit   = 500 * units.TiB
-	bandwidthUpLimit = 200 * units.MiB
+	cpuLimit           = 140
+	memoryLimit        = 2250 * units.GiB
+	diskSpaceLimit     = 500 * units.TiB
+	bandwidthUpLimit   = 200 * units.MiB
+	availableDiskLimit = 2 * units.TiB
 )
 
 // Scheduler represents a scheduler node in a distributed system.
@@ -84,6 +85,10 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		}
 		cNode = node.New()
 		alreadyConnect = false
+	} else {
+		// if cNode.ClientCloser != nil {
+		// cNode.ClientCloser()
+		// }
 	}
 
 	if cNode.ExternalIP != "" {
@@ -95,13 +100,16 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		return xerrors.Errorf("SplitHostPort err:%s", err.Error())
 	}
 
-	if !s.NodeManager.CheckNodeIP(nodeID, externalIP) {
+	if !s.NodeManager.StoreNodeIP(nodeID, externalIP) {
 		return xerrors.Errorf("%s The number of IPs exceeds the limit", externalIP)
 	}
 
 	defer func() {
 		if err != nil {
 			s.NodeManager.RemoveNodeIP(nodeID, externalIP)
+			// if cNode.ClientCloser != nil {
+			// cNode.ClientCloser()
+			// }
 		}
 	}()
 
@@ -111,17 +119,25 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	cNode.TCPPort = opts.TcpServerPort
 	cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
+	if len(s.SchedulerCfg.StorageCandidates) > 0 {
+		for _, nID := range s.SchedulerCfg.StorageCandidates {
+			if nID == nodeID {
+				cNode.IsStorageOnly = true
+			}
+		}
+	}
+
 	log.Infof("node connected %s, address:%s , %v", nodeID, remoteAddr, alreadyConnect)
 
 	err = cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
 	if err != nil {
-		return xerrors.Errorf("nodeConnect ConnectRPC err:%s", err.Error())
+		return xerrors.Errorf("%s nodeConnect ConnectRPC err:%s", nodeID, err.Error())
 	}
 
 	// init node info
 	nodeInfo, err := cNode.API.GetNodeInfo(context.Background())
 	if err != nil {
-		log.Errorf("nodeConnect NodeInfo err:%s", err.Error())
+		log.Errorf("%s nodeConnect NodeInfo err:%s", nodeID, err.Error())
 		return err
 	}
 
@@ -129,7 +145,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		return xerrors.Errorf("nodeID mismatch %s, %s", nodeID, nodeInfo.NodeID)
 	}
 
-	nodeInfo.Type = nodeType
 	nodeInfo.SchedulerID = s.ServerID
 
 	if nodeInfo.AvailableDiskSpace <= 0 {
@@ -140,15 +155,18 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace
 	}
 
+	if nodeInfo.AvailableDiskSpace > availableDiskLimit {
+		nodeInfo.AvailableDiskSpace = availableDiskLimit
+	}
 	if nodeType == types.NodeCandidate {
-		// isValidator, err := s.db.IsValidator(nodeID)
-		// if err != nil {
-		// 	return xerrors.Errorf("nodeConnect IsValidator err:%s", err.Error())
-		// }
+		isValidator, err := s.db.IsValidator(nodeID)
+		if err != nil {
+			return xerrors.Errorf("nodeConnect %s IsValidator err:%s", nodeID, err.Error())
+		}
 
-		// if isValidator {
-		// 	nodeType = types.NodeValidator
-		// }
+		if isValidator {
+			nodeType = types.NodeValidator
+		}
 		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace * 0.9
 	} else {
 		err = checkNodeParameters(&nodeInfo)
@@ -157,6 +175,7 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		}
 	}
 
+	nodeInfo.Type = nodeType
 	nodeInfo.ExternalIP = externalIP
 	nodeInfo.BandwidthUp = units.KiB
 
@@ -187,7 +206,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		}
 	}
 
-	cNode.OnlineDuration = nodeInfo.OnlineDuration
 	cNode.BandwidthDown = nodeInfo.BandwidthDown
 	cNode.BandwidthUp = nodeInfo.BandwidthUp
 	cNode.PortMapping = nodeInfo.PortMapping
@@ -199,14 +217,22 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	cNode.DiskSpace = nodeInfo.DiskSpace
 	cNode.TitanDiskUsage = nodeInfo.TitanDiskUsage
 	cNode.DiskUsage = nodeInfo.DiskUsage
-	cNode.IncomeIncr = (cNode.CalculateMCx(s.NodeManager.TotalNetworkEdges) * 360)
+	cNode.IncomeIncr = (s.NodeManager.NodeCalculateMCx() * 360)
 
-	pCount, err := s.db.GetNodePullingCount(nodeID)
-	if err == nil {
-		cNode.PullAssetCount = int(pCount)
-	}
+	// pCount, err := s.db.GetNodePullingCount(nodeID)
+	// if err == nil {
+	// 	cNode.PullAssetCount = int(pCount)
+	// }
 
 	if !alreadyConnect {
+		version, err := cNode.API.Version(ctx)
+		if err != nil {
+			log.Infof("node connected %s, Version:%s ", nodeID, err.Error())
+		} else {
+			cNode.IsNewVersion = version.Version == "0.1.18"
+			log.Infof("node connected %s, Version:%s , %v", nodeID, version.Version, cNode.IsNewVersion)
+		}
+
 		pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
 		if err != nil && err != sql.ErrNoRows {
 			return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
@@ -230,7 +256,6 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	}
 
 	s.DataSync.AddNodeToList(nodeID)
-
 	return nil
 }
 
@@ -360,11 +385,16 @@ func (s *Scheduler) GetValidationInfo(ctx context.Context) (*types.ValidationInf
 
 // SubmitUserWorkloadReport submits report of workload for User Asset Download
 func (s *Scheduler) SubmitUserWorkloadReport(ctx context.Context, r io.Reader) error {
-	return nil
 	// nodeID := handler.GetNodeID(ctx)
+	// cipherText, err := io.ReadAll(r)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// log.Infof("SubmitUserWorkloadReport %s , size:%d\n", nodeID, len(cipherText))
+	return nil
 	// node := s.NodeManager.GetNode(nodeID)
 
-	// cipherText, err := io.ReadAll(r)
 	// if err != nil {
 	// 	return err
 	// }
@@ -380,30 +410,54 @@ func (s *Scheduler) SubmitUserWorkloadReport(ctx context.Context, r io.Reader) e
 
 // SubmitNodeWorkloadReport submits report of workload for node Asset Download
 func (s *Scheduler) SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) error {
+	// nodeID := handler.GetNodeID(ctx)
+	// cipherText, err := io.ReadAll(r)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// log.Infof("SubmitNodeWorkloadReport %s , size:%d\n", nodeID, len(cipherText))
+	return nil
+	// nodeID := handler.GetNodeID(ctx)
+	// node := s.NodeManager.GetNode(nodeID)
+	// if node == nil {
+	// 	return xerrors.Errorf("node %s not exists", nodeID)
+	// }
+
+	// report := &types.NodeWorkloadReport{}
+	// dec := gob.NewDecoder(r)
+	// err := dec.Decode(report)
+	// if err != nil {
+	// 	return xerrors.Errorf("decode data to NodeWorkloadReport error: %w", err)
+	// }
+
+	// titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	// if err = titanRsa.VerifySign(node.PublicKey, report.Sign, report.CipherText); err != nil {
+	// 	return xerrors.Errorf("verify sign error: %w", err)
+	// }
+
+	// data, err := titanRsa.Decrypt(report.CipherText, s.PrivateKey)
+	// if err != nil {
+	// 	return xerrors.Errorf("decrypt error: %w", err)
+	// }
+
+	// return s.WorkloadManager.PushResult(data, node)
+}
+
+func (s *Scheduler) SubmitWorkloadReportV2(ctx context.Context, workload *types.WorkloadRecordReq) error {
+	return s.WorkloadManager.PushResult(workload, "")
+}
+
+// SubmitWorkloadReport
+func (s *Scheduler) SubmitWorkloadReport(ctx context.Context, workload *types.WorkloadRecordReq) error {
 	nodeID := handler.GetNodeID(ctx)
+
 	node := s.NodeManager.GetNode(nodeID)
 	if node == nil {
 		return xerrors.Errorf("node %s not exists", nodeID)
 	}
 
-	report := &types.NodeWorkloadReport{}
-	dec := gob.NewDecoder(r)
-	err := dec.Decode(report)
-	if err != nil {
-		return xerrors.Errorf("decode data to NodeWorkloadReport error: %w", err)
-	}
-
-	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	if err = titanRsa.VerifySign(node.PublicKey, report.Sign, report.CipherText); err != nil {
-		return xerrors.Errorf("verify sign error: %w", err)
-	}
-
-	data, err := titanRsa.Decrypt(report.CipherText, s.PrivateKey)
-	if err != nil {
-		return xerrors.Errorf("decrypt error: %w", err)
-	}
-
-	return s.WorkloadManager.PushResult(data, node)
+	return s.WorkloadManager.PushResult(workload, nodeID)
 }
 
 // GetWorkloadRecords retrieves a list of workload results.
@@ -416,10 +470,10 @@ func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, 
 	return s.NodeManager.LoadRetrieveEventRecords(nodeID, limit, offset)
 }
 
-// GetWorkloadRecord retrieves workload result.
-func (s *Scheduler) GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) {
-	return s.NodeManager.LoadWorkloadRecord(tokenID)
-}
+// // GetWorkloadRecord retrieves workload result.
+// func (s *Scheduler) GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) {
+// 	return s.NodeManager.LoadWorkloadRecord(tokenID)
+// }
 
 // ElectValidators elect validators
 func (s *Scheduler) ElectValidators(ctx context.Context, nodeIDs []string) error {
@@ -428,4 +482,8 @@ func (s *Scheduler) ElectValidators(ctx context.Context, nodeIDs []string) error
 	}
 
 	return s.ValidationMgr.CompulsoryElection(nodeIDs)
+}
+
+func (s *Scheduler) AddProfits(ctx context.Context, nodes []string, profit float64) error {
+	return s.db.UpdateNodeProfit(nodes, profit)
 }

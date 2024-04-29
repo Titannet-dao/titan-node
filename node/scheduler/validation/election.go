@@ -1,13 +1,13 @@
 package validation
 
 import (
-	"math"
-	"math/rand"
 	"time"
+
+	"github.com/Filecoin-Titan/titan/api/types"
 )
 
 var (
-	firstElectionInterval = 5 * time.Minute    // Time of the first election
+	firstElectionInterval = 10 * time.Minute   // Time of the first election
 	electionCycle         = 1 * 24 * time.Hour // Election cycle
 )
 
@@ -17,26 +17,28 @@ func getTimeAfter(t time.Duration) time.Time {
 
 // triggers the election process at a regular interval.
 func (m *Manager) startElectionTicker() {
-	validators, err := m.nodeMgr.LoadValidators(m.nodeMgr.ServerID)
-	if err != nil {
-		log.Errorf("electionTicker LoadValidators err: %v", err)
-		return
-	}
+	// validators, err := m.nodeMgr.LoadValidators(m.nodeMgr.ServerID)
+	// if err != nil {
+	// 	log.Errorf("electionTicker LoadValidators err: %v", err)
+	// 	return
+	// }
 
-	expiration := m.getElectionCycle()
-	if len(validators) <= 0 {
-		expiration = firstElectionInterval
-	}
+	expiration := m.electionCycle
 
-	m.nextElectionTime = getTimeAfter(expiration)
+	// expiration := m.getElectionCycle()
+	// if len(validators) <= 0 {
+	// 	expiration = firstElectionInterval
+	// }
 
-	ticker := time.NewTicker(expiration)
+	m.nextElectionTime = getTimeAfter(firstElectionInterval)
+
+	ticker := time.NewTicker(firstElectionInterval)
 	defer ticker.Stop()
 
 	doElect := func() {
-		m.nextElectionTime = getTimeAfter(m.getElectionCycle())
+		m.nextElectionTime = getTimeAfter(expiration)
 
-		ticker.Reset(m.getElectionCycle())
+		ticker.Reset(expiration)
 		err := m.elect()
 		if err != nil {
 			log.Errorf("elect err:%s", err.Error())
@@ -56,32 +58,24 @@ func (m *Manager) startElectionTicker() {
 // elect triggers an election and updates the list of validators.
 func (m *Manager) elect() error {
 	log.Debugln("start elect ")
-	validators, validatables := m.electValidators()
 
-	m.ResetValidatorGroup(validators, validatables)
+	m.electValidatorsFromEdge()
+	// validators, validatables := m.electValidators()
 
-	return m.nodeMgr.UpdateValidators(validators, m.nodeMgr.ServerID)
+	// m.ResetValidatorGroup(validators, validatables)
+
+	// return m.nodeMgr.UpdateValidators(validators, m.nodeMgr.ServerID)
+
+	return nil
 }
 
 func (m *Manager) CompulsoryElection(validators []string) error {
-	list, _ := m.nodeMgr.GetAllValidCandidateNodes()
-
-	validatables := make([]string, 0)
-	for _, nid := range list {
-		isV := false
-
-		for _, nid2 := range validators {
-			if nid == nid2 {
-				isV = true
-			}
-		}
-
-		if !isV {
-			validatables = append(validatables, nid)
+	for _, nid2 := range validators {
+		node := m.nodeMgr.GetNode(nid2)
+		if node != nil {
+			node.Type = types.NodeValidator
 		}
 	}
-
-	m.ResetValidatorGroup(validators, validatables)
 
 	return m.nodeMgr.UpdateValidators(validators, m.nodeMgr.ServerID)
 }
@@ -92,50 +86,51 @@ func (m *Manager) StartElection() {
 	m.updateCh <- struct{}{}
 }
 
-// returns the ratio of validators that should be elected, based on the scheduler configuration.
-func (m *Manager) getValidatorRatio() float64 {
-	cfg, err := m.config()
-	if err != nil {
-		log.Errorf("get schedulerConfig err:%s", err.Error())
-		return 0
+// // performs the election process and returns the list of elected validators.
+// func (m *Manager) electValidators() ([]string, []string) {
+// 	ratio := m.getValidatorRatio()
+
+// 	list, _ := m.nodeMgr.GetAllCandidateNodes()
+
+// 	needValidatorCount := int(math.Ceil(float64(len(list)) * ratio))
+// 	if needValidatorCount <= 0 {
+// 		return nil, list
+// 	}
+
+// 	rand.Shuffle(len(list), func(i, j int) {
+// 		list[i], list[j] = list[j], list[i]
+// 	})
+
+// 	if needValidatorCount > len(list) {
+// 		needValidatorCount = len(list)
+// 	}
+
+// 	validators := list[:needValidatorCount]
+// 	validatables := list[needValidatorCount:]
+
+// 	return validators, validatables
+// }
+
+func (m *Manager) electValidatorsFromEdge() {
+	if m.l2ValidatorCount <= 0 {
+		return
 	}
 
-	return cfg.ValidatorRatio
-}
+	list := m.nodeMgr.GetAllEdgeNode()
 
-// returns the election cycle
-func (m *Manager) getElectionCycle() time.Duration {
-	cfg, err := m.config()
-	if err != nil {
-		log.Errorf("get schedulerConfig err:%s", err.Error())
-		return electionCycle
+	curCount := 0
+
+	for _, node := range list {
+		switch node.NATType {
+		case types.NatTypeFullCone, types.NatTypeNo:
+			if node.IsNewVersion && curCount < m.l2ValidatorCount {
+				node.Type = types.NodeValidator
+				curCount++
+			} else {
+				node.Type = types.NodeEdge
+			}
+		default:
+			node.Type = types.NodeEdge
+		}
 	}
-
-	return time.Duration(cfg.ElectionCycle*24) * time.Hour
-}
-
-// performs the election process and returns the list of elected validators.
-func (m *Manager) electValidators() ([]string, []string) {
-	ratio := m.getValidatorRatio()
-
-	list, _ := m.nodeMgr.GetAllValidCandidateNodes()
-
-	needValidatorCount := int(math.Ceil(float64(len(list)) * ratio))
-	if needValidatorCount <= 0 {
-		return nil, list
-	}
-
-	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(list), func(i, j int) {
-		list[i], list[j] = list[j], list[i]
-	})
-
-	if needValidatorCount > len(list) {
-		needValidatorCount = len(list)
-	}
-
-	validators := list[:needValidatorCount]
-	validatables := list[needValidatorCount:]
-
-	return validators, validatables
 }

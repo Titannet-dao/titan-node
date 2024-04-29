@@ -46,6 +46,7 @@ type AssetRecord struct {
 	State                 string          `db:"state"`
 	NeedBandwidth         int64           `db:"bandwidth"` // unit:MiB/
 	Note                  string          `db:"note"`
+	Source                int64           `db:"source"`
 
 	RetryCount        int64 `db:"retry_count"`
 	ReplenishReplicas int64 `db:"replenish_replicas"`
@@ -184,6 +185,20 @@ type AssetStats struct {
 	DiskUsage           float64
 }
 
+// AssetSource aws or storage
+type AssetSource int64
+
+const (
+	// AssetSourceAdminPull
+	AssetSourceAdminPull AssetSource = iota
+	// AssetSourceAWS status
+	AssetSourceAWS
+	// AssetSourceStorage status
+	AssetSourceStorage
+	// AssetSourceMinio status
+	AssetSourceMinio
+)
+
 // InProgressAsset represents an asset that is currently being fetched, including its progress details.
 type InProgressAsset struct {
 	CID       string
@@ -242,6 +257,7 @@ type ReplicaEventInfo struct {
 	Event   ReplicaEvent `db:"event"`
 	Hash    string       `db:"hash"`
 	EndTime time.Time    `db:"end_time"`
+	Source  int64        `db:"source"`
 
 	Cid        string    `db:"cid"`
 	TotalSize  int64     `db:"total_size"`

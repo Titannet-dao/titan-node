@@ -1,9 +1,7 @@
 package asset
 
 import (
-	"bytes"
 	"context"
-	"crypto"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,8 +16,8 @@ import (
 	"github.com/Filecoin-Titan/titan/node/asset/fetcher"
 	"github.com/Filecoin-Titan/titan/node/asset/index"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
+	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/ipld"
-	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	validate "github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -43,6 +41,7 @@ type assetWaiter struct {
 
 // Manager is the struct that manages asset pulling and store
 type Manager struct {
+	ctx context.Context
 	// root cid of asset
 	waitList     []*assetWaiter
 	waitListLock *sync.Mutex
@@ -51,15 +50,14 @@ type Manager struct {
 	lru          *lruCache
 	storage.Storage
 	api.Scheduler
-	pullParallel int
-	pullTimeout  int
-	pullRetry    int
+	pullerConfig *config.Puller
 
 	// save asset upload status
 	uploadingAssets *sync.Map
 
 	// hold the error msg, and wait for scheduler query asset progress
 	pullAssetErrMsgs *sync.Map
+	rateLimiter      *types.RateLimiter
 }
 
 // ManagerOptions is the struct that contains options for Manager
@@ -67,19 +65,19 @@ type ManagerOptions struct {
 	Storage      storage.Storage
 	IPFSAPIURL   string
 	SchedulerAPI api.Scheduler
-	PullParallel int
-	PullTimeout  int
-	PullRetry    int
+	PullerConfig *config.Puller
+	RateLimiter  *types.RateLimiter
 }
 
 // NewManager creates a new instance of Manager
-func NewManager(opts *ManagerOptions) (*Manager, error) {
+func NewManager(ctx context.Context, opts *ManagerOptions) (*Manager, error) {
 	lru, err := newLRUCache(opts.Storage, maxSizeOfCache)
 	if err != nil {
 		return nil, err
 	}
 
 	m := &Manager{
+		ctx:          ctx,
 		waitList:     make([]*assetWaiter, 0),
 		waitListLock: &sync.Mutex{},
 		pullCh:       make(chan bool),
@@ -87,9 +85,8 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		ipfsAPIURL:   opts.IPFSAPIURL,
 		lru:          lru,
 		Scheduler:    opts.SchedulerAPI,
-		pullParallel: opts.PullParallel,
-		pullTimeout:  opts.PullTimeout,
-		pullRetry:    opts.PullRetry,
+		pullerConfig: opts.PullerConfig,
+		rateLimiter:  opts.RateLimiter,
 
 		uploadingAssets:  &sync.Map{},
 		pullAssetErrMsgs: &sync.Map{},
@@ -99,29 +96,36 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 
 	go m.start()
 
-	go m.syncDataWithAssetView()
+	go m.regularSyncDataWithAssetView()
 
 	return m, nil
 }
 
 // startTick is a helper function that is used to check waitList and save puller
 func (m *Manager) startTick() {
+	defer log.Debugf("manager tick finish")
+
+	ticker := time.NewTicker(10 * time.Second)
+
 	for {
-		time.Sleep(10 * time.Second)
+		select {
+		case <-ticker.C:
+			if len(m.waitList) > 0 {
+				puller := m.puller()
+				if puller != nil {
+					if err := m.savePuller(puller); err != nil {
+						log.Error("save puller error:%s", err.Error())
+					}
 
-		if len(m.waitList) > 0 {
-			puller := m.puller()
-			if puller != nil {
-				if err := m.savePuller(puller); err != nil {
-					log.Error("save puller error:%s", err.Error())
+					log.Debugf("total block %d, done block %d, total size %d, done size %d",
+						len(puller.blocksPulledSuccessList)+len(puller.blocksWaitList),
+						len(puller.blocksPulledSuccessList),
+						puller.totalSize,
+						puller.doneSize)
 				}
-
-				log.Debugf("total block %d, done block %d, total size %d, done size %d",
-					len(puller.blocksPulledSuccessList)+len(puller.blocksWaitList),
-					len(puller.blocksPulledSuccessList),
-					puller.totalSize,
-					puller.doneSize)
 			}
+		case <-m.ctx.Done():
+			return
 		}
 
 	}
@@ -137,14 +141,24 @@ func (m *Manager) triggerPuller() {
 
 // start is a helper function that starts the Manager and begins downloading assets
 func (m *Manager) start() {
+	defer log.Debugf("Manager finish")
+
+	// close the assetView db
+	defer m.CloseAssetView()
+
 	go m.startTick()
 
 	// delay 15 second to pull asset if exist waitList
 	time.AfterFunc(15*time.Second, m.triggerPuller)
 
 	for {
-		<-m.pullCh
-		m.pullAssets()
+		select {
+		case <-m.pullCh:
+			m.pullAssets()
+		case <-m.ctx.Done():
+			return
+		}
+
 	}
 }
 
@@ -164,14 +178,13 @@ func (m *Manager) doPullAsset() {
 	defer m.removeAssetFromWaitList(aw.Root)
 
 	opts := &pullerOptions{
-		root:       aw.Root,
-		dss:        aw.Dss,
-		storage:    m.Storage,
-		ipfsAPIURL: m.ipfsAPIURL,
-		parallel:   m.pullParallel,
-		timeout:    m.pullTimeout,
-		retry:      m.pullRetry,
-		httpClient: client.NewHTTP3Client(),
+		root:        aw.Root,
+		dss:         aw.Dss,
+		storage:     m.Storage,
+		ipfsAPIURL:  m.ipfsAPIURL,
+		config:      m.pullerConfig,
+		rateLimiter: m.rateLimiter.BandwidthDownLimiter,
+		httpClient:  client.NewHTTP3Client(),
 	}
 
 	assetPuller, err := m.restoreAssetPullerOrNew(opts)
@@ -264,11 +277,6 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller, isSyncData bool) {
 
 	if puller.isPulledComplete() {
 		if len(puller.blocksPulledSuccessList) > 0 {
-			blockCountOfAsset := uint32(len(puller.blocksPulledSuccessList))
-			if err := m.SetBlockCount(context.Background(), puller.root, blockCountOfAsset); err != nil {
-				log.Errorf("set block count error:%s", err.Error())
-			}
-
 			if err := m.StoreBlocksToCar(context.Background(), puller.root); err != nil {
 				log.Errorf("store asset error: %s", err.Error())
 			}
@@ -292,7 +300,7 @@ func (m *Manager) onPullAssetFinish(puller *assetPuller, isSyncData bool) {
 		log.Errorf("remove asset puller error:%s", err.Error())
 	}
 
-	if err := m.submitPullerWorkloadReport(puller); err != nil {
+	if err := m.submitPullerWorkloads(puller); err != nil {
 		log.Errorf("submitPullerWorkloadReport error %s", err.Error())
 	}
 
@@ -382,10 +390,6 @@ func (m *Manager) DeleteAsset(root cid.Cid) error {
 		} else if e.Err != syscall.ENOENT {
 			return err
 		}
-	}
-
-	if err := m.Storage.DeleteBlockCount(context.Background(), root); err != nil {
-		log.Errorf("DeleteBlockCount error %s", err.Error())
 	}
 
 	return m.RemoveAssetFromView(context.Background(), root)
@@ -490,6 +494,16 @@ func (m *Manager) progressForAssetPulledFailed(root cid.Cid) (*types.AssetPullPr
 		Status: types.ReplicaStatusFailed,
 	}
 
+	if v, ok := m.pullAssetErrMsgs.LoadAndDelete(root.Hash().String()); ok {
+		msg := v.([]*fetcher.ErrMsg)
+		buf, err := json.Marshal(msg)
+		if err != nil {
+			log.Errorf("marshal fetcher.ErrMsg %s", err.Error())
+		} else {
+			progress.Msg = string(buf)
+		}
+	}
+
 	data, err := m.GetPuller(root)
 	if os.IsNotExist(err) {
 		return progress, nil
@@ -509,16 +523,6 @@ func (m *Manager) progressForAssetPulledFailed(root cid.Cid) (*types.AssetPullPr
 	progress.DoneBlocksCount = len(cc.blocksPulledSuccessList)
 	progress.Size = int64(cc.totalSize)
 	progress.DoneSize = int64(cc.doneSize)
-
-	if v, ok := m.pullAssetErrMsgs.LoadAndDelete(root.Hash().String()); ok {
-		msg := v.([]*fetcher.ErrMsg)
-		buf, err := json.Marshal(msg)
-		if err != nil {
-			log.Errorf("marshal fetcher.ErrMsg %s", err.Error())
-		} else {
-			progress.Msg = string(buf)
-		}
-	}
 
 	return progress, nil
 }
@@ -685,34 +689,20 @@ func (m *Manager) getNodes(ctx context.Context, bs *blockstore.ReadOnly, links [
 	return nil
 }
 
-func (m *Manager) submitPullerWorkloadReport(puller *assetPuller) error {
-	if len(puller.downloadSources) == 0 {
+func (m *Manager) submitPullerWorkloads(puller *assetPuller) error {
+	if len(puller.workloads) == 0 {
 		return nil
 	}
 
-	buf, err := puller.encodeWorkloadReports()
-	if err != nil {
-		return err
+	workloads := make([]types.Workload, 0, len(puller.workloads))
+	for _, w := range puller.workloads {
+		workloads = append(workloads, *w)
 	}
 
-	// TODO: update and get scheduler publicKey from same place
-	pem, err := m.GetSchedulerPublicKey(context.Background())
-	if err != nil {
-		return err
-	}
+	req := types.WorkloadRecordReq{AssetCID: puller.root.String(), Workloads: workloads}
+	log.Debugf("WorkloadRecordReq ", req)
 
-	publicKey, err := titanrsa.Pem2PublicKey([]byte(pem))
-	if err != nil {
-		return err
-	}
-
-	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	cipherText, err := titanRsa.Encrypt(buf, publicKey)
-	if err != nil {
-		return err
-	}
-
-	return m.SubmitUserWorkloadReport(context.Background(), bytes.NewBuffer(cipherText))
+	return m.SubmitWorkloadReport(context.Background(), &req)
 }
 
 func (m *Manager) SaveUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error {
@@ -754,6 +744,7 @@ func (m *Manager) GetUploadingAsset(ctx context.Context, root cid.Cid) (*types.U
 }
 
 func (m *Manager) regularSyncDataWithAssetView() {
+	defer log.Debugf("regularSyncDataWithAssetView finish")
 	if err := m.syncDataWithAssetView(); err != nil {
 		log.Errorln(err)
 	}
@@ -765,9 +756,10 @@ func (m *Manager) regularSyncDataWithAssetView() {
 			if err := m.syncDataWithAssetView(); err != nil {
 				log.Errorln(err)
 			}
+		case <-m.ctx.Done():
+			return
 		}
 	}
-
 }
 
 func (m *Manager) syncDataWithAssetView() error {
@@ -779,7 +771,7 @@ func (m *Manager) syncDataWithAssetView() error {
 	}
 
 	assetCIDsInView := make([]cid.Cid, 0)
-	for bucket, _ := range bucketHashMap {
+	for bucket := range bucketHashMap {
 		cids, err := m.Storage.GetAssetsInBucket(context.Background(), bucket)
 		if err != nil {
 			return fmt.Errorf("syncDataWithAssetView, GetAssetsInBucket erorr %s", err.Error())

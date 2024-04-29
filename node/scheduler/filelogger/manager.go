@@ -48,7 +48,7 @@ func NewManager(sdb *db.SQLDB, serverID dtypes.ServerID, lmgr *leadership.Manage
 func (m *Manager) startTimer() {
 	now := time.Now()
 
-	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, now.Location())
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, time.UTC)
 	if now.After(nextTime) {
 		nextTime = nextTime.Add(oneDay)
 	}

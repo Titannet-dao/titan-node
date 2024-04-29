@@ -39,6 +39,15 @@ type Basic struct {
 	Token string
 }
 
+type Puller struct {
+	// PullBlockTimeout get block timeout
+	PullBlockTimeout int
+	// PullBlockRetry retry when get block failed
+	PullBlockRetry int
+	// PullBlockParallel the number of goroutine to pull block
+	PullBlockParallel int
+}
+
 // EdgeCfg edge node config
 type EdgeCfg struct {
 	Network Network
@@ -56,17 +65,13 @@ type EdgeCfg struct {
 	PrivateKeyPath string
 	// self sign certificate, use for client
 	CaCertificatePath string
-	// PullBlockTimeout get block timeout
-	PullBlockTimeout int
-	// PullBlockRetry retry when get block failed
-	PullBlockRetry int
-	// PullBlockParallel the number of goroutine to pull block
-	PullBlockParallel int
 	TCPSrvAddr        string
 	IPFSAPIURL        string
 	// seconds
 	ValidateDuration    int
 	MaxSizeOfUploadFile int
+
+	Puller Puller
 
 	Bandwidth Bandwidth
 	Storage   Storage
@@ -153,7 +158,7 @@ type SchedulerCfg struct {
 	ValidationProfit float64
 	// Increased profit after node workload passes
 	WorkloadProfit float64
-	// ElectionCycle cycle (Unit:day)
+	// ElectionCycle cycle (Unit:Hour)
 	ElectionCycle int
 	// Node score level scale
 	// The key of map is the rank name, and the value of map is a int array containing two elements,
@@ -191,4 +196,8 @@ type SchedulerCfg struct {
 
 	IPLimit            int
 	FillAssetEdgeCount int64
+
+	StorageCandidates []string
+
+	L2ValidatorCount int
 }

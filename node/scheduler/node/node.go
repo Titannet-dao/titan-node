@@ -7,7 +7,6 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -48,22 +47,25 @@ type Node struct {
 	DiskUsage      float64
 	TitanDiskUsage float64
 
-	OnlineDuration int
-	Type           types.NodeType
-	PortMapping    string
-	BandwidthDown  int64
-	BandwidthUp    int64
+	Type          types.NodeType
+	PortMapping   string
+	BandwidthDown int64
+	BandwidthUp   int64
 
 	DeactivateTime int64
 
 	IsPrivateMinioOnly bool
+	IsStorageOnly      bool
 
 	ExternalIP         string
 	IncomeIncr         float64
 	DiskSpace          float64
 	AvailableDiskSpace float64
 
-	PullAssetCount int
+	numberOfIPChanges          int64
+	resetNumberOfIPChangesTime time.Time
+
+	IsNewVersion bool
 }
 
 // API represents the node API
@@ -79,14 +81,16 @@ type API struct {
 	ExternalServiceAddress func(ctx context.Context, candidateURL string) (string, error)
 	UserNATPunch           func(ctx context.Context, sourceURL string, req *types.NatPunchReq) error
 	// candidate api
-	GetBlocksOfAsset         func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error)
-	CheckNetworkConnectivity func(ctx context.Context, network, targetURL string) error
-	GetMinioConfig           func(ctx context.Context) (*types.MinioConfig, error)
+	GetBlocksOfAsset        func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error)
+	CheckNetworkConnectable func(ctx context.Context, network, targetURL string) (bool, error)
+	GetMinioConfig          func(ctx context.Context) (*types.MinioConfig, error)
 }
 
 // New creates a new node
 func New() *Node {
-	node := &Node{}
+	node := &Node{
+		resetNumberOfIPChangesTime: time.Now(),
+	}
 
 	return node
 }
@@ -109,17 +113,29 @@ func APIFromEdge(api api.Edge) *API {
 // APIFromCandidate creates a new API from a Candidate API
 func APIFromCandidate(api api.Candidate) *API {
 	a := &API{
-		Common:                   api,
-		Device:                   api,
-		Validation:               api,
-		DataSync:                 api,
-		Asset:                    api,
-		WaitQuiet:                api.WaitQuiet,
-		GetBlocksOfAsset:         api.GetBlocksWithAssetCID,
-		CheckNetworkConnectivity: api.CheckNetworkConnectivity,
-		GetMinioConfig:           api.GetMinioConfig,
+		Common:                  api,
+		Device:                  api,
+		Validation:              api,
+		DataSync:                api,
+		Asset:                   api,
+		WaitQuiet:               api.WaitQuiet,
+		GetBlocksOfAsset:        api.GetBlocksWithAssetCID,
+		CheckNetworkConnectable: api.CheckNetworkConnectable,
+		GetMinioConfig:          api.GetMinioConfig,
 	}
 	return a
+}
+
+func (n *Node) SetNumberOfIPChanges(count int64) {
+	n.numberOfIPChanges = count
+
+	if count == 0 {
+		n.resetNumberOfIPChangesTime = time.Now()
+	}
+}
+
+func (n *Node) GetNumberOfIPChanges() (int64, time.Time) {
+	return n.numberOfIPChanges, n.resetNumberOfIPChangesTime
 }
 
 // ConnectRPC connects to the node RPC
@@ -170,6 +186,10 @@ func (n *Node) IsAbnormal() bool {
 
 	// is minio node
 	if n.IsPrivateMinioOnly {
+		return true
+	}
+
+	if n.IsStorageOnly {
 		return true
 	}
 
@@ -261,64 +281,12 @@ func (n *Node) encryptTokenPayload(tkPayload *types.TokenPayload, publicKey *rsa
 	return rsa.Encrypt(buffer.Bytes(), publicKey)
 }
 
-// CalculateIncome Calculate income of the node
-func (n *Node) CalculateIncome(nodeCount, ipNum int) float64 {
-	mb := n.calculateMb()
-	mn := n.calculateMN()
-	mx := weighting(nodeCount)
-	mbn := (mb * mn * mx) / float64(ipNum)
-
-	ds := float64(n.TitanDiskUsage)
-	s := bToGB(ds * 12.5)
-
-	ms := mx * min(s, 2000) * (0.1 + float64(1/max(min(s, 2000), 10)))
-
-	poa := mbn + ms
-	poa = math.Round(poa*1000000) / 1000000
-	log.Debugf("calculatePoints [%s] BandwidthUp:[%d] NAT:[%d:%.2f] ipNum[%d] DiskSpace:[%.2f*12.5=%.2f GB] poa:[%.4f] mbn:[%.4f] ms:[%.4f] mx:[%.1f]", n.NodeID, n.BandwidthUp, n.NATType, mn, ipNum, n.TitanDiskUsage, s, poa, mbn, ms, mx)
-
-	return poa
-}
-
 func bToGB(b float64) float64 {
 	return b / 1024 / 1024 / 1024
 }
 
 func bToMB(b float64) float64 {
 	return b / 1024 / 1024
-}
-
-func (n *Node) calculateMb() float64 {
-	mb := 0.0
-	b := bToMB(float64(n.BandwidthUp))
-	if b <= 5 {
-		mb = 0.05 * b
-	} else if b <= 50 {
-		mb = 0.25 + 0.8*(b-5)
-	} else if b <= 200 {
-		mb = 36.25 + 0.2*(b-50)
-	} else {
-		mb = 66.25
-	}
-
-	return mb
-}
-
-func (n *Node) calculateMN() float64 {
-	switch n.NATType {
-	case types.NatTypeNo:
-		return 1.5
-	case types.NatTypeFullCone:
-		return 1.4
-	case types.NatTypeRestricted:
-		return 1.2
-	case types.NatTypePortRestricted:
-		return 1.1
-	case types.NatTypeSymmetric:
-		return 1
-	}
-
-	return 0
 }
 
 func min(a, b float64) float64 {
@@ -329,61 +297,14 @@ func min(a, b float64) float64 {
 	return b
 }
 
-func max(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-
-	return b
-}
-
-func weighting(num int) float64 {
-	if num <= 2000 {
-		return 1.7
-	} else if num <= 5000 {
-		return 1.6
-	} else if num <= 10000 {
-		return 1.5
-	} else if num <= 15000 {
-		return 1.4
-	} else if num <= 25000 {
-		return 1.3
-	} else if num <= 35000 {
-		return 1.2
-	} else if num <= 50000 {
-		return 1.1
-	} else {
-		return 1
-	}
-}
-
-// Increase every 5 seconds
-func (n *Node) CalculateMCx(count int) float64 {
-	return 0.00289 * weighting(count)
-	// mMbw := bToGB(float64(n.BandwidthUp))
-	// mMsw := bToGB(n.DiskUsage * n.Info.DiskSpace)
-	// if mMsw > 1 {
-	// 	mMsw = 1
-	// }
-
-	// mMcx := min(mMbw, mMsw) * 0.004
-	// mMcx = math.Round(mMcx*1000000) / 1000000
-
-	// log.Debugf("CalculateMCx [%s] bandwidth:[%d] DiskUsage:[%v] DiskSpace:[%v] mMbw:[%v] mMsw:[%v] mMcx:[%v] ", n.NodeID, n.BandwidthUp, n.DiskUsage, n.Info.DiskSpace, mMbw, mMsw, mMcx)
-
-	// return mMcx
-}
-
 func (n *Node) DiskEnough(size float64) bool {
 	residual := ((100 - n.DiskUsage) / 100) * n.DiskSpace
 	if residual <= size {
-		log.Debugf("node %s disk residual n.DiskUsage:%.2f, n.DiskSpace:%.2f", n.NodeID, n.DiskUsage, n.DiskSpace)
 		return false
 	}
 
 	residual = n.AvailableDiskSpace - n.TitanDiskUsage
 	if residual <= size {
-		log.Debugf("node %s disk residual AvailableDiskSpace:%.2f, TitanDiskUsage:%.2f", n.NodeID, n.AvailableDiskSpace, n.TitanDiskUsage)
 		return false
 	}
 

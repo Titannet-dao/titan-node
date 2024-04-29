@@ -2,6 +2,7 @@ package sqldb
 
 import (
 	"fmt"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -21,6 +22,10 @@ func NewDB(path string) (*sqlx.DB, error) {
 	if err = client.Ping(); err != nil {
 		return nil, err
 	}
+
+	client.SetMaxOpenConns(140)
+	client.SetMaxIdleConns(20)
+	client.SetConnMaxLifetime(time.Minute * 5)
 
 	return client, nil
 }
