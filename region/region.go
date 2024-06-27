@@ -1,6 +1,9 @@
 package region
 
 import (
+	"fmt"
+	"strings"
+
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
 )
@@ -25,6 +28,11 @@ type GeoInfo struct {
 	Longitude float64
 	IP        string
 	Geo       string
+
+	Continent string
+	Country   string
+	Province  string
+	City      string
 }
 
 var region Region
@@ -33,7 +41,7 @@ var region Region
 func NewRegion(dbPath, geoType, area string) error {
 	var err error
 
-	defaultArea = area
+	// defaultArea = area
 
 	switch geoType {
 	case TypeGeoLite():
@@ -57,6 +65,35 @@ func DefaultGeoInfo(ip string) *GeoInfo {
 		Latitude:  0,
 		Longitude: 0,
 		IP:        ip,
-		Geo:       defaultArea,
+		Geo:       fmt.Sprintf("%s%s%s%s%s%s%s", unknown, separate, unknown, separate, unknown, separate, unknown),
+
+		Continent: unknown,
+		Country:   unknown,
+		Province:  unknown,
+		City:      unknown,
 	}
+}
+
+func DecodeAreaID(areaID string) (continent, country, province, city string) {
+	parts := strings.Split(areaID, separate)
+
+	size := len(parts)
+	switch size {
+	case 1:
+		continent = parts[0]
+	case 2:
+		continent = parts[0]
+		country = parts[1]
+	case 3:
+		continent = parts[0]
+		country = parts[1]
+		province = parts[2]
+	case 4:
+		continent = parts[0]
+		country = parts[1]
+		province = parts[2]
+		city = parts[3]
+	}
+
+	return
 }

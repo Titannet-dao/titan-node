@@ -23,6 +23,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	"github.com/Filecoin-Titan/titan/region"
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -150,6 +151,7 @@ var runCmd = &cli.Command{
 			node.Base(),
 			node.Repo(r),
 			node.Override(new(dtypes.ShutdownChan), shutdownChan),
+			node.Override(new(*quic.Transport), &quic.Transport{}),
 			node.ApplyIf(func(s *node.Settings) bool { return cctx.IsSet("etcd-addresses") },
 				node.Override(new(dtypes.EtcdAddresses), func() dtypes.EtcdAddresses {
 					return dtypes.EtcdAddresses(cctx.StringSlice("etcd-addresses"))

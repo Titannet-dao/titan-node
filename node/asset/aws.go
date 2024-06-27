@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/lib/carutil"
 	"github.com/Filecoin-Titan/titan/lib/limiter"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/aws/aws-sdk-go/aws"
@@ -23,6 +24,7 @@ import (
 )
 
 const defaultRegion = "us-east-1"
+const tmpAwsAsset = "tmp-aws-asset"
 
 type AWS interface {
 	// PullAssetWithURL download the file locally from the url and save it as car file
@@ -81,6 +83,8 @@ func (ac *awsClient) PullAssetFromAWS(ctx context.Context, bucket, key string) e
 	ac.isRunning = true
 	ac.object = awsObject{bucket: bucket, key: key}
 
+	log.Infof("PullAssetFromAWS bucket %s key %s", bucket, key)
+
 	go func() {
 		defer func() {
 			ac.isRunning = false
@@ -137,7 +141,12 @@ func (ac *awsClient) pullAssetFromAWS(ctx context.Context, bucket, key string) (
 		return cid.Cid{}, 0, err
 	}
 
-	assetTempDirPath := path.Join(assetDir, uuid.NewString())
+	assetTempDirPath := path.Join(assetDir, tmpAwsAsset)
+	// remove old temp file if exist
+	if err = os.RemoveAll(assetTempDirPath); err != nil {
+		return cid.Cid{}, 0, err
+	}
+
 	if err = os.Mkdir(assetTempDirPath, 0755); err != nil {
 		return cid.Cid{}, 0, err
 	}
@@ -148,7 +157,7 @@ func (ac *awsClient) pullAssetFromAWS(ctx context.Context, bucket, key string) (
 	}
 
 	tempCarFile := path.Join(assetDir, uuid.NewString())
-	rootCID, err := createCar(assetTempDirPath, tempCarFile)
+	rootCID, err := carutil.CreateCar(assetTempDirPath, tempCarFile)
 	if err != nil {
 		return cid.Cid{}, 0, err
 	}
@@ -252,7 +261,7 @@ func (ac *awsClient) downloadObject(ctx context.Context, svc *s3.S3, bucket, key
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		fmt.Println("get object error %s", err.Error())
+		fmt.Printf("get object error %s", err.Error())
 		return err
 	}
 	defer result.Body.Close()

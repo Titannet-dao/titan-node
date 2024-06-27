@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,48 +25,27 @@ import (
 
 // Node represents an Edge or Candidate node
 type Node struct {
-	NodeID string
-
+	// NodeID string
 	*API
 	jsonrpc.ClientCloser
-
+	*types.NodeInfo
 	token string
 
-	lastRequestTime time.Time // Node last keepalive time
-
-	selectWeights []int // The select weights assigned by the scheduler to each online node
-
-	// node info
-	PublicKey   *rsa.PublicKey
-	RemoteAddr  string
-	TCPPort     int
-	ExternalURL string
-
-	NATType        types.NatType
-	CPUUsage       float64
-	MemoryUsage    float64
-	DiskUsage      float64
-	TitanDiskUsage float64
-
-	Type          types.NodeType
-	PortMapping   string
-	BandwidthDown int64
-	BandwidthUp   int64
-
-	DeactivateTime int64
-
-	IsPrivateMinioOnly bool
-	IsStorageOnly      bool
-
-	ExternalIP         string
-	IncomeIncr         float64
-	DiskSpace          float64
-	AvailableDiskSpace float64
-
+	selectWeights              []int // The select weights assigned by the scheduler to each online node
 	numberOfIPChanges          int64
 	resetNumberOfIPChangesTime time.Time
 
-	IsNewVersion bool
+	// node info
+	PublicKey          *rsa.PublicKey
+	TCPPort            int
+	ExternalURL        string
+	IsPrivateMinioOnly bool
+	IsStorageOnly      bool
+
+	OnlineRate float64
+
+	KeepaliveCount   int
+	LastValidateTime int64
 }
 
 // API represents the node API
@@ -76,10 +56,11 @@ type API struct {
 	api.Validation
 	api.DataSync
 	api.Asset
+	api.Workerd
 	WaitQuiet func(ctx context.Context) error
 	// edge api
-	ExternalServiceAddress func(ctx context.Context, candidateURL string) (string, error)
-	UserNATPunch           func(ctx context.Context, sourceURL string, req *types.NatPunchReq) error
+	// ExternalServiceAddress func(ctx context.Context, candidateURL string) (string, error)
+	UserNATPunch func(ctx context.Context, sourceURL string, req *types.NatPunchReq) error
 	// candidate api
 	GetBlocksOfAsset        func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error)
 	CheckNetworkConnectable func(ctx context.Context, network, targetURL string) (bool, error)
@@ -98,14 +79,14 @@ func New() *Node {
 // APIFromEdge creates a new API from an Edge API
 func APIFromEdge(api api.Edge) *API {
 	a := &API{
-		Common:                 api,
-		Device:                 api,
-		Validation:             api,
-		DataSync:               api,
-		Asset:                  api,
-		WaitQuiet:              api.WaitQuiet,
-		ExternalServiceAddress: api.ExternalServiceAddress,
-		UserNATPunch:           api.UserNATPunch,
+		Common:       api,
+		Device:       api,
+		Validation:   api,
+		DataSync:     api,
+		Asset:        api,
+		WaitQuiet:    api.WaitQuiet,
+		UserNATPunch: api.UserNATPunch,
+		Workerd:      api,
 	}
 	return a
 }
@@ -189,10 +170,6 @@ func (n *Node) IsAbnormal() bool {
 		return true
 	}
 
-	if n.IsStorageOnly {
-		return true
-	}
-
 	return false
 }
 
@@ -223,6 +200,38 @@ func (n *Node) RPCURL() string {
 	return fmt.Sprintf("https://%s/rpc/v0", n.RemoteAddr)
 }
 
+func (n *Node) WsURL() string {
+	wsURL, err := transformURL(n.ExternalURL)
+	if err != nil {
+		wsURL = fmt.Sprintf("ws://%s", n.RemoteAddr)
+	}
+
+	return wsURL
+}
+
+func transformURL(inputURL string) (string, error) {
+	// Parse the URL from the string
+	parsedURL, err := url.Parse(inputURL)
+	if err != nil {
+		return "", err
+	}
+
+	switch parsedURL.Scheme {
+	case "https":
+		parsedURL.Scheme = "wss"
+	case "http":
+		parsedURL.Scheme = "ws"
+	default:
+		return "", xerrors.New("Scheme not http or https")
+	}
+
+	// Remove the path to clear '/rpc/v0'
+	parsedURL.Path = ""
+
+	// Return the modified URL as a string
+	return parsedURL.String(), nil
+}
+
 // DownloadAddr returns the download address of the node
 func (n *Node) DownloadAddr() string {
 	addr := n.RemoteAddr
@@ -237,12 +246,12 @@ func (n *Node) DownloadAddr() string {
 
 // LastRequestTime returns the last request time of the node
 func (n *Node) LastRequestTime() time.Time {
-	return n.lastRequestTime
+	return n.LastSeen
 }
 
 // SetLastRequestTime sets the last request time of the node
 func (n *Node) SetLastRequestTime(t time.Time) {
-	n.lastRequestTime = t
+	n.LastSeen = t
 }
 
 // Token returns the token of the node
@@ -289,6 +298,10 @@ func bToMB(b float64) float64 {
 	return b / 1024 / 1024
 }
 
+func bToKB(b float64) float64 {
+	return b / 1024
+}
+
 func min(a, b float64) float64 {
 	if a < b {
 		return a
@@ -305,6 +318,30 @@ func (n *Node) DiskEnough(size float64) bool {
 
 	residual = n.AvailableDiskSpace - n.TitanDiskUsage
 	if residual <= size {
+		return false
+	}
+
+	return true
+}
+
+func (n *Node) NetFlowUpExcess(size float64) bool {
+	if n.NetFlowUp <= 0 {
+		return false
+	}
+
+	if n.NetFlowUp >= n.UploadTraffic+int64(size) {
+		return false
+	}
+
+	return true
+}
+
+func (n *Node) NetFlowDownExcess(size float64) bool {
+	if n.NetFlowDown <= 0 {
+		return false
+	}
+
+	if n.NetFlowDown >= n.DownloadTraffic+int64(size) {
 		return false
 	}
 

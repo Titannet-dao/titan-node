@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/config"
@@ -26,6 +28,12 @@ const (
 	sizeOfBucket  = 128
 )
 
+// hold the assetsPath's partition
+type partition struct {
+	assetsPath    string
+	diskPartition disk.PartitionStat
+}
+
 // Manager handles storage operations
 type Manager struct {
 	opts         *ManagerOptions
@@ -34,6 +42,7 @@ type Manager struct {
 	puller       *puller
 	assetsView   *assetsView
 	minioService IMinioService
+	// mountPoints  map[string]*partition
 }
 
 // ManagerOptions contains configuration options for the Manager
@@ -50,6 +59,16 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 	if iminio, err := newMinioService(opts.MinioConfig, opts.SchedulerAPI); err == nil {
 		minio = iminio
 	}
+
+	// check assetsPaths if in same disk partition
+	// mountPoints, err := getPartitions(opts.AssetsPaths)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// for _, mountPoint := range mountPoints {
+	// 	log.Infof("mount point %s --> %s", mountPoint.assetsPath, mountPoint.diskPartition.Mountpoint)
+	// }
 
 	assetsPaths, err := newAssetsPaths(opts.AssetsPaths, assetsDir)
 	if err != nil {
@@ -79,6 +98,7 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		puller:       puller,
 		opts:         opts,
 		minioService: minio,
+		// mountPoints:  mountPoints,
 	}, nil
 }
 
@@ -213,16 +233,82 @@ func (m *Manager) GetDiskUsageStat() (totalSpace, usage float64) {
 		return 0, 0
 	}
 
-	usageStat, err := disk.Usage(m.opts.AssetsPaths[0])
-	if err != nil {
-		log.Errorf("get disk usage stat error: %s", err)
-		return 0, 0
+	total := float64(0)
+	used := float64(0)
+	for _, assetPath := range m.opts.AssetsPaths {
+		usageStat, err := disk.Usage(assetPath)
+		if err != nil {
+			log.Errorf("get disk usage stat error: %s", err)
+			return total, used / total * 100
+		}
+
+		total += float64(usageStat.Total)
+		used += usageStat.UsedPercent / 100 * float64(usageStat.Total)
 	}
-	// TODO stat assets storage
-	return float64(usageStat.Total), usageStat.UsedPercent
+
+	// log.Infof("total %0.2f, used percent %0.2f ", total, used/total*100)
+	return total, used / total * 100
 }
 
 // GetFileSystemType retrieves the type of the file system
 func (m *Manager) GetFileSystemType() string {
+	// fsTypeMap := make(map[string]struct{})
+	// for _, partition := range m.mountPoints {
+	// 	fsTypeMap[partition.diskPartition.Fstype] = struct{}{}
+	// }
+
+	// fsTypes := ""
+	// for fsType := range fsTypeMap {
+	// 	fsTypes += "," + fsType
+	// }
+	// return strings.TrimPrefix(fsTypes, ",")
 	return "not implement"
+}
+
+func getPartitions(assetsPaths []string) (map[string]*partition, error) {
+	mountPoints := make(map[string]*partition)
+	infos, _ := disk.Partitions(false)
+
+	var rootPartition disk.PartitionStat
+	for _, info := range infos {
+		if info.Mountpoint == "/" {
+			rootPartition = info
+			break
+		}
+	}
+
+	for _, assetsPath := range assetsPaths {
+		isAssetsPathExistMountPoint := false
+		for _, info := range infos {
+			if info.Mountpoint == "/" {
+				continue
+			}
+
+			if !strings.HasPrefix(assetsPath, info.Mountpoint) {
+				continue
+			}
+
+			if path, ok := mountPoints[info.Mountpoint]; ok {
+				return nil, fmt.Errorf("assetsPath %s and %s is in same mount piont %s", path, assetsPath, info.Mountpoint)
+			}
+
+			mountPoints[info.Mountpoint] = &partition{assetsPath: assetsPath, diskPartition: info}
+			isAssetsPathExistMountPoint = true
+			break
+		}
+
+		if !isAssetsPathExistMountPoint {
+			if !strings.HasPrefix(assetsPath, "/") {
+				return nil, fmt.Errorf("assetsPath %s not exist mount pint", assetsPath)
+			}
+
+			if pt, ok := mountPoints["/"]; ok {
+				return nil, fmt.Errorf("assetsPath %s and %s is in same mount piont /", pt.assetsPath, assetsPath)
+			}
+
+			mountPoints["/"] = &partition{assetsPath: assetsPath, diskPartition: rootPartition}
+		}
+	}
+
+	return mountPoints, nil
 }

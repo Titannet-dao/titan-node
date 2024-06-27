@@ -2,6 +2,8 @@ package asset
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/asset/storage"
 	"github.com/Filecoin-Titan/titan/node/ipld"
+	"github.com/docker/go-units"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/blocks"
@@ -57,9 +60,54 @@ func (a *Asset) PullAsset(ctx context.Context, rootCID string, infos []*types.Ca
 		return nil
 	}
 
-	log.Infof("Pull asset %s", rootCID)
+	log.Infof("PullAsset %s", rootCID)
 
-	a.mgr.addToWaitList(root, infos, false)
+	var aws *types.AWSDownloadSources = nil
+	dInfos := make([]*types.SourceDownloadInfo, len(infos))
+	for _, info := range infos {
+		dInfo := &types.SourceDownloadInfo{NodeID: info.NodeID, Address: info.Address, Tk: info.Tk}
+		dInfos = append(dInfos, dInfo)
+
+		if len(info.AWSBucket) > 0 && len(info.AWSKey) > 0 {
+			aws = &types.AWSDownloadSources{}
+			aws.Bucket = info.AWSBucket
+			aws.Key = info.AWSKey
+		}
+	}
+
+	dss := &types.DownloadSources{AWS: aws, Nodes: dInfos}
+	aw := &assetWaiter{Root: root, Dss: dss, isSyncData: false}
+	a.mgr.addToWaitList(aw)
+
+	return nil
+}
+
+// PullAsset adds the asset to the waitList for pulling
+func (a *Asset) PullAssetV2(ctx context.Context, req *types.AssetPullRequest) error {
+	if types.RunningNodeType == types.NodeEdge && req.Dss == nil {
+		return fmt.Errorf("candidate download infos can not empty")
+	}
+
+	root, err := cid.Decode(req.AssetCID)
+	if err != nil {
+		return err
+	}
+
+	has, err := a.mgr.AssetExists(root)
+	if err != nil {
+		return err
+	}
+
+	if has {
+		log.Debugf("Asset %s already exist", root.String())
+		return nil
+	}
+
+	buf, _ := json.Marshal(req)
+	log.Infof("PullAssetV2 %s, dss %s", root.String(), string(buf))
+
+	aw := &assetWaiter{Root: root, Dss: req.Dss, isSyncData: false, workloadID: req.WorkloadID}
+	a.mgr.addToWaitList(aw)
 	return nil
 }
 
@@ -82,9 +130,12 @@ func (a *Asset) DeleteAsset(ctx context.Context, assetCID string) error {
 		_, diskUsage := a.mgr.GetDiskUsageStat()
 		ret := types.RemoveAssetResult{BlocksCount: a.TotalBlockCount, DiskUsage: diskUsage}
 
-		if err := a.scheduler.NodeRemoveAssetResult(context.Background(), ret); err != nil {
+		err = a.scheduler.NodeRemoveAssetResult(context.Background(), ret)
+		if err != nil {
 			log.Errorf("remove asset result failed %s", err.Error())
 		}
+
+		a.mgr.releaser.setFile(c.Hash().String(), err)
 	}()
 
 	return nil
@@ -315,6 +366,59 @@ func (a *Asset) GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, 
 	}
 	return hashes, nil
 }
+
 func (a *Asset) SyncAssetViewAndData(ctx context.Context) error {
 	return a.mgr.syncDataWithAssetView()
+}
+
+func (a *Asset) RequestFreeUpDisk(ctx context.Context, size float64) error {
+	if a.mgr.releaser.count() > 0 {
+		return errors.New("the last free-up-disk task is not done")
+	}
+
+	if size <= 0 {
+		return nil
+	}
+	freeBytes := int64(size * units.GiB)
+
+	ret, err := a.scheduler.FreeUpDiskSpace(ctx, "", freeBytes)
+
+	if ret != nil && ret.NextTime > 0 {
+		a.mgr.releaser.setNextTime(ret.NextTime)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	a.mgr.releaser.initFiles(ret.Hashes)
+
+	return nil
+}
+
+func (a *Asset) StateFreeUpDisk(ctx context.Context) (*types.FreeUpDiskStateResp, error) {
+	var res []*types.FreeUpDiskState
+	for _, v := range a.mgr.releaser.load() {
+		res = append(res, &types.FreeUpDiskState{
+			Hash:   v.Hash,
+			ErrMsg: v.ErrMsg,
+		})
+	}
+	// if restart nextTime would be remove from memory, this retrieve the time from scheduler
+	if a.mgr.releaser.nextTime == 0 {
+		t, err := a.scheduler.GetNextFreeTime(ctx, "")
+		if err != nil {
+			return nil, fmt.Errorf("get free-up-disk state from scheduler error: %s", err.Error())
+		}
+		a.mgr.releaser.nextTime = t
+	}
+	return &types.FreeUpDiskStateResp{Hashes: res, NextTime: a.mgr.releaser.nextTime}, nil
+}
+
+func (a *Asset) ClearFreeUpDisk(ctx context.Context) error {
+	if a.mgr.releaser.count() == 0 {
+		return nil
+	}
+	a.mgr.releaser.clear()
+	return nil
 }

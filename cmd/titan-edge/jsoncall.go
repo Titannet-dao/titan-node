@@ -5,7 +5,9 @@ package main
 */
 import "C"
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"unsafe"
 
 	"github.com/Filecoin-Titan/titan/node/edge/clib"
@@ -24,15 +26,44 @@ func FreeCString(jsonStrPtr *C.char) {
 func JSONCall(jsonStrPtr *C.char) *C.char {
 	jsonStr := C.GoString(jsonStrPtr)
 
+	log.Infoln("JSONCall Req: ", string(jsonStr))
+
 	if lib == nil {
 		lib = clib.NewCLib(daemonStart)
 	}
 
 	result := lib.JSONCall(jsonStr)
 	resultJson, err := json.Marshal(result)
+	log.Infoln("JSONCall Resp: ", result)
+
 	if err != nil {
 		log.Errorf("marsal result error ", err.Error())
 	}
 
 	return C.CString(string(resultJson))
+}
+
+func daemonStart(ctx context.Context, daemonSwitch *clib.DaemonSwitch, repoPath, locatorURL string) error {
+	// TODO： Set this environment variable only for individual systems
+	err := os.Setenv("QUIC_GO_DISABLE_ECN", "true")
+	if err != nil {
+		log.Errorf("Error setting environment QUIC_GO_DISABLE_ECN:", err)
+	}
+
+	ok, err := registerNodeIfNotExist(repoPath, locatorURL)
+	if err != nil {
+		return err
+	}
+
+	if ok {
+		log.Infof("daemonStart register new node")
+	}
+
+	d, err := newDaemon(ctx, repoPath)
+	if err != nil {
+		return err
+	}
+
+	go d.startServer(daemonSwitch)
+	return nil
 }

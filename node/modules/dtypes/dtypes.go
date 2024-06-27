@@ -5,8 +5,11 @@ import (
 	"github.com/ipfs/go-datastore"
 )
 
-// MetadataDS stores metadata.
-type MetadataDS datastore.Batching
+// AssetMetadataDS stores metadata.
+type AssetMetadataDS datastore.Batching
+
+// ProjectMetadataDS stores metadata.
+type ProjectMetadataDS datastore.Batching
 
 // GeoDBPath the location of a geo database
 type GeoDBPath string
@@ -29,6 +32,7 @@ type InternalIP string
 type (
 	NodeMetadataPath string
 	AssetsPaths      []string
+	WorkerdPath      string
 )
 
 // ServerID server id
@@ -43,3 +47,7 @@ type SetSchedulerConfigFunc func(cfg config.SchedulerCfg) error
 type GetSchedulerConfigFunc func() (config.SchedulerCfg, error)
 
 type ShutdownChan chan struct{}
+
+type RestartChan chan struct{}
+
+type RestartDoneChan chan struct{}

@@ -42,7 +42,7 @@ func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiratio
 	defer func() {
 		err = tx.Rollback()
 		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("Rollback err:%s", err.Error())
+			log.Errorf("SaveReplicaEvent Rollback err:%s", err.Error())
 		}
 	}()
 
@@ -57,8 +57,8 @@ func (n *SQLDB) SaveReplicaEvent(hash, cid, nodeID string, size int64, expiratio
 	}
 
 	// update node asset count
-	query = fmt.Sprintf(`UPDATE %s SET asset_count=asset_count+?,download_traffic=download_traffic+? WHERE node_id=?`, nodeInfoTable)
-	_, err = tx.Exec(query, 1, size, nodeID)
+	query = fmt.Sprintf(`UPDATE %s SET asset_count=asset_count+? WHERE node_id=?`, nodeInfoTable)
+	_, err = tx.Exec(query, 1, nodeID)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func (n *SQLDB) UpdateAssetInfo(hash, state string, totalBlock, totalSize, retry
 	defer func() {
 		err = tx.Rollback()
 		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("SaveAssetRecord Rollback err:%s", err.Error())
+			log.Errorf("UpdateAssetInfo Rollback err:%s", err.Error())
 		}
 	}()
 
@@ -177,6 +177,19 @@ func (n *SQLDB) LoadAssetRecord(hash string) (*types.AssetRecord, error) {
 
 	return &info, nil
 }
+
+// func (n *SQLDB) LoadAssetRecordsByHashes(hashes []string) ([]*types.AssetRecord, error) {
+// 	var ret = make([]*types.AssetRecord, 0)
+// 	sQuery := fmt.Sprintf(`SELECT * from %s WHERE hash in (?)`, assetRecordTable)
+// 	query, args, err := sqlx.In(sQuery, hashes)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	query = n.db.Rebind(query)
+// 	err = n.db.Select(&ret, query, args...)
+// 	return ret, err
+// }
 
 // LoadRecords load the asset records from the incoming scheduler
 func (n *SQLDB) LoadRecords(statuses []string, serverID dtypes.ServerID) ([]*types.AssetRecord, error) {
@@ -347,9 +360,9 @@ func (n *SQLDB) LoadAllReplicasByNodeID(nodeID string, limit, offset int, statue
 }
 
 // LoadReplicaSizeByNodeID load size of node.
-func (n *SQLDB) LoadReplicaSizeByNodeID(nodeID string) (int, error) {
+func (n *SQLDB) LoadReplicaSizeByNodeID(nodeID string) (int64, error) {
 	// SELECT SUM(b.total_size) AS total_size FROM replica_info a JOIN asset_record b ON a.hash = b.hash WHERE a.status = 3 AND a.node_id='e_77dafc142748480bb38b5f45628807bd';
-	size := 0
+	size := int64(0)
 	query := fmt.Sprintf("SELECT COALESCE(SUM(b.total_size), 0) FROM %s a JOIN %s b ON a.hash = b.hash WHERE a.status=? AND a.node_id=?", replicaInfoTable, assetRecordTable)
 	err := n.db.Get(&size, query, types.ReplicaStatusSucceeded, nodeID)
 	if err != nil {
@@ -667,7 +680,7 @@ func (n *SQLDB) SaveReplenishBackup(hashes []string) error {
 	defer func() {
 		err = tx.Rollback()
 		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("SaveAssetRecord Rollback err:%s", err.Error())
+			log.Errorf("SaveReplenishBackup Rollback err:%s", err.Error())
 		}
 	}()
 
@@ -676,10 +689,7 @@ func (n *SQLDB) SaveReplenishBackup(hashes []string) error {
 			`INSERT INTO %s (hash) 
 		        VALUES (?) 
 				ON DUPLICATE KEY UPDATE hash=?`, replenishBackupTable)
-		_, err := tx.Exec(query, hash, hash)
-		if err != nil {
-			return err
-		}
+		tx.Exec(query, hash, hash)
 	}
 	return tx.Commit()
 }
@@ -713,7 +723,7 @@ func (n *SQLDB) DeleteAssetRecordsOfNode(nodeID string) error {
 	defer func() {
 		err = tx.Rollback()
 		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("SaveAssetRecord Rollback err:%s", err.Error())
+			log.Errorf("DeleteAssetRecordsOfNode Rollback err:%s", err.Error())
 		}
 	}()
 

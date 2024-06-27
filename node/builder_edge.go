@@ -11,9 +11,11 @@ import (
 	"github.com/Filecoin-Titan/titan/node/device"
 	"github.com/Filecoin-Titan/titan/node/edge"
 	"github.com/Filecoin-Titan/titan/node/modules"
+	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 	"github.com/Filecoin-Titan/titan/node/validation"
+	"github.com/Filecoin-Titan/titan/node/workerd"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 )
@@ -47,12 +49,14 @@ func ConfigEdge(c interface{}) Option {
 
 	return Options(
 		Override(new(*config.EdgeCfg), cfg),
-		Override(new(*device.Device), modules.NewDevice(&cfg.CPU, &cfg.Memory, &cfg.Storage, &cfg.Bandwidth)),
+		Override(new(*device.Device), modules.NewDevice(&cfg.CPU, &cfg.Memory, &cfg.Storage, &cfg.Bandwidth, &cfg.Netflow)),
 		Override(new(*config.MinioConfig), &config.MinioConfig{}),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
 		Override(new(*validation.Validation), modules.NewNodeValidation),
 		Override(new(*types.RateLimiter), modules.NewRateLimiter),
 		Override(new(*asset.Asset), asset.NewAsset),
 		Override(new(*datasync.DataSync), modules.NewDataSync),
+		Override(new(dtypes.WorkerdPath), modules.WorkerdPath),
+		Override(new(*workerd.Workerd), modules.NewWorkerd),
 	)
 }

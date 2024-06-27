@@ -25,4 +25,6 @@ type Asset interface {
 	SetAssetUploadProgress(ctx context.Context, root cid.Cid, progress *types.UploadProgress) error
 	// GetUploadingAsset get asset which uploading
 	GetUploadingAsset(ctx context.Context, root cid.Cid) (*types.UploadingAsset, error)
+	// AllocatePathWithSize allocate path for storage file
+	AllocatePathWithSize(size int64) (string, error)
 }

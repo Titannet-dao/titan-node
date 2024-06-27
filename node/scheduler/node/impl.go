@@ -54,16 +54,10 @@ func (m *Manager) GetAllCandidateNodes() ([]string, []*Node) {
 }
 
 // GetCandidateNodes return n candidate node
-func (m *Manager) GetCandidateNodes(num int, filterValidators bool) []*Node {
+func (m *Manager) GetCandidateNodes(num int) []*Node {
 	var out []*Node
 	m.candidateNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
-
-		if filterValidators {
-			if node.Type == types.NodeValidator {
-				return true
-			}
-		}
 
 		out = append(out, node)
 		return len(out) < num

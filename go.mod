@@ -60,6 +60,8 @@ require (
 require (
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137
 	github.com/aws/aws-sdk-go v1.50.33
+	github.com/google/go-github/v61 v61.0.0
+	github.com/gorilla/websocket v1.5.0
 	github.com/ipfs/go-block-format v0.1.1
 	github.com/ipfs/go-filestore v1.2.1
 	github.com/ipfs/go-ipfs-chunker v0.0.5
@@ -68,6 +70,7 @@ require (
 	github.com/ipld/go-car/v2 v2.8.2
 	github.com/miekg/dns v1.1.53
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
+	github.com/pkg/errors v0.9.1
 	go.etcd.io/etcd/api/v3 v3.5.9
 	go.etcd.io/etcd/client/v3 v3.5.9
 )
@@ -89,8 +92,8 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/pprof v0.0.0-20230405160723-4a4c7d95572b // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
 	github.com/ipfs/go-bitfield v1.1.0 // indirect
 	github.com/ipfs/go-ipfs-cmds v0.8.2 // indirect
@@ -126,7 +129,6 @@ require (
 	github.com/oschwald/maxminddb-golang v1.9.0 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/philhofer/fwd v1.1.2 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/polydawn/refmt v0.89.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/prometheus/client_model v0.3.0 // indirect
@@ -140,7 +142,6 @@ require (
 	github.com/secure-io/sio-go v0.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/throttled/throttled v2.2.5+incompatible // indirect
 	github.com/tinylib/msgp v1.1.8 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect

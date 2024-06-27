@@ -44,7 +44,7 @@ func NewIPFSClient(ipfsAPIURL string) *IPFSClient {
 }
 
 // FetchBlocks retrieves blocks from IPFSClient using the provided context, CIDs, and download info
-func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, downloadSources []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
+func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, sdis []*types.SourceDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
 	return ipfs.retrieveBlocks(ctx, cids)
 }
 

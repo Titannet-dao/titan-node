@@ -28,12 +28,12 @@ func NewCandidateFetcher(httpClient *http.Client) *CandidateFetcher {
 }
 
 // FetchBlocks fetches blocks for the given cids and candidate download info
-func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
-	return c.retrieveBlocks(ctx, cids, dss)
+func (c *CandidateFetcher) FetchBlocks(ctx context.Context, cids []string, sdis []*types.SourceDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
+	return c.retrieveBlocks(ctx, cids, sdis)
 }
 
 // fetchSingleBlock fetches a single block for the given candidate download info and cid string
-func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource *types.CandidateDownloadInfo, cidStr string) (blocks.Block, error) {
+func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource *types.SourceDownloadInfo, cidStr string) (blocks.Block, error) {
 	if len(downloadSource.Address) == 0 {
 		return nil, fmt.Errorf("candidate address can not empty")
 	}
@@ -87,8 +87,8 @@ func (c *CandidateFetcher) fetchSingleBlock(ctx context.Context, downloadSource 
 }
 
 // retrieveBlocks retrieves multiple blocks using the given cids and candidate download info
-func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, dss []*types.CandidateDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
-	if len(dss) == 0 {
+func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, sdis []*types.SourceDownloadInfo) ([]*ErrMsg, []*types.Workload, []blocks.Block, error) {
+	if len(sdis) == 0 {
 		return nil, nil, nil, fmt.Errorf("download infos can not empty")
 	}
 
@@ -101,8 +101,8 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, ds
 
 	for index, cid := range cids {
 		cidStr := cid
-		i := index % len(dss)
-		ds := dss[i]
+		i := index % len(sdis)
+		ds := sdis[i]
 
 		wg.Add(1)
 

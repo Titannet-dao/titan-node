@@ -17,9 +17,11 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/nat"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
+	"github.com/Filecoin-Titan/titan/node/scheduler/projects"
 	"github.com/Filecoin-Titan/titan/node/scheduler/sync"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
 	"github.com/Filecoin-Titan/titan/node/scheduler/workload"
+	"github.com/Filecoin-Titan/titan/region"
 	"github.com/filecoin-project/pubsub"
 	"github.com/jmoiron/sqlx"
 
@@ -66,8 +68,10 @@ func ConfigScheduler(c interface{}) Option {
 		Override(InitDataTables, db.InitTables),
 		Override(new(*node.Manager), node.NewManager),
 		Override(new(*workload.Manager), workload.NewManager),
-		Override(new(dtypes.MetadataDS), modules.Datastore),
-		Override(new(*assets.Manager), modules.NewStorageManager),
+		Override(new(*projects.Manager), modules.NewProjectManager),
+		Override(new(dtypes.AssetMetadataDS), modules.AssetDatastore),
+		Override(new(dtypes.ProjectMetadataDS), modules.ProjectDatastore),
+		Override(new(*assets.Manager), modules.NewAssetManager),
 		Override(new(*sync.DataSync), sync.NewDataSync),
 		Override(new(*validation.Manager), modules.NewValidation),
 		Override(new(*nat.Manager), nat.NewManager),
@@ -75,6 +79,10 @@ func ConfigScheduler(c interface{}) Option {
 		Override(new(dtypes.SetSchedulerConfigFunc), modules.NewSetSchedulerConfigFunc),
 		Override(new(dtypes.GetSchedulerConfigFunc), modules.NewGetSchedulerConfigFunc),
 		Override(new(*rsa.PrivateKey), modules.NewPrivateKey),
+		Override(new(dtypes.GeoDBPath), func() dtypes.GeoDBPath {
+			return dtypes.GeoDBPath(cfg.GeoDBPath)
+		}),
+		Override(new(region.Region), modules.NewRegion),
 		// func() (*rsa.PrivateKey, error) {
 		// return rsa.GenerateKey(rand.Reader, units.KiB) //nolint:gosec   // need smaller key
 		// }),

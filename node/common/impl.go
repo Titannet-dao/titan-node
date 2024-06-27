@@ -5,11 +5,14 @@ import (
 	"fmt"
 
 	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/build"
 	"github.com/Filecoin-Titan/titan/journal/alerting"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/repo"
+	"github.com/filecoin-project/go-jsonrpc"
+	"github.com/quic-go/quic-go"
 
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
@@ -24,6 +27,7 @@ type CommonAPI struct {
 	Alerting     *alerting.Alerting
 	APISecret    *jwt.HMACSHA
 	ShutdownChan dtypes.ShutdownChan
+	Transport    *quic.Transport
 }
 
 // SessionCallbackFunc will be called after node connection
@@ -32,10 +36,11 @@ type SessionCallbackFunc func(string, string)
 // MethodGroup: Auth
 
 // NewCommonAPI initializes a new CommonAPI
-func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA, shutdownChan dtypes.ShutdownChan) (CommonAPI, error) {
+func NewCommonAPI(lr repo.LockedRepo, secret *jwt.HMACSHA, shutdownChan dtypes.ShutdownChan, Transport *quic.Transport) (CommonAPI, error) {
 	commAPI := CommonAPI{
 		APISecret:    secret,
 		ShutdownChan: shutdownChan,
+		Transport:    Transport,	
 	}
 
 	return commAPI, nil
@@ -104,6 +109,12 @@ func (a *CommonAPI) Shutdown(context.Context) error {
 	return nil
 }
 
+// // Restart trigger graceful restart
+// func (a *CommonAPI) Restart(ctx context.Context) error {
+// 	a.RestartChan <- struct{}{}
+// 	return nil
+// }
+
 // Session returns a UUID of api provider session
 func (a *CommonAPI) Session(ctx context.Context) (uuid.UUID, error) {
 	return session, nil
@@ -112,4 +123,24 @@ func (a *CommonAPI) Session(ctx context.Context) (uuid.UUID, error) {
 // Closing jsonrpc closing
 func (a *CommonAPI) Closing(context.Context) (<-chan struct{}, error) {
 	return make(chan struct{}), nil // relies on jsonrpc closing
+}
+
+// ExternalServiceAddress returns the external service address of the scheduler.
+func (a *CommonAPI) ExternalServiceAddress(ctx context.Context, candidateURL string) (string, error) {
+	if types.RunningNodeType == types.NodeScheduler || types.RunningNodeType == types.NodeLocator {
+		return "", fmt.Errorf("not implement")
+	}
+
+	httpClient, err := client.NewHTTP3ClientWithPacketConn(a.Transport)
+	if err != nil {
+		return "", err
+	}
+
+	candidateAPI, closer, err := client.NewCandidate(ctx, candidateURL, nil, jsonrpc.WithHTTPClient(httpClient))
+	if err != nil {
+		return "", err
+	}
+	defer closer()
+
+	return candidateAPI.GetExternalAddress(ctx)
 }

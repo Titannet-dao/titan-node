@@ -17,9 +17,10 @@ type CreateAssetReq struct {
 	AssetProperty
 }
 
-type CreateAssetRsp struct {
+type UploadInfo struct {
 	UploadURL     string
 	Token         string
+	NodeID        string
 	AlreadyExists bool
 }
 

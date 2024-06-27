@@ -32,6 +32,8 @@ const (
 	NodeDeactivate     // node deactivate
 	NodeOffline        // node offline
 
+	GenerateAccessToken // generate access token error
+
 	Success = 0
 	Unknown = -1
 )

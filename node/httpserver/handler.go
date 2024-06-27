@@ -18,9 +18,11 @@ import (
 var log = logging.Logger("httpserver")
 
 const (
-	ipfsPathPrefix        = "/ipfs/"
-	uploadPathPrefix      = "/upload"
-	rpcPathPrefix         = "/rpc"
+	reqIpfs   = "/ipfs"
+	reqUpload = "/upload"
+	// upload files
+	reqUploadv2           = "/uploadv2"
+	reqRpc                = "/rpc"
 	immutableCacheControl = "public, max-age=29030400, immutable"
 	domainFields          = 4
 )
@@ -51,19 +53,36 @@ func resetPath(r *http.Request) {
 
 }
 
+func getFirstPathSegment(path string) string {
+	// Trim leading and trailing slashes
+	path = strings.Trim(path, "/")
+	// Split the path into segments
+	segments := strings.Split(path, "/")
+	// Return the first segment
+	if len(segments) > 0 {
+		return "/" + segments[0]
+	}
+	return ""
+}
+
 // ServeHTTP checks if the request path starts with the IPFS path prefix and delegates to the appropriate handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !strings.Contains(r.URL.Path, ipfsPathPrefix) &&
-		!strings.Contains(r.URL.Path, uploadPathPrefix) &&
-		!strings.Contains(r.URL.Path, rpcPathPrefix) {
+	if !strings.Contains(r.URL.Path, reqIpfs) &&
+		!strings.Contains(r.URL.Path, reqUpload) &&
+		!strings.Contains(r.URL.Path, reqRpc) &&
+		!strings.Contains(r.URL.Path, reqUploadv2) {
 		resetPath(r)
 	}
 
-	switch {
-	case strings.HasPrefix(r.URL.Path, ipfsPathPrefix):
+	reqPath := getFirstPathSegment(r.URL.Path)
+
+	switch reqPath {
+	case reqIpfs:
 		h.hs.handler(w, r)
-	case strings.HasPrefix(r.URL.Path, uploadPathPrefix):
+	case reqUpload:
 		h.hs.uploadHandler(w, r)
+	case reqUploadv2:
+		h.hs.uploadv2Handler(w, r)
 	default:
 		h.handler.ServeHTTP(w, r)
 	}
@@ -136,7 +155,7 @@ func addCacheControlHeaders(w http.ResponseWriter, r *http.Request, contentPath 
 // getFilename returns the filename component of a path
 func getFilename(contentPath path.Path) string {
 	s := contentPath.String()
-	if strings.HasPrefix(s, ipfsPathPrefix) {
+	if strings.HasPrefix(s, reqIpfs) {
 		// Don't want to treat ipfs.io in /ipns/ipfs.io as a filename.
 		return ""
 	}

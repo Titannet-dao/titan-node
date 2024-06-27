@@ -14,7 +14,6 @@ import (
 
 const (
 	validationPathPrefix = "/validation/"
-	validateDuration     = 10
 	nodeIDLengthV0       = 34
 	nodeIDLengthV1       = 38
 	edgeNodeIDPrefix     = "e_"
@@ -32,6 +31,7 @@ type Handler struct {
 	scheduler      api.Scheduler
 	privateKey     *rsa.PrivateKey
 	blockWaiterMap *sync.Map
+	duration       time.Duration
 }
 
 // ServeHTTP checks if the request path starts with the IPFS path prefix and delegates to the appropriate handler
@@ -45,8 +45,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // NewHandler creates a new Handler with the given HTTP handler
-func AppendHandler(handler http.Handler, scheduler api.Scheduler, privateKey *rsa.PrivateKey) http.Handler {
-	return &Handler{handler: handler, scheduler: scheduler, privateKey: privateKey, blockWaiterMap: &sync.Map{}}
+func AppendHandler(handler http.Handler, scheduler api.Scheduler, privateKey *rsa.PrivateKey, duration time.Duration) http.Handler {
+	return &Handler{handler: handler, scheduler: scheduler, privateKey: privateKey, blockWaiterMap: &sync.Map{}, duration: duration}
 }
 
 func (h *Handler) handleValidation(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +63,7 @@ func (h *Handler) handleValidation(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	conn.SetReadDeadline(time.Now().Add((validateDuration + 3) * time.Second))
+	conn.SetReadDeadline(time.Now().Add(h.duration + 3*time.Second))
 
 	_, ok := h.blockWaiterMap.Load(nodeID)
 	if ok {
@@ -74,7 +74,7 @@ func (h *Handler) handleValidation(w http.ResponseWriter, r *http.Request) {
 	log.Infof("node %s connect to Validator", nodeID)
 
 	ch := make(chan []byte, 10)
-	opts := blockWaiterOptions{nodeID: nodeID, ch: ch, duration: validateDuration, scheduler: h.scheduler, privateKey: h.privateKey}
+	opts := blockWaiterOptions{nodeID: nodeID, ch: ch, duration: int(h.duration.Seconds()), scheduler: h.scheduler, privateKey: h.privateKey}
 	bw := newBlockWaiter(&opts)
 	h.blockWaiterMap.Store(nodeID, bw)
 
@@ -92,6 +92,7 @@ func (h *Handler) handleValidation(w http.ResponseWriter, r *http.Request) {
 
 		if messageType == websocket.CloseMessage {
 			bw.result.Token = string(p)
+			bw.result.IsCancel = true
 			return
 		}
 

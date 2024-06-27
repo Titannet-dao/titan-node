@@ -10,6 +10,8 @@ import (
 type Asset interface {
 	// PullAsset pull the asset with given assetCID from specified sources
 	PullAsset(ctx context.Context, assetCID string, sources []*types.CandidateDownloadInfo) error //perm:admin
+	// PullAssetV2 pull the asset by scheduler
+	PullAssetV2(ctx context.Context, req *types.AssetPullRequest) error //perm:admin
 	// DeleteAsset deletes the asset with given assetCID
 	DeleteAsset(ctx context.Context, assetCID string) error //perm:admin
 	// GetAssetStats retrieves the statistics of assets
@@ -30,4 +32,10 @@ type Asset interface {
 	GetAssetsInBucket(ctx context.Context, bucketID int) ([]string, error) //perm:admin
 	// SyncAssetViewAndData sync assetView and local car
 	SyncAssetViewAndData(ctx context.Context) error //perm:admin
+	// RequestFreeUpDisk Initiate a request to free up disk space with a certain size, size unit GiB
+	RequestFreeUpDisk(ctx context.Context, size float64) error //perm:admin
+	// StateFreeUpDisk shows the result of last free task is done, return nil means done
+	StateFreeUpDisk(ctx context.Context) (*types.FreeUpDiskStateResp, error) //perm:admin
+	// ClearFreeUpDisk clear the previous failed task
+	ClearFreeUpDisk(ctx context.Context) error //perm:admin
 }

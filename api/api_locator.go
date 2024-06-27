@@ -25,7 +25,8 @@ type Locator interface {
 	// GetSchedulerWithNode get the scheduler that the node is already connected to
 	GetSchedulerWithNode(ctx context.Context, nodeID string) (string, error) //perm:default
 	// GetSchedulerWithAPIKey get the scheduler that the user create the api key
-	GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (string, error) //perm:default
+	GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (string, error)                          //perm:default
+	AllocateSchedulerForNode(ctx context.Context, nodeType types.NodeType, code string) (string, error) //perm:default
 }
 
 // AccessPoint represents an access point within an area, containing scheduler information.

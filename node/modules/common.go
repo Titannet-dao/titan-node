@@ -5,6 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"path/filepath"
+
+	"github.com/Filecoin-Titan/titan/api"
+	"github.com/Filecoin-Titan/titan/node/modules/helpers"
+	"github.com/Filecoin-Titan/titan/node/tunnel"
+	"github.com/Filecoin-Titan/titan/node/workerd"
 
 	"github.com/Filecoin-Titan/titan/build"
 	"github.com/Filecoin-Titan/titan/lib/ulimit"
@@ -15,6 +21,7 @@ import (
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
+	"github.com/Filecoin-Titan/titan/node/scheduler/projects"
 	"github.com/Filecoin-Titan/titan/node/types"
 	"github.com/google/uuid"
 	"go.uber.org/fx"
@@ -28,6 +35,8 @@ const (
 	KTServerIDSecret = "server-id-secret" //nolint:gosec
 	// PrivateKeyName privateKey key name in the keystore
 	PrivateKeyName = "private-key" //nolint:gosec
+	// WorkerdPath is the directory path for Workerd's workspace
+	WorkerdDirPath = "workerd"
 )
 
 // LockedRepo returns a function that returns the locked repository with an added lifecycle hook to close the repository
@@ -108,9 +117,14 @@ func NewPrivateKey(lr repo.LockedRepo) (*rsa.PrivateKey, error) {
 	return titanrsa.Pem2PrivateKey(key.PrivateKey)
 }
 
-// Datastore returns a new metadata datastore
-func Datastore(db *db.SQLDB, serverID dtypes.ServerID) (dtypes.MetadataDS, error) {
+// AssetDatastore returns a new metadata datastore
+func AssetDatastore(db *db.SQLDB, serverID dtypes.ServerID) (dtypes.AssetMetadataDS, error) {
 	return assets.NewDatastore(db, serverID), nil
+}
+
+// ProjectDatastore returns a new metadata datastore
+func ProjectDatastore(db *db.SQLDB, serverID dtypes.ServerID) (dtypes.AssetMetadataDS, error) {
+	return projects.NewDatastore(db, serverID), nil
 }
 
 // CheckFdLimit checks the file descriptor limit and returns an error if the limit is too low
@@ -127,4 +141,31 @@ func CheckFdLimit() error {
 		}
 	}
 	return nil
+}
+
+// WorkerdPath returns the path for Workerd's workspace based on the provided LockedRepo.
+func WorkerdPath(lr repo.LockedRepo) dtypes.WorkerdPath {
+	return dtypes.WorkerdPath(filepath.Join(lr.Path(), WorkerdDirPath))
+}
+
+// NewWorkerd creates a new workerd object at the given path.
+func NewWorkerd(mctx helpers.MetricsCtx, l fx.Lifecycle, schedulerAPI api.Scheduler, ts *tunnel.Services, nodeId dtypes.NodeID, path dtypes.WorkerdPath) (*workerd.Workerd, error) {
+	ctx := helpers.LifecycleCtx(mctx, l)
+
+	w, err := workerd.NewWorkerd(ctx, schedulerAPI, ts, string(nodeId), string(path))
+	if err != nil {
+		return nil, err
+	}
+
+	l.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go w.RestartProjects(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return w.Close()
+		},
+	})
+
+	return w, nil
 }

@@ -40,12 +40,12 @@ titan-candidate: $(BUILD_DEPS)
 
 titan-edge: $(BUILD_DEPS)
 	rm -f titan-edge
-	$(GOCC) build $(GOFLAGS) -o titan-edge ./cmd/titan-edge
+	$(GOCC) build $(GOFLAGS) -tags edge -o titan-edge ./cmd/titan-edge
 .PHONY: titan-edge
 
 titan-edge-arm: $(BUILD_DEPS)
 	rm -f titan-edge-arm
-	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -o titan-edge-arm ./cmd/titan-edge
+	GOOS=linux GOARCH=arm $(GOCC) build $(GOFLAGS) -tags edge -o titan-edge-arm ./cmd/titan-edge
 .PHONY: titan-edge-arm
 
 titan-candidate-arm: $(BUILD_DEPS)

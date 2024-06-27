@@ -16,7 +16,6 @@ import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
-	lcli "github.com/Filecoin-Titan/titan/cli"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/repo"
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
@@ -38,12 +37,16 @@ const (
 	methodDownloadFile     = "downloadFile"
 	methodDownloadProgress = "downloadProgress"
 	methodDownloadCancel   = "downloadCancel"
+	methodReqFreeUpDisk    = "reqFreeUpDisk"
+	methodStateFreeUpDisk  = "stateFreeUpDisk"
+	methodRestart          = "restart"
 )
 
 type DaemonSwitch struct {
 	StopChan chan bool
 	IsStop   bool
 	IsOnline bool
+	ErrMsg   string // client immdiate error notice
 }
 
 type StartDaemonReq struct {
@@ -71,8 +74,9 @@ type SignResult struct {
 }
 
 type StateResult struct {
-	Runing bool `json:"running"`
-	Online bool `json:"online"`
+	Runing bool   `json:"running"`
+	Online bool   `json:"online"`
+	ErrMsg string `json:"errMsg"`
 }
 
 type DownloadFileReq struct {
@@ -96,6 +100,12 @@ type DownloadCancelReq struct {
 	FilePath string `json:"file_path"`
 }
 
+type FreeUpDiskReq struct {
+	Size float64 `json:"size"`
+}
+
+type FreeUpDiskResp struct{}
+
 type JSONCallArgs struct {
 	Method     string `json:"method"`
 	JSONParams string `json:"jsonParams"`
@@ -117,15 +127,16 @@ func errorResult(err error) *JSONCallResult {
 	return &result
 }
 
-type daemonStartFunc func(ctx context.Context, daemonSwitch *DaemonSwitch, repoPath, locatorURL string) error
-type CLib struct {
-	daemonStart daemonStartFunc
-	repoPath    string
-	isInit      bool
-	dSwitch     DaemonSwitch
-
-	downloader *Downloader
-}
+type (
+	daemonStartFunc func(ctx context.Context, daemonSwitch *DaemonSwitch, repoPath, locatorURL string) error
+	CLib            struct {
+		daemonStart daemonStartFunc
+		repoPath    string
+		isInit      bool
+		dSwitch     DaemonSwitch
+		downloader  *Downloader
+	}
+)
 
 func NewCLib(daemonStart daemonStartFunc) *CLib {
 	return &CLib{daemonStart: daemonStart, downloader: newDownloader()}
@@ -158,10 +169,15 @@ func (clib *CLib) JSONCall(jsonStr string) *JSONCallResult {
 		return clib.downloadProgress(args.JSONParams)
 	case methodDownloadCancel:
 		return clib.downloadCancel(args.JSONParams)
+	case methodReqFreeUpDisk:
+		return clib.reqFreeUpDisk(args.JSONParams)
+	case methodStateFreeUpDisk:
+		return clib.stateFreeUpDisk()
+	case methodRestart:
+		return clib.restart()
 	default:
 		result.Code = -1
 		result.Msg = fmt.Sprintf("Method %s not found", args.Method)
-
 	}
 
 	return result
@@ -188,12 +204,16 @@ func (clib *CLib) startDaemon(jsonStr string) error {
 		return fmt.Errorf("Args RepoPath can not emtpy")
 	}
 
-	if clib.isInit {
-		if clib.dSwitch.IsStop {
-			clib.dSwitch.StopChan <- false
-		} else {
-			log.Infof("daemon already start")
-		}
+	// if clib.isInit {
+	// 	if clib.dSwitch.IsStop {
+	// 		// clib.dSwitch.StopChan <- false
+	// 	} else {
+	// 		log.Infof("daemon already start")
+	// 	}
+	// 	return nil
+	// }
+	if clib.isInit && !clib.dSwitch.IsStop {
+		log.Infof("daemon already start")
 		return nil
 	}
 	clib.isInit = true
@@ -207,29 +227,37 @@ func (clib *CLib) startDaemon(jsonStr string) error {
 
 	clib.repoPath = req.RepoPath
 
-	go func() {
-		if err = clib.daemonStart(context.Background(), &clib.dSwitch, req.RepoPath, req.LocatorURL); err != nil {
-			log.Warnf("daemonStart %s", err.Error())
-		}
-
+	if err = clib.daemonStart(context.Background(), &clib.dSwitch, req.RepoPath, req.LocatorURL); err != nil {
 		clib.isInit = false
-		clib.dSwitch.IsStop = true
+		return err
+	}
 
-		log.Info("deamon stop")
-	}()
+	clib.isInit = true
+	clib.dSwitch.IsStop = false
+
+	log.Info("deamon start")
 	return nil
 }
 
 func (clib *CLib) stopDaemon() error {
 	if !clib.isInit {
-		return fmt.Errorf("Daemon not running")
+		return fmt.Errorf("Daemon not init")
 	}
 
 	if clib.dSwitch.IsStop {
 		return fmt.Errorf("Daemon already stop")
 	}
 
-	clib.dSwitch.StopChan <- true
+	// clib.dSwitch.StopChan <- true
+	edgeApi, closer, err := newEdgeAPI(clib.repoPath)
+	if err != nil {
+		return fmt.Errorf("get edge api error %s", err.Error())
+	}
+	defer closer()
+
+	if err := edgeApi.Shutdown(context.Background()); err != nil {
+		return fmt.Errorf("restart occurs with error: %s", err.Error())
+	}
 
 	return nil
 }
@@ -239,7 +267,9 @@ func (clib *CLib) state() *JSONCallResult {
 		return &JSONCallResult{Code: -1, Msg: "daemon not start"}
 	}
 
-	result := StateResult{Runing: !clib.dSwitch.IsStop, Online: clib.dSwitch.IsOnline}
+	result := StateResult{Runing: !clib.dSwitch.IsStop, Online: clib.dSwitch.IsOnline, ErrMsg: clib.dSwitch.ErrMsg}
+
+	clib.dSwitch.ErrMsg = ""
 
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -330,36 +360,11 @@ func (clib *CLib) mergeConfig(jsonStr string) *JSONCallResult {
 
 	edgeConfig := cfg.(*config.EdgeCfg)
 
-	if len(edgeConfig.Basic.Token) == 0 {
-		r, err := openRepoOrNew(req.RepoPath)
-		if err != nil {
-			return &JSONCallResult{Code: -1, Msg: err.Error()}
-		}
-
-		lr, err := r.Lock(repo.Edge)
-		if err != nil {
-			return &JSONCallResult{Code: -1, Msg: err.Error()}
-		}
-
-		defer lr.Close()
-
-		if err := lcli.RegitsterNode(lr, newEdgeConfig.Network.LocatorURL, types.NodeEdge); err != nil {
-			return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("import private key error %s", err.Error())}
-		}
-
-		// reload config
-		cfg, err := config.FromFile(configPath, config.DefaultEdgeCfg())
-		if err != nil {
-			return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("load local config file error %s", err.Error())}
-		}
-
-		edgeConfig = cfg.(*config.EdgeCfg)
-	}
-
 	edgeConfig.Storage = newEdgeConfig.Storage
 	edgeConfig.Memory = newEdgeConfig.Memory
 	edgeConfig.CPU = newEdgeConfig.CPU
-	edgeConfig.Bandwidth.BandwidthMB = newEdgeConfig.Bandwidth.BandwidthMB
+	edgeConfig.Bandwidth = newEdgeConfig.Bandwidth
+	edgeConfig.Netflow = newEdgeConfig.Netflow
 
 	configBytes, err := config.GenerateConfigUpdate(edgeConfig, config.DefaultEdgeCfg(), true)
 	if err != nil {
@@ -526,4 +531,69 @@ func (clib *CLib) downloadCancel(jsonStr string) *JSONCallResult {
 	}
 
 	return &JSONCallResult{Code: 0, Msg: "ok"}
+}
+
+func (clib *CLib) reqFreeUpDisk(jsonStr string) *JSONCallResult {
+	req := FreeUpDiskReq{}
+	err := json.Unmarshal([]byte(jsonStr), &req)
+	if err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("marshal input args failed:%s", err.Error())}
+	}
+
+	edgeApi, closer, err := newEdgeAPI(clib.repoPath)
+	if err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("get edge api error %s", err.Error())}
+	}
+	defer closer()
+
+	if err := edgeApi.RequestFreeUpDisk(context.Background(), req.Size); err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("request free up disk error %s", err.Error())}
+	}
+
+	return &JSONCallResult{Code: 0, Msg: "ok"}
+}
+
+type stateFreeUpDiskResp struct {
+	WaitingList []*types.FreeUpDiskState `json:"waitingList"`
+	NextTime    int64                    `json:"nextTime"`
+}
+
+func (clib *CLib) stateFreeUpDisk() *JSONCallResult {
+	edgeApi, closer, err := newEdgeAPI(clib.repoPath)
+	if err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("get edge api error %s", err.Error())}
+	}
+	defer closer()
+
+	ret, err := edgeApi.StateFreeUpDisk(context.Background())
+	if err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("state free up disk error %s", err.Error())}
+	}
+
+	respStr := stateFreeUpDiskResp{
+		WaitingList: ret.Hashes, NextTime: ret.NextTime,
+	}
+	if len(ret.Hashes) == 0 {
+		return &JSONCallResult{Code: 0, Msg: "ok", Data: jsonStr(respStr)}
+	}
+	return &JSONCallResult{Code: -1, Msg: "free up task is still in progress", Data: jsonStr(respStr)}
+}
+
+func (clib *CLib) restart() *JSONCallResult {
+	edgeApi, closer, err := newEdgeAPI(clib.repoPath)
+	if err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("get edge api error %s", err.Error())}
+	}
+	defer closer()
+
+	if err := edgeApi.Restart(context.Background()); err != nil {
+		return &JSONCallResult{Code: -1, Msg: fmt.Sprintf("restart occurs with error: %s", err.Error())}
+	}
+
+	return &JSONCallResult{Msg: "ok"}
+}
+
+func jsonStr(v any) string {
+	str, _ := json.Marshal(v)
+	return string(str)
 }

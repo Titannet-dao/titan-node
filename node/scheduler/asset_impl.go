@@ -253,7 +253,7 @@ func (s *Scheduler) GetReplicaEvents(ctx context.Context, start, end time.Time, 
 }
 
 // CreateAsset creates an asset with car CID, car name, and car size.
-func (s *Scheduler) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
+func (s *Scheduler) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.UploadInfo, error) {
 	uID := handler.GetUserID(ctx)
 	if len(uID) > 0 {
 		req.UserID = uID
@@ -334,6 +334,11 @@ func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.Minio
 	}
 
 	nodeID := handler.GetNodeID(ctx)
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		node.DownloadTraffic += event.Size
+	}
 
 	log.Debugf("MinioUploadFileEvent nodeID:%s, assetCID:", nodeID, event.AssetCID)
 

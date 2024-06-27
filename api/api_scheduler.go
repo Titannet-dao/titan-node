@@ -46,7 +46,7 @@ type AssetAPI interface {
 	// GetReplicaEvents retrieves a replica event list of node
 	GetReplicaEvents(ctx context.Context, start, end time.Time, limit, offset int) (*types.ListReplicaEventRsp, error) //perm:web,admin
 	// CreateAsset creates an asset with car CID, car name, and car size.
-	CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) //perm:web,admin,user
+	CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.UploadInfo, error) //perm:web,admin,user
 	// ListAssets lists the assets of the user.
 	ListAssets(ctx context.Context, userID string, limit, offset, groupID int) (*types.ListAssetRecordRsp, error) //perm:web,admin,user
 	// DeleteAsset deletes the asset of the user.
@@ -78,13 +78,17 @@ type NodeAPI interface {
 	RegisterNode(ctx context.Context, nodeID, publicKey string, nodeType types.NodeType) (*types.ActivationDetail, error) //perm:default
 	// RegisterEdgeNode adds new edge node to the scheduler
 	RegisterEdgeNode(ctx context.Context, nodeID, publicKey string) (*types.ActivationDetail, error) //perm:default
+	// RegisterCandidateNode adds new node to the scheduler
+	RegisterCandidateNode(ctx context.Context, nodeID, publicKey, code string) (*types.ActivationDetail, error) //perm:default
 	// DeactivateNode is used to deactivate a node in the titan server.
 	// It stops the node from serving any requests and marks it as inactive.
 	// - nodeID: The ID of the node to deactivate.
 	// - hours: The deactivation countdown time in hours. It specifies the duration
 	// before the deactivation is executed. If the deactivation is canceled within
 	// this period, the node will remain active.
-	DeactivateNode(ctx context.Context, nodeID string, hours int) error //perm:web,admin
+	DeactivateNode(ctx context.Context, nodeID string, hours int) error //perm:web,admin,candidate
+	// CalculateExitProfit
+	CalculateExitProfit(ctx context.Context, nodeID string) (types.ExitProfitRsp, error) //perm:web,admin,candidate
 	// UndoNodeDeactivation is used to undo the deactivation of a node in the titan server.
 	// It allows the previously deactivated node to start serving requests again.
 	UndoNodeDeactivation(ctx context.Context, nodeID string) error //perm:web,admin
@@ -102,6 +106,10 @@ type NodeAPI interface {
 	GetNodeInfo(ctx context.Context, nodeID string) (types.NodeInfo, error) //perm:web,admin
 	// GetNodeList retrieves a list of nodes with pagination using the specified cursor and count
 	GetNodeList(ctx context.Context, cursor int, count int) (*types.ListNodesRsp, error) //perm:web,admin
+	// GetNodesFromRegion retrieves a list of nodes with pagination using the specified cursor and count
+	GetNodesFromRegion(ctx context.Context, areaID string) ([]*types.NodeInfo, error) //perm:web,admin
+	// GetCurrentRegionInfos retrieves a list of nodes with pagination using the specified cursor and count
+	GetCurrentRegionInfos(ctx context.Context, areaID string) (map[string]int, error) //perm:web,admin
 	// GetCandidateURLsForDetectNat Get the rpc url of the specified number of candidate nodes
 	GetCandidateURLsForDetectNat(ctx context.Context) ([]string, error) //perm:default
 	// GetEdgeExternalServiceAddress nat travel, get edge external addr with different candidate
@@ -126,6 +134,8 @@ type NodeAPI interface {
 	VerifyTokenWithLimitCount(ctx context.Context, token string) (*types.JWTPayload, error) //perm:edge,candidate
 	// UpdateBandwidths update node bandwidthDown and bandwidthUp
 	UpdateBandwidths(ctx context.Context, bandwidthDown, bandwidthUp int64) error //perm:edge,candidate
+	// UpdateNetFlows update node net flow total,up,down usage
+	UpdateNetFlows(ctx context.Context, total, up, down int64) error //perm:edge
 	// GetCandidateNodeIP get candidate ip for locator
 	GetCandidateNodeIP(ctx context.Context, nodeID string) (string, error) //perm:web,admin
 	// GetMinioConfigFromCandidate get minio config from candidate
@@ -140,7 +150,7 @@ type NodeAPI interface {
 	GetNodeToken(ctx context.Context, nodeID string) (string, error) //perm:admin
 	// CheckIpUsage
 	CheckIpUsage(ctx context.Context, ip string) (bool, error) //perm:admin,web,locator
-	// GetAssetViwe get the asset view of node
+	// GetAssetView get the asset view of node
 	GetAssetView(ctx context.Context, nodeID string, isFromNode bool) (*types.AssetView, error) //perm:admin
 	// GetAssetInBucket get the assets of the bucket
 	GetAssetsInBucket(ctx context.Context, nodeID string, bucketID int, isFromNode bool) ([]string, error) //perm:admin
@@ -148,10 +158,26 @@ type NodeAPI interface {
 	GetNodeOfIP(ctx context.Context, ip string) ([]string, error) //perm:admin,web,locator
 	// PerformSyncData sync the assetView of scheduler and node
 	PerformSyncData(ctx context.Context, nodeID string) error //perm:admin
-	// AddProfits
-	AddProfits(ctx context.Context, nodes []string, profit float64) error //perm:admin
 	// GetProfitDetailsForNode retrieves a profit list of node
 	GetProfitDetailsForNode(ctx context.Context, nodeID string, limit, offset int, ts []int) (*types.ListNodeProfitDetailsRsp, error) //perm:web,admin
+	// FreeUpDiskSpace  Request to free up disk space, returns free hashes and next time
+	FreeUpDiskSpace(ctx context.Context, nodeID string, size int64) (*types.FreeUpDiskResp, error) //perm:edge,candidate,admin
+	// GetNextFreeTime returns the next free up time
+	GetNextFreeTime(ctx context.Context, nodeID string) (int64, error) //perm:edge,candidate,admin
+	// UpdateNodeDynamicInfo
+	UpdateNodeDynamicInfo(ctx context.Context, info *types.NodeDynamicInfo) error //perm:admin
+	// GenerateCandidateCode
+	GenerateCandidateCode(ctx context.Context, count int, nodeType types.NodeType, isTest bool) ([]string, error) //perm:admin
+	// CandidateCodeExist
+	CandidateCodeExist(ctx context.Context, code string) (bool, error) //perm:admin,web,locator
+	// GetCandidateCodeInfos
+	GetCandidateCodeInfos(ctx context.Context, nodeID, code string) ([]*types.CandidateCodeInfo, error) //perm:admin,web,locator
+	// ReDetermineNodeNATType
+	ReDetermineNodeNATType(ctx context.Context, nodeID string) error //perm:admin,web,locator
+	// AssignTunserverURL
+	AssignTunserverURL(ctx context.Context) (*types.TunserverRsp, error) //perm:edge
+	// UpdateTunserverURL
+	UpdateTunserverURL(ctx context.Context, nodeID string) error //perm:edge
 }
 
 // UserAPI is an interface for user
@@ -199,6 +225,24 @@ type UserAPI interface {
 	MoveAssetGroup(ctx context.Context, userID string, groupID, targetGroupID int) error //perm:user,web,admin
 	// GetAPPKeyPermissions get the permissions of user app key
 	GetAPPKeyPermissions(ctx context.Context, userID, keyName string) ([]string, error) //perm:user,web,admin
+	// GetNodeUploadInfo
+	GetNodeUploadInfo(ctx context.Context, userID string) (*types.UploadInfo, error) //perm:user,web,admin
+}
+
+// ProjectAPI is an interface for project
+type ProjectAPI interface {
+	// RedeployFailedProjects retries the pull process for a list of failed assets
+	RedeployFailedProjects(ctx context.Context, ids []string) error //perm:admin
+	// UpdateProjectStatus
+	UpdateProjectStatus(ctx context.Context, list []*types.Project) error //perm:edge,candidate
+	// GetProjectsForNode
+	GetProjectsForNode(ctx context.Context, nodeID string) ([]*types.ProjectReplicas, error) //perm:edge,candidate,web,locator
+
+	DeployProject(ctx context.Context, req *types.DeployProjectReq) error                              //perm:user,web,admin
+	DeleteProject(ctx context.Context, req *types.ProjectReq) error                                    //perm:user,web,admin
+	UpdateProject(ctx context.Context, req *types.ProjectReq) error                                    //perm:user,web,admin
+	GetProjectInfo(ctx context.Context, uuid string) (*types.ProjectInfo, error)                       //perm:user,web,admin
+	GetProjectInfos(ctx context.Context, user string, limit, offset int) ([]*types.ProjectInfo, error) //perm:user,web,admin
 }
 
 // Scheduler is an interface for scheduler
@@ -207,6 +251,7 @@ type Scheduler interface {
 	AssetAPI
 	NodeAPI
 	UserAPI
+	ProjectAPI
 
 	// NodeValidationResult processes the validation result for a node
 	NodeValidationResult(ctx context.Context, r io.Reader, sign string) error //perm:edge,candidate
@@ -216,14 +261,10 @@ type Scheduler interface {
 	SubmitWorkloadReport(ctx context.Context, workload *types.WorkloadRecordReq) error //perm:default
 	// SubmitWorkloadReportV2
 	SubmitWorkloadReportV2(ctx context.Context, workload *types.WorkloadRecordReq) error //perm:default
-	// SubmitUserWorkloadReport submits report of workload for User Download asset
-	// r is buffer of []*types.WorkloadReport encode by gob
-	// SubmitUserWorkloadReport(ctx context.Context, r io.Reader) error //perm:default
-	// SubmitNodeWorkloadReport submits report of workload for node provide Asset Download
-	// r is buffer of types.NodeWorkloadReport encode by gob
-	// SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) error //perm:edge,candidate
 	// GetWorkloadRecords retrieves a list of workload results with pagination using the specified limit, offset, and node
 	GetWorkloadRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListWorkloadRecordRsp, error) //perm:web,admin
+	// GetWorkloadRecord retrieves a list of workload results with pagination using the specified limit, offset, and node
+	GetWorkloadRecord(ctx context.Context, id string) (*types.WorkloadRecord, error) //perm:web,admin
 	// GetWorkloadRecord retrieves result with tokenID
 	// GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) //perm:web,admin
 	// GetRetrieveEventRecords retrieves a list of retrieve event with pagination using the specified limit, offset, and node
@@ -245,5 +286,5 @@ type Scheduler interface {
 	// GetValidationInfo get information related to validation and election
 	GetValidationInfo(ctx context.Context) (*types.ValidationInfo, error) //perm:web,admin
 	// ElectValidators
-	ElectValidators(ctx context.Context, nodeIDs []string) error //perm:admin
+	ElectValidators(ctx context.Context, nodeIDs []string, cleanOld bool) error //perm:admin
 }

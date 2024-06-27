@@ -10,9 +10,10 @@ import (
 	"github.com/Filecoin-Titan/titan/node/asset"
 	"github.com/Filecoin-Titan/titan/node/common"
 	"github.com/Filecoin-Titan/titan/node/device"
+	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 	validate "github.com/Filecoin-Titan/titan/node/validation"
-	"github.com/filecoin-project/go-jsonrpc"
+	"github.com/Filecoin-Titan/titan/node/workerd"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/quic-go/quic-go"
 	"go.uber.org/fx"
@@ -30,31 +31,18 @@ type Edge struct {
 	*asset.Asset
 	*validate.Validation
 	*datasync.DataSync
-
+	*workerd.Workerd
 	Transport    *quic.Transport
 	SchedulerAPI api.Scheduler
+
+	RestartChan     dtypes.RestartChan
+	RestartDoneChan dtypes.RestartDoneChan
 }
 
 // WaitQuiet waits for the edge device to become idle.
 func (edge *Edge) WaitQuiet(ctx context.Context) error {
 	log.Debug("WaitQuiet")
 	return nil
-}
-
-// ExternalServiceAddress returns the external service address of the scheduler.
-func (edge *Edge) ExternalServiceAddress(ctx context.Context, candidateURL string) (string, error) {
-	httpClient, err := client.NewHTTP3ClientWithPacketConn(edge.Transport)
-	if err != nil {
-		return "", err
-	}
-
-	candidateAPI, closer, err := client.NewCandidate(ctx, candidateURL, nil, jsonrpc.WithHTTPClient(httpClient))
-	if err != nil {
-		return "", err
-	}
-	defer closer()
-
-	return candidateAPI.GetExternalAddress(ctx)
 }
 
 // UserNATPunch checks network connectivity from the edge device to the specified URL.
@@ -87,4 +75,10 @@ func (edge *Edge) GetEdgeOnlineStateFromScheduler(ctx context.Context) (bool, er
 		return false, nil
 	}
 	return online, nil
+}
+
+func (edge *Edge) Restart(ctx context.Context) error {
+	edge.RestartChan <- struct{}{}
+	<-edge.RestartDoneChan // make sure all modules are ready to start
+	return nil
 }
