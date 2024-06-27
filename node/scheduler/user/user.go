@@ -165,7 +165,7 @@ func (u *User) DeleteAPIKey(ctx context.Context, name string) error {
 }
 
 // CreateAsset creates an asset with car CID, car name, and car size.
-func (u *User) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.CreateAssetRsp, error) {
+func (u *User) CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.UploadInfo, error) {
 	hash, err := cidutil.CIDToHash(req.AssetCID)
 	if err != nil {
 		return nil, &api.ErrWeb{Code: terrors.CidToHashFiled.Int(), Message: err.Error()}
@@ -265,31 +265,32 @@ func (u *User) DeleteAsset(ctx context.Context, cid string) error {
 func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI api.Scheduler, nodeManager *node.Manager) (map[string]string, error) {
 	urls := make(map[string]string)
 	for _, assetCID := range assetCIDs {
-		downloadInfos, err := schedulerAPI.GetCandidateDownloadInfos(ctx, assetCID)
+		hash, err := cidutil.CIDToHash(assetCID)
 		if err != nil {
-			return nil, err
+			return nil, &api.ErrWeb{Code: terrors.CidToHashFiled.Int()}
 		}
 
-		if len(downloadInfos) == 0 {
-			return nil, fmt.Errorf("asset %s not exist", assetCID)
+		assetName, err := u.GetAssetName(hash, u.ID)
+		if err != nil {
+			return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+		}
+
+		rsp, err := schedulerAPI.GetAssetSourceDownloadInfo(ctx, assetCID)
+		if err != nil {
+			return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
+		}
+
+		if len(rsp.SourceList) == 0 {
+			return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int()}
 		}
 
 		tk, err := generateAccessToken(&types.AuthUserUploadDownloadAsset{UserID: u.ID, AssetCID: assetCID}, schedulerAPI.(api.Common))
 		if err != nil {
-			return nil, err
-		}
-
-		hash, err := cidutil.CIDToHash(assetCID)
-		if err != nil {
-			return nil, err
-		}
-		assetName, err := u.GetAssetName(hash, u.ID)
-		if err != nil {
-			return nil, err
+			return nil, &api.ErrWeb{Code: terrors.GenerateAccessToken.Int()}
 		}
 
 		var node *node.Node
-		for _, info := range downloadInfos {
+		for _, info := range rsp.SourceList {
 			n := nodeManager.GetCandidateNode(info.NodeID)
 			if n != nil {
 				node = n
@@ -297,7 +298,7 @@ func (u *User) ShareAssets(ctx context.Context, assetCIDs []string, schedulerAPI
 			}
 		}
 
-		url := fmt.Sprintf("http://%s/ipfs/%s?token=%s&filename=%s", downloadInfos[0].Address, assetCID, tk, assetName)
+		url := fmt.Sprintf("http://%s/ipfs/%s?token=%s&filename=%s", rsp.SourceList[0].Address, assetCID, tk, assetName)
 		if node != nil && len(node.ExternalURL) > 0 {
 			url = fmt.Sprintf("%s/ipfs/%s?token=%s&filename=%s", node.ExternalURL, assetCID, tk, assetName)
 		}

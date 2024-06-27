@@ -52,6 +52,10 @@ type Common interface {
 
 	// Closing jsonrpc closing
 	Closing(context.Context) (<-chan struct{}, error) //perm:admin
+
+	// ExternalServiceAddress check service address with different candidate
+	// if behind nat, service address maybe different
+	ExternalServiceAddress(ctx context.Context, rpcURL string) (string, error) //perm:admin
 }
 
 // APIVersion provides various build-time information

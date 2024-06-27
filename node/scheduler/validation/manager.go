@@ -13,6 +13,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
+	"github.com/docker/go-units"
 	"github.com/filecoin-project/pubsub"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
@@ -77,8 +78,6 @@ type Manager struct {
 
 	nextElectionTime time.Time
 
-	profit float64
-
 	// validation result worker
 	resultQueue chan *api.ValidationResult
 
@@ -93,29 +92,31 @@ type Manager struct {
 	lotusRPCAddress   string
 
 	enableValidation bool
-	validationProfit float64
 
 	validationProfits     map[string]float64
 	validationProfitsLock sync.Mutex
 
 	l2ValidatorCount int
-	validatorRatio   float64
 	electionCycle    time.Duration
+	validatorRatio   float64
+
+	nodeBandwidthDowns map[string]float64
 }
 
 // NewManager return new node manager instance
 func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *Manager {
 	manager := &Manager{
-		nodeMgr:           nodeMgr,
-		assetMgr:          assetMgr,
-		config:            configFunc,
-		close:             make(chan struct{}),
-		unpairedGroup:     newValidatableGroup(),
-		updateCh:          make(chan struct{}, 1),
-		notify:            p,
-		resultQueue:       make(chan *api.ValidationResult),
-		leadershipMgr:     lmgr,
-		validationProfits: make(map[string]float64),
+		nodeMgr:            nodeMgr,
+		assetMgr:           assetMgr,
+		config:             configFunc,
+		close:              make(chan struct{}),
+		unpairedGroup:      newValidatableGroup(),
+		updateCh:           make(chan struct{}, 1),
+		notify:             p,
+		resultQueue:        make(chan *api.ValidationResult),
+		leadershipMgr:      lmgr,
+		validationProfits:  make(map[string]float64),
+		nodeBandwidthDowns: make(map[string]float64),
 	}
 
 	manager.initCfg()
@@ -123,13 +124,52 @@ func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtyp
 	return manager
 }
 
+func (m *Manager) initCfg() {
+	cfg, err := m.config()
+	if err != nil {
+		log.Errorf("get schedulerConfig err:%s", err.Error())
+
+		m.electionCycle = electionCycle
+		m.validatorRatio = 1
+		return
+	}
+
+	m.validatorBaseBwDn = float64(cfg.ValidatorBaseBwDn * units.MiB)
+	m.lotusRPCAddress = cfg.LotusRPCAddress
+	m.enableValidation = cfg.EnableValidation
+	m.l2ValidatorCount = cfg.L2ValidatorCount
+	m.electionCycle = time.Duration(cfg.ElectionCycle) * time.Hour * 24
+	m.validatorRatio = cfg.ValidatorRatio
+}
+
 // Start start validate and elect task
 func (m *Manager) Start(ctx context.Context) {
-	go m.startValidationTicker()
+	// nextTick := time.Now().Truncate(validationInterval).Add(validationInterval)
+	nextTick := getNextExecutionTime()
+	duration := nextTick.Sub(time.Now())
+
+	go m.startValidationTicker(duration)
 	go m.startElectionTicker()
+	go m.handleValidatorProfits(duration + (time.Minute * 2))
 
 	m.subscribeNodeEvents()
 	m.handleResults()
+}
+
+// getNextExecutionTime
+func getNextExecutionTime() time.Time {
+	hours := []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23}
+
+	now := time.Now()
+	for _, hour := range hours {
+		next := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location())
+		if next.After(now) {
+			return next
+		}
+	}
+
+	next := time.Date(now.Year(), now.Month(), now.Day()+1, hours[0], 0, 0, 0, now.Location())
+	return next
 }
 
 // Stop stop

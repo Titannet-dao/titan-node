@@ -4,7 +4,7 @@ package db
 var cAssetStateTable = `
     CREATE TABLE if not exists %s (
 		hash                VARCHAR(128) NOT NULL UNIQUE,
-		state               VARCHAR(128) DEFAULT '',
+		state               VARCHAR(16)  DEFAULT '',
 		retry_count         INT          DEFAULT 0,
 		replenish_replicas  INT          DEFAULT 0,
 		PRIMARY KEY (hash)
@@ -37,23 +37,27 @@ var cNodeInfoTable = `
 	    disk_type            VARCHAR(64)     DEFAULT '',
 	    io_system            VARCHAR(64)     DEFAULT '',
 	    system_version       VARCHAR(64)     DEFAULT '',
-	    nat_type             VARCHAR(32)     DEFAULT '',
 	    disk_space           FLOAT           DEFAULT 0,
 		available_disk_space FLOAT           DEFAULT 0,
 		titan_disk_usage     FLOAT           DEFAULT 0,
     	bandwidth_up         BIGINT          DEFAULT 0,
     	bandwidth_down       BIGINT          DEFAULT 0,
+		netflow_up           BIGINT          DEFAULT 0,
+		netflow_down         BIGINT          DEFAULT 0,
 	    scheduler_sid        VARCHAR(128)    NOT NULL,
 		first_login_time     DATETIME        DEFAULT CURRENT_TIMESTAMP,
 	    online_duration      INT             DEFAULT 0,
-	    profit               DECIMAL(14, 6)  DEFAULT 0,
+	    offline_duration     INT             DEFAULT 0,
+	    profit               DECIMAL(20, 6)  DEFAULT 0,
 	    last_seen            DATETIME        DEFAULT CURRENT_TIMESTAMP,
 	    disk_usage           FLOAT           DEFAULT 0,
     	upload_traffic       BIGINT          DEFAULT 0,
     	download_traffic     BIGINT          DEFAULT 0,		
     	retrieve_count       INT             DEFAULT 0,	
     	asset_count          INT             DEFAULT 0,
-		deactivate_time      INT             DEFAULT 0,
+		deactivate_time      INT             DEFAULT 0,		
+		free_up_disk_time    DATETIME        DEFAULT '2024-04-20 12:10:15',
+		ws_server_id         VARCHAR(128)    DEFAULT '',
 	    PRIMARY KEY (node_id)
 	) ENGINE=InnoDB COMMENT='node info';`
 
@@ -68,8 +72,8 @@ var cValidationResultsTable = `
 	    status            TINYINT        DEFAULT 0,
 	    duration          BIGINT         DEFAULT 0,
 	    bandwidth         FLOAT          DEFAULT 0,
-	    start_time        DATETIME       DEFAULT NULL,
-	    end_time          DATETIME       DEFAULT NULL,
+	    start_time        DATETIME       DEFAULT CURRENT_TIMESTAMP,
+	    end_time          DATETIME       DEFAULT CURRENT_TIMESTAMP,
 		profit            DECIMAL(14, 6) DEFAULT 0,
 		calculated_profit BOOLEAN,
 		token_id          VARCHAR(128)   DEFAULT '',
@@ -78,6 +82,8 @@ var cValidationResultsTable = `
 		PRIMARY KEY (id),
 	    KEY round_node (round_id, node_id),
 		KEY idx_profit (calculated_profit),
+		KEY idx_round_id  (round_id),
+		KEY idx_node_id  (node_id),
 		KEY idx_file  (file_saved),
 		KEY idx_start_time  (start_time)
     ) ENGINE=InnoDB COMMENT='Validation result records';`
@@ -272,3 +278,74 @@ var cProfitDetailsTable = `
 	    KEY idx_node_id (node_id),
 	    KEY idx_time (created_time)
     ) ENGINE=InnoDB COMMENT='profit details';`
+
+var cCandidateCodeTable = `
+    CREATE TABLE if not exists %s (
+	    code          VARCHAR(128)   NOT NULL,		
+		expiration    DATETIME       DEFAULT CURRENT_TIMESTAMP,
+		node_type     INT            NOT NULL,
+		node_id       VARCHAR(128)   DEFAULT '',
+		is_test 	  BOOLEAN        DEFAULT false,
+		PRIMARY KEY (code)
+    ) ENGINE=InnoDB COMMENT='candidate code';`
+
+// Table creation SQL statements.
+var cProjectStateTable = `
+    CREATE TABLE if not exists %s (
+		id                  VARCHAR(128) NOT NULL UNIQUE,	
+		state               VARCHAR(16)  DEFAULT 0,		
+		retry_count         INT          DEFAULT 0,
+		replenish_replicas  INT          DEFAULT 0,
+		PRIMARY KEY (id)
+	) ENGINE=InnoDB COMMENT='project state info';`
+
+var cProjectInfosTable = `
+    CREATE TABLE if not exists %s (
+		id            VARCHAR(128)   NOT NULL UNIQUE,
+		user_id       VARCHAR(128)   DEFAULT '',
+		bundle_url    VARCHAR(128)   DEFAULT '',
+		name          VARCHAR(128)   DEFAULT '',	
+		created_time  DATETIME       DEFAULT CURRENT_TIMESTAMP,		
+		replicas      INT            DEFAULT 0,
+		scheduler_sid VARCHAR(128)   NOT NULL,   
+		expiration    DATETIME       DEFAULT CURRENT_TIMESTAMP,	
+	    cpu_cores     INT            DEFAULT 0,
+	    memory        FLOAT          DEFAULT 0,
+		area_id       VARCHAR(32)    DEFAULT '',   
+		PRIMARY KEY (id),
+	    KEY idx_user_id (user_id),
+	    KEY idx_time (created_time),
+	    KEY idx_expiration (expiration)
+    ) ENGINE=InnoDB COMMENT='project info';`
+
+var cProjectReplicasTable = `
+    CREATE TABLE if not exists %s (
+		id            VARCHAR(128)  NOT NULL,
+		node_id       VARCHAR(128)  NOT NULL,	
+		status        TINYINT       DEFAULT 0,		
+		created_time  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+		end_time      DATETIME      DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (id,node_id),
+	    KEY idx_time (created_time),
+		KEY idx_node_id (node_id),
+		KEY idx_id (id)
+    ) ENGINE=InnoDB COMMENT='project replicas';`
+
+var cProjectEventTable = `
+    CREATE TABLE if not exists %s (
+		id            VARCHAR(128)  NOT NULL,
+		event         TINYINT       DEFAULT 0,
+		node_id       VARCHAR(128)  NOT NULL,
+		created_time  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+		KEY idx_id (id),
+		KEY idx_node_id (node_id),
+		KEY idx_time (created_time)
+	) ENGINE=InnoDB COMMENT='project replica event';`
+
+var cOnlineCountTable = `
+	CREATE TABLE if not exists %s (
+		node_id         VARCHAR(128)  NOT NULL,
+		create_time     DATETIME      NOT NULL,
+		online_count    INT           DEFAULT 0,
+		PRIMARY KEY (node_id,create_time)
+	) ENGINE=InnoDB COMMENT='node and server online count';`

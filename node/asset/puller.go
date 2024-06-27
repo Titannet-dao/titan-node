@@ -24,10 +24,10 @@ type pulledResult struct {
 
 // assetPuller represents a struct that is responsible for downloading and managing the progress of an asset pull operation
 type assetPuller struct {
-	root            cid.Cid
-	storage         storage.Storage
-	bFetcher        fetcher.BlockFetcher
-	downloadSources []*types.CandidateDownloadInfo
+	root     cid.Cid
+	storage  storage.Storage
+	bFetcher fetcher.BlockFetcher
+	dss      *types.DownloadSources
 
 	blocksWaitList          []string
 	blocksPulledSuccessList []string
@@ -45,40 +45,44 @@ type assetPuller struct {
 
 	errMsgs     []*fetcher.ErrMsg
 	rateLimiter *rate.Limiter
+	workloadID  string
 }
 
 type pullerOptions struct {
-	root        cid.Cid
-	dss         []*types.CandidateDownloadInfo
+	root cid.Cid
+	// dss         []*types.CandidateDownloadInfo
+	dss         *types.DownloadSources
 	storage     storage.Storage
 	ipfsAPIURL  string
 	config      *config.Puller
 	httpClient  *http.Client
 	rateLimiter *rate.Limiter
+	workloadID  string
 }
 
 // newAssetPuller creates a new asset puller with the given options
 func newAssetPuller(opts *pullerOptions) (*assetPuller, error) {
-	if types.RunningNodeType == types.NodeEdge && len(opts.dss) == 0 {
-		return nil, fmt.Errorf("newAssetPuller error, puller options dss cannot empty")
+	if types.RunningNodeType == types.NodeEdge && isDownloadSourceEmpty(opts.dss) {
+		return nil, fmt.Errorf("newAssetPuller error, downloadSources cannot empty for edge node")
 	}
 
 	var blockFetcher fetcher.BlockFetcher
-	if len(opts.dss) != 0 {
+	if !isDownloadSourceEmpty(opts.dss) {
 		blockFetcher = fetcher.NewCandidateFetcher(opts.httpClient)
 	} else {
 		blockFetcher = fetcher.NewIPFSClient(opts.ipfsAPIURL)
 	}
 	return &assetPuller{
-		root:            opts.root,
-		storage:         opts.storage,
-		downloadSources: opts.dss,
-		bFetcher:        blockFetcher,
-		config:          opts.config,
-		rateLimiter:     opts.rateLimiter,
-		startTime:       time.Now(),
-		errMsgs:         make([]*fetcher.ErrMsg, 0),
-		workloads:       make(map[string]*types.Workload),
+		root:        opts.root,
+		storage:     opts.storage,
+		dss:         opts.dss,
+		bFetcher:    blockFetcher,
+		config:      opts.config,
+		rateLimiter: opts.rateLimiter,
+		startTime:   time.Now(),
+		errMsgs:     make([]*fetcher.ErrMsg, 0),
+		workloads:   make(map[string]*types.Workload),
+		workloadID:  opts.workloadID,
 	}, nil
 }
 
@@ -99,9 +103,19 @@ func (ap *assetPuller) removeBlocksFromWaitList(n int) {
 	ap.blocksWaitList = ap.blocksWaitList[n:]
 }
 
+func (ap *assetPuller) isContainAWSDownloadSource() bool {
+	if ap.dss != nil && ap.dss.AWS != nil {
+		aws := ap.dss.AWS
+		if len(aws.Bucket) > 0 && len(aws.Key) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // pullAsset pulls the asset by downloading its blocks
 func (ap *assetPuller) pullAsset() error {
-	if isContainAWSDownloadSource(ap.downloadSources) {
+	if ap.isContainAWSDownloadSource() {
 		err := ap.pullAssetFromAWS()
 		if err == nil {
 			return nil
@@ -171,7 +185,12 @@ func (ap *assetPuller) pullBlocks(cids []string) (*pulledResult, error) {
 
 	ap.cancel = cancel
 
-	errMsgs, workloads, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
+	var sdis []*types.SourceDownloadInfo = nil
+	if ap.dss != nil && len(ap.dss.Nodes) > 0 {
+		sdis = ap.dss.Nodes
+	}
+
+	errMsgs, workloads, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, sdis)
 	if err != nil {
 		log.Errorf("fetch blocks err: %s", err.Error())
 		return nil, err
@@ -263,7 +282,12 @@ func (ap *assetPuller) retryFetchBlocks(cids []string) ([]blocks.Block, error) {
 
 	ap.cancel = cancel
 
-	errMsgs, workloads, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, ap.downloadSources)
+	var sdis []*types.SourceDownloadInfo = nil
+	if ap.dss != nil && len(ap.dss.Nodes) > 0 {
+		sdis = ap.dss.Nodes
+	}
+
+	errMsgs, workloads, blks, err := ap.bFetcher.FetchBlocks(ctx, cids, sdis)
 	if err != nil {
 		log.Errorf("retry fetch blocks err %s", err.Error())
 		return nil, err
@@ -306,7 +330,7 @@ func (ap *assetPuller) encode() ([]byte, error) {
 		BlocksWaitList:          ap.blocksWaitList,
 		BlocksPulledSuccessList: ap.blocksPulledSuccessList,
 		NextLayerCIDs:           ap.nextLayerCIDs,
-		DownloadSources:         ap.downloadSources,
+		DownloadSources:         ap.dss,
 		TotalSize:               ap.totalSize,
 		DoneSize:                ap.doneSize,
 	}
@@ -331,7 +355,7 @@ func (ap *assetPuller) decode(data []byte) error {
 	ap.blocksWaitList = eac.BlocksWaitList
 	ap.blocksPulledSuccessList = eac.BlocksPulledSuccessList
 	ap.nextLayerCIDs = eac.NextLayerCIDs
-	ap.downloadSources = eac.DownloadSources
+	ap.dss = eac.DownloadSources
 	ap.totalSize = eac.TotalSize
 	ap.doneSize = eac.DoneSize
 
@@ -371,10 +395,19 @@ func (ap *assetPuller) usableDiskSpace() int64 {
 }
 
 func (ap *assetPuller) pullAssetFromAWS() error {
-	bucket, key := getAWSBucketAndKey(ap.downloadSources)
-	if len(bucket) == 0 && len(key) == 0 {
+	if ap.dss == nil {
+		return fmt.Errorf("pullAssetFromAWS ap.dss == nil")
+	}
+	if ap.dss.AWS == nil {
+		return fmt.Errorf("pullAssetFromAWS ap.dss.AWS == nil")
+	}
+
+	if len(ap.dss.AWS.Bucket) == 0 && len(ap.dss.AWS.Key) == 0 {
 		return fmt.Errorf("bucket and key is empty, can not pull asset from aws")
 	}
+
+	bucket := ap.dss.AWS.Bucket
+	key := ap.dss.AWS.Key
 
 	log.Debugf("pull asset %s from aws bucket=%s, ket=%s", ap.root.String(), bucket, key)
 
@@ -421,4 +454,20 @@ func getAWSBucketAndKey(downloadInfos []*types.CandidateDownloadInfo) (string, s
 		}
 	}
 	return "", ""
+}
+
+func isDownloadSourceEmpty(dss *types.DownloadSources) bool {
+	if dss == nil {
+		return true
+	}
+
+	if dss.AWS != nil && len(dss.AWS.Bucket) > 0 && len(dss.AWS.Key) > 0 {
+		return false
+	}
+
+	if len(dss.Nodes) > 0 {
+		return false
+	}
+
+	return true
 }

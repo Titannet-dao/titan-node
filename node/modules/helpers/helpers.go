@@ -6,7 +6,7 @@ import (
 	"go.uber.org/fx"
 )
 
-// MetricsCtx is a context wrapper with metrics
+// MetricsCtx is a context cgo with metrics
 type MetricsCtx context.Context
 
 // LifecycleCtx creates a context which will be cancelled when lifecycle stops

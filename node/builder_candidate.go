@@ -15,6 +15,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/repo"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 	"github.com/Filecoin-Titan/titan/node/validation"
+	"github.com/Filecoin-Titan/titan/node/workerd"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 )
@@ -48,7 +49,7 @@ func ConfigCandidate(c interface{}) Option {
 
 	return Options(
 		Override(new(*config.CandidateCfg), cfg),
-		Override(new(*device.Device), modules.NewDevice(&cfg.CPU, &cfg.Memory, &cfg.Storage, &cfg.Bandwidth)),
+		Override(new(*device.Device), modules.NewDevice(&cfg.CPU, &cfg.Memory, &cfg.Storage, &cfg.Bandwidth, &cfg.Netflow)),
 		Override(new(dtypes.NodeMetadataPath), dtypes.NodeMetadataPath(cfg.MetadataPath)),
 		Override(new(*config.MinioConfig), &cfg.MinioConfig),
 		Override(new(*storage.Manager), modules.NewNodeStorageManager),
@@ -57,5 +58,7 @@ func ConfigCandidate(c interface{}) Option {
 		Override(new(*asset.Asset), asset.NewAsset),
 		Override(new(*datasync.DataSync), modules.NewDataSync),
 		Override(new(*candidate.TCPServer), modules.NewTCPServer),
+		Override(new(dtypes.WorkerdPath), modules.WorkerdPath),
+		Override(new(*workerd.Workerd), modules.NewWorkerd),
 	)
 }

@@ -44,7 +44,6 @@ type Candidate struct {
 	*device.Device
 	*vd.Validation
 	*datasync.DataSync
-
 	Scheduler api.Scheduler
 	Config    *config.CandidateCfg
 	TCPSrv    *TCPServer

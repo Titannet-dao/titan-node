@@ -2,11 +2,13 @@ package assets
 
 import (
 	"bytes"
+	"crypto"
 	"encoding/gob"
 	"math"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/alecthomas/units"
 	"github.com/filecoin-project/go-statemachine"
@@ -56,29 +58,32 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 		}
 		nodes[cNode.NodeID] = cNode
 	} else {
-		nodeInfo := m.getNodesFromFillAsset(info.CID)
+		nodeInfo := m.getNodesFromAWSAsset(info.CID)
 		if nodeInfo != nil && nodeInfo.candidateList != nil && len(nodeInfo.candidateList) > 0 {
 			seed := nodeInfo.candidateList[0]
 			nodes[seed.NodeID] = seed
 		} else {
 			// find nodes
 			str := ""
-			nodes, str = m.chooseCandidateNodes(seedReplicaCount, info.CandidateReplicaSucceeds)
+			nodes, str = m.chooseCandidateNodes(seedReplicaCount, info.CandidateReplicaSucceeds, float64(info.Size))
 			if len(nodes) < 1 {
 				return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
 			}
 		}
 	}
 
-	cInfo := make([]*types.CandidateDownloadInfo, 0)
-	if info.Note != "" {
-		cInfo = append(cInfo, &types.CandidateDownloadInfo{AWSBucket: info.Note})
+	var awsInfo *types.AWSDownloadSources
+	if info.Source == AssetSourceAWS && info.Note != "" {
+		awsInfo = &types.AWSDownloadSources{Bucket: info.Note}
 	}
 
 	for _, node := range nodes {
 		cNode := node
 
-		err := cNode.PullAsset(ctx.Context(), info.CID, cInfo)
+		workloadID := m.createSeedWorkload(info, cNode.NodeID)
+
+		log.Infof("workload PullAssetV2 nodeID:[%s] , %s\n", cNode.NodeID, workloadID)
+		err := cNode.PullAssetV2(ctx.Context(), &types.AssetPullRequest{AssetCID: info.CID, WorkloadID: workloadID, Dss: &types.DownloadSources{AWS: awsInfo}})
 		if err != nil {
 			log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
 			continue
@@ -93,8 +98,6 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 		if err != nil {
 			log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
 		}
-
-		m.createSeedWorkload(info, cNode.NodeID)
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
@@ -102,7 +105,7 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 	return ctx.Send(PullRequestSent{})
 }
 
-func (m *Manager) createSeedWorkload(info AssetPullingInfo, nodeID string) {
+func (m *Manager) createSeedWorkload(info AssetPullingInfo, nodeID string) string {
 	sID := types.DownloadSourceIPFS.String()
 	if info.Source == AssetSourceAWS {
 		sID = types.DownloadSourceAWS.String()
@@ -131,7 +134,11 @@ func (m *Manager) createSeedWorkload(info AssetPullingInfo, nodeID string) {
 		if err != nil {
 			log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(workloads), err.Error())
 		}
+
+		return record.WorkloadID
 	}
+
+	return ""
 }
 
 // handleSeedPulling handles the asset pulling process of seed nodes
@@ -211,14 +218,19 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 		return ctx.Send(SkipStep{})
 	}
 
-	sources := m.getDownloadSources(info.Hash.String(), info.Note, AssetSource(info.Source))
-	if len(sources) < 1 {
+	var awsInfo *types.AWSDownloadSources
+	if info.Source == AssetSourceAWS && info.Note != "" {
+		awsInfo = &types.AWSDownloadSources{Bucket: info.Note}
+	}
+
+	sources := m.getDownloadSources(info.Hash.String())
+	if len(sources) < 1 && awsInfo == nil {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
 	nodes := make(map[string]*node.Node)
 
-	nodeInfo := m.getNodesFromFillAsset(info.CID)
+	nodeInfo := m.getNodesFromAWSAsset(info.CID)
 	if nodeInfo != nil && nodeInfo.candidateList != nil && len(nodeInfo.candidateList) > 1 {
 		ns := nodeInfo.candidateList[1:]
 		for _, n := range ns {
@@ -229,59 +241,52 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 	} else {
 		// find nodes
 		str := ""
-		nodes, str = m.chooseCandidateNodes(int(needCount), info.CandidateReplicaSucceeds)
+		nodes, str = m.chooseCandidateNodes(int(needCount), info.CandidateReplicaSucceeds, float64(info.Size))
 		if len(nodes) < 1 {
 			return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
 		}
 	}
 
-	downloadSources, workloads, err := m.GenerateToken(info.CID, sources, nodes, info.Size)
-	if err != nil {
-		return ctx.Send(SelectFailed{error: err})
-	}
-
-	// err = m.SaveTokenPayload(payloads)
-	// if err != nil {
-	// 	return ctx.Send(SelectFailed{error: err})
-	// }
-
-	// save to db
-	// err = m.saveReplicaInformation(nodes, info.Hash.String(), true)
-	// if err != nil {
-	// 	return ctx.Send(SelectFailed{error: err})
-	// }
-
-	// send a pull request to the node
+	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
 
 	for _, node := range nodes {
 		cNode := node
 
-		err := cNode.PullAsset(ctx.Context(), info.CID, downloadSources[cNode.NodeID])
+		downloadSource, workload, err := m.GenerateToken(info.CID, sources, cNode, info.Size, titanRsa)
 		if err != nil {
-			log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
+			log.Errorf("%s GenerateToken err:%s", cNode.NodeID, err.Error())
 			continue
 		}
 
-		err = m.SaveReplicaStatus(&types.ReplicaInfo{
-			NodeID:      cNode.NodeID,
-			Status:      types.ReplicaStatusWaiting,
-			Hash:        info.Hash.String(),
-			IsCandidate: true,
-		})
-		if err != nil {
-			log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
-		}
+		m.SaveWorkloadRecord([]*types.WorkloadRecord{workload})
 
+		go func() {
+			// err = cNode.PullAsset(ctx.Context(), info.CID, downloadSource)
+			log.Infof("workload PullAssetV2 nodeID:[%s] , %s\n", cNode.NodeID, workload.WorkloadID)
+			err := cNode.PullAssetV2(ctx.Context(), &types.AssetPullRequest{AssetCID: info.CID, WorkloadID: workload.WorkloadID, Dss: &types.DownloadSources{AWS: awsInfo, Nodes: downloadSource}})
+			if err != nil {
+				log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
+				return
+			}
+
+			err = m.SaveReplicaStatus(&types.ReplicaInfo{
+				NodeID:      cNode.NodeID,
+				Status:      types.ReplicaStatusWaiting,
+				Hash:        info.Hash.String(),
+				IsCandidate: true,
+			})
+			if err != nil {
+				log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
+			}
+		}()
+	}
+
+	// Wait send to node
+	if err := failedCoolDown(ctx, info, WaitTime); err != nil {
+		return err
 	}
 
 	m.startAssetTimeoutCounting(info.Hash.String(), 0, info.Size)
-
-	// go func() {
-	err = m.SaveTokenPayload(workloads)
-	if err != nil {
-		log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(workloads), err.Error())
-	}
-	// }()
 
 	return ctx.Send(PullRequestSent{})
 }
@@ -315,8 +320,8 @@ func (m *Manager) getCurBandwidthUp(nodes []string) int64 {
 		}
 	}
 
-	// B to MiB
-	v := int64(math.Ceil(float64(bandwidthUp) / float64(units.MiB)))
+	// B to KiB
+	v := int64(math.Ceil(float64(bandwidthUp) / float64(units.KiB)))
 	return v
 }
 
@@ -337,14 +342,19 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		return ctx.Send(SkipStep{})
 	}
 
-	sources := m.getDownloadSources(info.Hash.String(), info.Note, AssetSource(info.Source))
-	if len(sources) < 1 {
+	var awsInfo *types.AWSDownloadSources
+	if info.Source == AssetSourceAWS && info.Note != "" {
+		awsInfo = &types.AWSDownloadSources{Bucket: info.Note}
+	}
+
+	sources := m.getDownloadSources(info.Hash.String())
+	if len(sources) < 1 && awsInfo == nil {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
 	nodes := make(map[string]*node.Node)
 
-	nodeInfo := m.getNodesFromFillAsset(info.CID)
+	nodeInfo := m.getNodesFromAWSAsset(info.CID)
 	if nodeInfo != nil && nodeInfo.edgeList != nil && len(nodeInfo.edgeList) > 0 {
 		for _, n := range nodeInfo.edgeList {
 			nodes[n.NodeID] = n
@@ -359,15 +369,22 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 		}
 	}
 
-	downloadSources, workloads, err := m.GenerateToken(info.CID, sources, nodes, info.Size)
-	if err != nil {
-		return ctx.Send(SelectFailed{error: xerrors.Errorf("GenerateToken; %s", err.Error())})
-	}
-
+	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
 	for _, node := range nodes {
 		cNode := node
+
+		downloadSource, workload, err := m.GenerateToken(info.CID, sources, cNode, info.Size, titanRsa)
+		if err != nil {
+			log.Errorf("%s GenerateToken err:%s", cNode.NodeID, err.Error())
+			continue
+		}
+
+		m.SaveWorkloadRecord([]*types.WorkloadRecord{workload})
+
 		go func() {
-			err := cNode.PullAsset(ctx.Context(), info.CID, downloadSources[cNode.NodeID])
+			// err := cNode.PullAsset(ctx.Context(), info.CID, downloadSource)
+			log.Infof("workload PullAssetV2 nodeID:[%s] , %s\n", cNode.NodeID, workload.WorkloadID)
+			err := cNode.PullAssetV2(ctx.Context(), &types.AssetPullRequest{AssetCID: info.CID, WorkloadID: workload.WorkloadID, Dss: &types.DownloadSources{AWS: awsInfo, Nodes: downloadSource}})
 			if err != nil {
 				log.Errorf("%s PullAsset err:%s", cNode.NodeID, err.Error())
 				return
@@ -383,13 +400,6 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 			}
 		}()
 	}
-
-	// go func() {
-	err = m.SaveTokenPayload(workloads)
-	if err != nil {
-		log.Errorf("%s len:%d SaveTokenPayload err:%s", info.Hash, len(workloads), err.Error())
-	}
-	// }()
 
 	// Wait send to node
 	if err := failedCoolDown(ctx, info, WaitTime); err != nil {

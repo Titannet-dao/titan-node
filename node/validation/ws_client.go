@@ -15,7 +15,7 @@ func newWSClient(addr string, nodeID string) (*WebSocket, error) {
 	url := fmt.Sprintf("%s/validation/%s", addr, nodeID)
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("websocket dial %s, url %s", err.Error(), url)
 	}
 
 	log.Infof("new ws connect to %s", url)

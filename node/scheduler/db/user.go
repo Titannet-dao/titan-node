@@ -20,7 +20,7 @@ func (n *SQLDB) SaveAssetUser(hash, userID, assetName, assetType string, size in
 	defer func() {
 		err = tx.Rollback()
 		if err != nil && err != sql.ErrTxDone {
-			log.Errorf("DeleteAssetUser Rollback err:%s", err.Error())
+			log.Errorf("SaveAssetUser Rollback err:%s", err.Error())
 		}
 	}()
 

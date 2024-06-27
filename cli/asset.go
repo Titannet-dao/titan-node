@@ -37,6 +37,7 @@ var assetCmds = &cli.Command{
 		removeAssetRecordCmd,
 		stopAssetRecordCmd,
 		removeAssetReplicaCmd,
+		removeAllRecordCmd,
 		resetExpirationCmd,
 		restartAssetCmd,
 		addAWSDataCmd,
@@ -460,6 +461,53 @@ var listAWSDataCmd = &cli.Command{
 	},
 }
 
+var removeAllRecordCmd = &cli.Command{
+	Name:  "removes",
+	Usage: "remove all asset of this Scheduler",
+	Flags: []cli.Flag{},
+	Action: func(cctx *cli.Context) error {
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		limit := 200
+		offset := 0
+
+		states := assets.ActiveStates
+
+		for {
+			list, err := schedulerAPI.GetAssetRecords(ctx, limit, offset, states, "")
+			if err != nil {
+				return err
+			}
+
+			if len(list) == 0 {
+				break
+			}
+
+			for _, info := range list {
+				if info.Source == int64(types.AssetSourceStorage) {
+					offset++
+					continue
+				}
+
+				err := schedulerAPI.RemoveAssetRecord(ctx, info.CID)
+				if err != nil {
+					fmt.Printf("RemoveAssetRecord %s err: %s \n", info.CID, err.Error())
+					offset++
+				} else {
+					fmt.Printf("RemoveAssetRecord %s success \n", info.CID)
+				}
+			}
+		}
+
+		return nil
+	},
+}
+
 var listAssetRecordCmd = &cli.Command{
 	Name:  "list",
 	Usage: "List asset of this Scheduler",
@@ -600,7 +648,7 @@ var assetViewCmd = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
 			Name:  "sync",
-			Usage: "sync assetViwe",
+			Usage: "sync assetView",
 		},
 		&cli.BoolFlag{
 			Name:  "from-node",
@@ -844,7 +892,7 @@ func hashesToCids(hashes []string) []string {
 	for _, hash := range hashes {
 		c, err := cidutil.HashToCID(hash)
 		if err != nil {
-			fmt.Println("can not convert hash %s to cid", hash)
+			fmt.Printf("can not convert hash %s to cid \n", hash)
 			continue
 		}
 

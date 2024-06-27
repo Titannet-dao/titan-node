@@ -13,7 +13,7 @@ type AssetPullerEncoder struct {
 	BlocksWaitList          []string
 	BlocksPulledSuccessList []string
 	NextLayerCIDs           []string
-	DownloadSources         []*types.CandidateDownloadInfo
+	DownloadSources         *types.DownloadSources
 	TotalSize               uint64
 	DoneSize                uint64
 }

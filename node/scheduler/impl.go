@@ -11,12 +11,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/nat"
+	"github.com/Filecoin-Titan/titan/node/scheduler/projects"
 	"github.com/Filecoin-Titan/titan/node/scheduler/validation"
 	"github.com/Filecoin-Titan/titan/node/scheduler/workload"
+	"github.com/Filecoin-Titan/titan/region"
 	"github.com/docker/go-units"
 	"github.com/quic-go/quic-go"
 
@@ -45,12 +48,16 @@ const (
 	diskSpaceLimit     = 500 * units.TiB
 	bandwidthUpLimit   = 200 * units.MiB
 	availableDiskLimit = 2 * units.TiB
+
+	validatorCpuLimit    = 8
+	validatorMemoryLimit = 8 * units.GB
 )
 
 // Scheduler represents a scheduler node in a distributed system.
 type Scheduler struct {
 	fx.In
 
+	region.Region
 	*common.CommonAPI
 	*EdgeUpdateManager
 	dtypes.ServerID
@@ -64,6 +71,7 @@ type Scheduler struct {
 	SetSchedulerConfigFunc dtypes.SetSchedulerConfigFunc
 	GetSchedulerConfigFunc dtypes.GetSchedulerConfigFunc
 	WorkloadManager        *workload.Manager
+	ProjectManager         *projects.Manager
 
 	PrivateKey *rsa.PrivateKey
 	Transport  *quic.Transport
@@ -85,14 +93,13 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		}
 		cNode = node.New()
 		alreadyConnect = false
-	} else {
-		// if cNode.ClientCloser != nil {
-		// cNode.ClientCloser()
-		// }
 	}
 
-	if cNode.ExternalIP != "" {
-		s.NodeManager.RemoveNodeIP(nodeID, cNode.ExternalIP)
+	if cNode.NodeInfo != nil {
+		// clean old info
+		if cNode.ExternalIP != "" {
+			s.NodeManager.RemoveNodeIP(nodeID, cNode.ExternalIP)
+		}
 	}
 
 	externalIP, _, err := net.SplitHostPort(remoteAddr)
@@ -107,14 +114,11 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	defer func() {
 		if err != nil {
 			s.NodeManager.RemoveNodeIP(nodeID, externalIP)
-			// if cNode.ClientCloser != nil {
-			// cNode.ClientCloser()
-			// }
+			s.NodeManager.RemoveNodeGeo(nodeID, cNode.GeoInfo)
 		}
 	}()
 
 	cNode.SetToken(opts.Token)
-	cNode.RemoteAddr = remoteAddr
 	cNode.ExternalURL = opts.ExternalURL
 	cNode.TCPPort = opts.TcpServerPort
 	cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
@@ -123,11 +127,12 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		for _, nID := range s.SchedulerCfg.StorageCandidates {
 			if nID == nodeID {
 				cNode.IsStorageOnly = true
+				break
 			}
 		}
 	}
 
-	log.Infof("node connected %s, address:%s , %v", nodeID, remoteAddr, alreadyConnect)
+	log.Infof("node connected %s, address[%s] , %v, IsPrivateMinioOnly:%v", nodeID, remoteAddr, alreadyConnect, cNode.IsPrivateMinioOnly)
 
 	err = cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
 	if err != nil {
@@ -135,103 +140,76 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	}
 
 	// init node info
-	nodeInfo, err := cNode.API.GetNodeInfo(context.Background())
+	nInfo, err := cNode.API.GetNodeInfo(context.Background())
 	if err != nil {
 		log.Errorf("%s nodeConnect NodeInfo err:%s", nodeID, err.Error())
 		return err
 	}
 
-	if nodeID != nodeInfo.NodeID {
-		return xerrors.Errorf("nodeID mismatch %s, %s", nodeID, nodeInfo.NodeID)
+	if nodeID != nInfo.NodeID {
+		return xerrors.Errorf("nodeID mismatch %s, %s", nodeID, nInfo.NodeID)
 	}
 
+	info, err := s.db.GetCandidateCodeInfoForNodeID(nodeID)
+	if err != nil {
+		return xerrors.Errorf("nodeID GetCandidateCodeInfoForNodeID %s, %s", nodeID, err.Error())
+	}
+	nInfo.IsTestNode = info.IsTest
+
+	nodeInfo, meetCandidateStandard, err := s.checkNodeParameters(nInfo, nodeType)
+	if err != nil {
+		return err
+	}
+
+	if !meetCandidateStandard {
+		return xerrors.Errorf("Node %s does not meet the standard", nodeID)
+	}
+
+	nodeInfo.RemoteAddr = remoteAddr
 	nodeInfo.SchedulerID = s.ServerID
-
-	if nodeInfo.AvailableDiskSpace <= 0 {
-		nodeInfo.AvailableDiskSpace = 2 * units.GiB
-	}
-
-	if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace {
-		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace
-	}
-
-	if nodeInfo.AvailableDiskSpace > availableDiskLimit {
-		nodeInfo.AvailableDiskSpace = availableDiskLimit
-	}
-	if nodeType == types.NodeCandidate {
-		isValidator, err := s.db.IsValidator(nodeID)
-		if err != nil {
-			return xerrors.Errorf("nodeConnect %s IsValidator err:%s", nodeID, err.Error())
-		}
-
-		if isValidator {
-			nodeType = types.NodeValidator
-		}
-		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace * 0.9
-	} else {
-		err = checkNodeParameters(&nodeInfo)
-		if err != nil {
-			return err
-		}
-	}
-
-	nodeInfo.Type = nodeType
 	nodeInfo.ExternalIP = externalIP
 	nodeInfo.BandwidthUp = units.KiB
+	nodeInfo.NATType = types.NatTypeUnknown.String()
+
+	nodeInfo.GeoInfo, err = s.GetGeoInfo(externalIP)
+	if err != nil {
+		log.Warnf("%s getAreaID error %s", nodeID, err.Error())
+	}
 
 	oldInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
 	if err != nil && err != sql.ErrNoRows {
 		return xerrors.Errorf("load node online duration %s err : %s", nodeID, err.Error())
 	}
 
-	size, err := s.db.LoadReplicaSizeByNodeID(nodeID)
-	if err != nil {
-		return xerrors.Errorf("LoadReplicaSizeByNodeID %s err:%s", nodeID, err.Error())
-	}
-	nodeInfo.TitanDiskUsage = float64(size)
-	if nodeInfo.AvailableDiskSpace < float64(size) {
-		nodeInfo.AvailableDiskSpace = float64(roundUpToNextGB(size))
-	}
-
 	if oldInfo != nil {
 		// init node info
 		nodeInfo.PortMapping = oldInfo.PortMapping
 		nodeInfo.OnlineDuration = oldInfo.OnlineDuration
+		nodeInfo.OfflineDuration = oldInfo.OfflineDuration
 		nodeInfo.BandwidthDown = oldInfo.BandwidthDown
 		nodeInfo.BandwidthUp = oldInfo.BandwidthUp
 		nodeInfo.DeactivateTime = oldInfo.DeactivateTime
+		nodeInfo.DownloadTraffic = oldInfo.DownloadTraffic
+		nodeInfo.UploadTraffic = oldInfo.UploadTraffic
+		nodeInfo.WSServerID = oldInfo.WSServerID
+		nodeInfo.Profit = oldInfo.Profit
+		nodeInfo.FirstTime = oldInfo.FirstTime
 
 		if oldInfo.DeactivateTime > 0 && oldInfo.DeactivateTime < time.Now().Unix() {
 			return xerrors.Errorf("The node %s has been deactivate and cannot be logged in", nodeID)
 		}
 	}
 
-	cNode.BandwidthDown = nodeInfo.BandwidthDown
-	cNode.BandwidthUp = nodeInfo.BandwidthUp
-	cNode.PortMapping = nodeInfo.PortMapping
-	cNode.DeactivateTime = nodeInfo.DeactivateTime
-	cNode.AvailableDiskSpace = nodeInfo.AvailableDiskSpace
-	cNode.NodeID = nodeInfo.NodeID
-	cNode.Type = nodeInfo.Type
-	cNode.ExternalIP = nodeInfo.ExternalIP
-	cNode.DiskSpace = nodeInfo.DiskSpace
-	cNode.TitanDiskUsage = nodeInfo.TitanDiskUsage
-	cNode.DiskUsage = nodeInfo.DiskUsage
-	cNode.IncomeIncr = (s.NodeManager.NodeCalculateMCx() * 360)
-
-	// pCount, err := s.db.GetNodePullingCount(nodeID)
-	// if err == nil {
-	// 	cNode.PullAssetCount = int(pCount)
-	// }
+	cNode.NodeInfo = nodeInfo
 
 	if !alreadyConnect {
-		version, err := cNode.API.Version(ctx)
-		if err != nil {
-			log.Infof("node connected %s, Version:%s ", nodeID, err.Error())
-		} else {
-			cNode.IsNewVersion = version.Version == "0.1.18"
-			log.Infof("node connected %s, Version:%s , %v", nodeID, version.Version, cNode.IsNewVersion)
+		if nodeType == types.NodeEdge {
+			incr, _ := s.NodeManager.GetEdgeBaseProfitDetails(cNode)
+			cNode.IncomeIncr = incr
+
+			s.NodeManager.AddNodeGeo(cNode.NodeInfo, cNode.GeoInfo)
 		}
+		cNode.OnlineRate = s.NodeManager.ComputeNodeOnlineRate(nodeID, cNode.FirstTime)
 
 		pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
 		if err != nil && err != sql.ErrNoRows {
@@ -243,23 +221,59 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 			return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
 		}
 		cNode.PublicKey = publicKey
+		// init LastValidateTime
+		cNode.LastValidateTime = s.getNodeLastValidateTime(nodeID)
 
-		err = s.NodeManager.NodeOnline(cNode, &nodeInfo)
+		err = s.NodeManager.NodeOnline(cNode, nodeInfo)
 		if err != nil {
 			log.Errorf("nodeConnect err:%s,nodeID:%s", err.Error(), nodeID)
 			return err
 		}
+
+		s.ProjectManager.CheckProjectReplicasFromNode(nodeID)
 	}
 
 	if nodeType == types.NodeEdge {
 		go s.NatManager.DetermineEdgeNATType(context.Background(), nodeID)
+	} else {
+		go s.NatManager.DetermineCandidateNATType(context.Background(), nodeID)
 	}
 
 	s.DataSync.AddNodeToList(nodeID)
 	return nil
 }
 
-func roundUpToNextGB(bytes int) int {
+func (s *Scheduler) getNodeLastValidateTime(nodeID string) int64 {
+	rsp, err := s.NodeManager.LoadValidationResultInfos(nodeID, 1, 0)
+	if err != nil || len(rsp.ValidationResultInfos) == 0 {
+		return 0
+	}
+
+	info := rsp.ValidationResultInfos[0]
+	return info.StartTime.Unix()
+}
+
+func checkNodeClientType(systemVersion, androidSymbol, iosSymbol, windowsSymbol, macosSymbol string) types.NodeClientType {
+	if strings.Contains(systemVersion, androidSymbol) {
+		return types.NodeAndroid
+	}
+
+	if strings.Contains(systemVersion, iosSymbol) {
+		return types.NodeIOS
+	}
+
+	if strings.Contains(systemVersion, windowsSymbol) {
+		return types.NodeWindows
+	}
+
+	if strings.Contains(systemVersion, macosSymbol) {
+		return types.NodeMacos
+	}
+
+	return types.NodeOther
+}
+
+func roundUpToNextGB(bytes int64) int64 {
 	const GB = 1 << 30
 	if bytes%GB == 0 {
 		return bytes
@@ -267,36 +281,83 @@ func roundUpToNextGB(bytes int) int {
 	return ((bytes / GB) + 1) * GB
 }
 
-func checkNodeParameters(nodeInfo *types.NodeInfo) error {
-	if nodeInfo.DiskSpace > diskSpaceLimit || nodeInfo.DiskSpace < 0 {
-		return xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.DiskSpace)
+func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.NodeType) (*types.NodeInfo, bool, error) {
+	meetCandidateStandard := false
+
+	if nodeInfo.AvailableDiskSpace <= 0 {
+		nodeInfo.AvailableDiskSpace = 2 * units.GiB
 	}
 
-	// if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace {
-	// 	return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] > DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, nodeInfo.DiskSpace)
+	if nodeInfo.AvailableDiskSpace > nodeInfo.DiskSpace {
+		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace
+	}
+
+	nodeInfo.Type = nodeType
+
+	useSize, err := s.db.LoadReplicaSizeByNodeID(nodeInfo.NodeID)
+	if err != nil {
+		return nil, false, xerrors.Errorf("LoadReplicaSizeByNodeID %s err:%s", nodeInfo.NodeID, err.Error())
+	}
+
+	if nodeType == types.NodeEdge {
+		meetCandidateStandard = true
+
+		if nodeInfo.AvailableDiskSpace > availableDiskLimit {
+			nodeInfo.AvailableDiskSpace = availableDiskLimit
+		}
+
+		nodeInfo.ClientType = checkNodeClientType(nodeInfo.SystemVersion, s.SchedulerCfg.AndroidSymbol, s.SchedulerCfg.IOSSymbol, s.SchedulerCfg.WindowsSymbol, s.SchedulerCfg.MacosSymbol)
+		// limit node availableDiskSpace to 5 GiB when using phone
+		if nodeInfo.ClientType == types.NodeAndroid || nodeInfo.ClientType == types.NodeIOS {
+			if nodeInfo.AvailableDiskSpace > float64(5*units.GiB) {
+				nodeInfo.AvailableDiskSpace = float64(5 * units.GiB)
+			}
+
+			if useSize > 5*units.GiB {
+				useSize = 5 * units.GiB
+			}
+		}
+
+		if nodeInfo.DiskSpace > diskSpaceLimit || nodeInfo.DiskSpace < 0 {
+			return nil, false, xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.DiskSpace)
+		}
+
+		if nodeInfo.BandwidthDown < 0 {
+			return nil, false, xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%d]", nodeInfo.NodeID, nodeInfo.BandwidthDown)
+		}
+
+		if nodeInfo.BandwidthUp > bandwidthUpLimit || nodeInfo.BandwidthUp < 0 {
+			return nil, false, xerrors.Errorf("checkNodeParameters [%s] BandwidthUp [%d]", nodeInfo.NodeID, nodeInfo.BandwidthUp)
+		}
+
+		if nodeInfo.Memory > memoryLimit || nodeInfo.Memory < 0 {
+			return nil, false, xerrors.Errorf("checkNodeParameters [%s] Memory [%.2f]", nodeInfo.NodeID, nodeInfo.Memory)
+		}
+
+		if nodeInfo.CPUCores > cpuLimit || nodeInfo.CPUCores < 0 {
+			return nil, false, xerrors.Errorf("checkNodeParameters [%s] CPUCores [%d]", nodeInfo.NodeID, nodeInfo.CPUCores)
+		}
+
+	} else if nodeType == types.NodeCandidate {
+		meetCandidateStandard = nodeInfo.IsTestNode || (nodeInfo.Memory >= validatorMemoryLimit && nodeInfo.CPUCores >= validatorCpuLimit)
+
+		isValidator, err := s.db.IsValidator(nodeInfo.NodeID)
+		if err != nil {
+			return nil, false, xerrors.Errorf("checkNodeParameters %s IsValidator err:%s", nodeInfo.NodeID, err.Error())
+		}
+
+		if isValidator {
+			nodeInfo.Type = types.NodeValidator
+		}
+		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace * 0.9
+	}
+
+	nodeInfo.TitanDiskUsage = float64(useSize)
+	// if nodeInfo.AvailableDiskSpace < float64(useSize) {
+	// 	nodeInfo.AvailableDiskSpace = float64(roundUpToNextGB(useSize))
 	// }
 
-	// if nodeInfo.AvailableDiskSpace < float64(tDiskUsage) {
-	// 	return xerrors.Errorf("checkNodeParameters [%s] AvailableDiskSpace [%.2f] < tDiskUsage [%d]", nodeInfo.NodeID, nodeInfo.AvailableDiskSpace, tDiskUsage)
-	// }
-
-	if nodeInfo.BandwidthDown < 0 {
-		return xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%d]", nodeInfo.NodeID, nodeInfo.BandwidthDown)
-	}
-
-	if nodeInfo.BandwidthUp > bandwidthUpLimit || nodeInfo.BandwidthUp < 0 {
-		return xerrors.Errorf("checkNodeParameters [%s] BandwidthUp [%d]", nodeInfo.NodeID, nodeInfo.BandwidthUp)
-	}
-
-	if nodeInfo.Memory > memoryLimit || nodeInfo.Memory < 0 {
-		return xerrors.Errorf("checkNodeParameters [%s] Memory [%.2f]", nodeInfo.NodeID, nodeInfo.Memory)
-	}
-
-	if nodeInfo.CPUCores > cpuLimit || nodeInfo.CPUCores < 0 {
-		return xerrors.Errorf("checkNodeParameters [%s] CPUCores [%d]", nodeInfo.NodeID, nodeInfo.CPUCores)
-	}
-
-	return nil
+	return &nodeInfo, meetCandidateStandard, nil
 }
 
 // NodeValidationResult processes the validation result for a node
@@ -383,73 +444,14 @@ func (s *Scheduler) GetValidationInfo(ctx context.Context) (*types.ValidationInf
 	}, nil
 }
 
-// SubmitUserWorkloadReport submits report of workload for User Asset Download
-func (s *Scheduler) SubmitUserWorkloadReport(ctx context.Context, r io.Reader) error {
-	// nodeID := handler.GetNodeID(ctx)
-	// cipherText, err := io.ReadAll(r)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// log.Infof("SubmitUserWorkloadReport %s , size:%d\n", nodeID, len(cipherText))
-	return nil
-	// node := s.NodeManager.GetNode(nodeID)
-
-	// if err != nil {
-	// 	return err
-	// }
-
-	// titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	// data, err := titanRsa.Decrypt(cipherText, s.PrivateKey)
-	// if err != nil {
-	// 	return xerrors.Errorf("decrypt error: %w", err)
-	// }
-
-	// return s.WorkloadManager.HandleUserWorkload(data, node)
-}
-
-// SubmitNodeWorkloadReport submits report of workload for node Asset Download
-func (s *Scheduler) SubmitNodeWorkloadReport(ctx context.Context, r io.Reader) error {
-	// nodeID := handler.GetNodeID(ctx)
-	// cipherText, err := io.ReadAll(r)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// log.Infof("SubmitNodeWorkloadReport %s , size:%d\n", nodeID, len(cipherText))
-	return nil
-	// nodeID := handler.GetNodeID(ctx)
-	// node := s.NodeManager.GetNode(nodeID)
-	// if node == nil {
-	// 	return xerrors.Errorf("node %s not exists", nodeID)
-	// }
-
-	// report := &types.NodeWorkloadReport{}
-	// dec := gob.NewDecoder(r)
-	// err := dec.Decode(report)
-	// if err != nil {
-	// 	return xerrors.Errorf("decode data to NodeWorkloadReport error: %w", err)
-	// }
-
-	// titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
-	// if err = titanRsa.VerifySign(node.PublicKey, report.Sign, report.CipherText); err != nil {
-	// 	return xerrors.Errorf("verify sign error: %w", err)
-	// }
-
-	// data, err := titanRsa.Decrypt(report.CipherText, s.PrivateKey)
-	// if err != nil {
-	// 	return xerrors.Errorf("decrypt error: %w", err)
-	// }
-
-	// return s.WorkloadManager.PushResult(data, node)
-}
-
 func (s *Scheduler) SubmitWorkloadReportV2(ctx context.Context, workload *types.WorkloadRecordReq) error {
+	// from sdk or web or client
 	return s.WorkloadManager.PushResult(workload, "")
 }
 
 // SubmitWorkloadReport
 func (s *Scheduler) SubmitWorkloadReport(ctx context.Context, workload *types.WorkloadRecordReq) error {
+	// from node
 	nodeID := handler.GetNodeID(ctx)
 
 	node := s.NodeManager.GetNode(nodeID)
@@ -465,6 +467,11 @@ func (s *Scheduler) GetWorkloadRecords(ctx context.Context, nodeID string, limit
 	return s.NodeManager.LoadWorkloadRecords(nodeID, limit, offset)
 }
 
+// GetWorkloadRecord retrieves a list of workload results.
+func (s *Scheduler) GetWorkloadRecord(ctx context.Context, id string) (*types.WorkloadRecord, error) {
+	return s.NodeManager.LoadWorkloadRecordOfID(id)
+}
+
 // GetRetrieveEventRecords retrieves a list of retrieve events
 func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, limit, offset int) (*types.ListRetrieveEventRsp, error) {
 	return s.NodeManager.LoadRetrieveEventRecords(nodeID, limit, offset)
@@ -476,14 +483,31 @@ func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, 
 // }
 
 // ElectValidators elect validators
-func (s *Scheduler) ElectValidators(ctx context.Context, nodeIDs []string) error {
+func (s *Scheduler) ElectValidators(ctx context.Context, nodeIDs []string, cleanOld bool) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
 
-	return s.ValidationMgr.CompulsoryElection(nodeIDs)
+	return s.ValidationMgr.CompulsoryElection(nodeIDs, cleanOld)
 }
 
-func (s *Scheduler) AddProfits(ctx context.Context, nodes []string, profit float64) error {
-	return s.db.UpdateNodeProfit(nodes, profit)
+// UpdateNetFlows update node net flow total,up,down usage
+func (s *Scheduler) UpdateNetFlows(ctx context.Context, total, up, down int64) error {
+	return nil
+}
+
+func (s *Scheduler) ReDetermineNodeNATType(ctx context.Context, nodeID string) error {
+	node := s.NodeManager.GetCandidateNode(nodeID)
+	if node != nil {
+		go s.NatManager.DetermineCandidateNATType(ctx, nodeID)
+		return nil
+	}
+
+	node = s.NodeManager.GetEdgeNode(nodeID)
+	if node != nil {
+		go s.NatManager.DetermineCandidateNATType(ctx, nodeID)
+		return nil
+	}
+
+	return nil
 }

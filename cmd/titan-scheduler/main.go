@@ -173,7 +173,13 @@ var getAPIKeyCmd = &cli.Command{
 var runCmd = &cli.Command{
 	Name:  "run",
 	Usage: "Start titan scheduler node",
-	Flags: []cli.Flag{},
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "geodb-path",
+			Usage: "geodb path, example: --geodb-path=./city.mmdb",
+			Value: "./city.mmdb",
+		},
+	},
 
 	Before: func(cctx *cli.Context) error {
 		return nil
@@ -227,7 +233,7 @@ var runCmd = &cli.Command{
 
 		transport := &quic.Transport{Conn: udpPacketConn}
 
-		var shutdownChan = make(chan struct{})
+		shutdownChan := make(chan struct{})
 		var schedulerAPI api.Scheduler
 		stop, err := node.New(cctx.Context,
 			node.Scheduler(&schedulerAPI),
@@ -235,6 +241,10 @@ var runCmd = &cli.Command{
 			node.Repo(r),
 			node.Override(new(*quic.Transport), transport),
 			node.Override(new(dtypes.ShutdownChan), shutdownChan),
+			node.ApplyIf(func(s *node.Settings) bool { return cctx.IsSet("geodb-path") },
+				node.Override(new(dtypes.GeoDBPath), func() dtypes.GeoDBPath {
+					return dtypes.GeoDBPath(cctx.String("geodb-path"))
+				})),
 			node.Override(node.SetApiEndpointKey, func(lr repo.LockedRepo) error {
 				return setEndpointAPI(lr, schedulerCfg.ListenAddress)
 			}),
@@ -255,7 +265,7 @@ var runCmd = &cli.Command{
 			return fmt.Errorf("failed to instantiate rpc handler: %s", err.Error())
 		}
 
-		var stopHTTP3Server = func(context.Context) error {
+		stopHTTP3Server := func(context.Context) error {
 			return transport.Close()
 		}
 

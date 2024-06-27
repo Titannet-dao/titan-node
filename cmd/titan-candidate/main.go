@@ -24,6 +24,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/httpserver"
 	"github.com/Filecoin-Titan/titan/node/modules"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
+	"github.com/Filecoin-Titan/titan/node/tunnel"
 	"github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/quic-go/quic-go"
@@ -155,6 +156,11 @@ var daemonStartCmd = &cli.Command{
 			Usage: "--url=https://titan-server-domain/rpc/v0",
 			Value: "",
 		},
+		&cli.StringFlag{
+			Name:  "code",
+			Usage: "candidate register code",
+			Value: "",
+		},
 	},
 
 	Before: func(cctx *cli.Context) error {
@@ -199,7 +205,12 @@ var daemonStartCmd = &cli.Command{
 				return fmt.Errorf("Must set --url for --init")
 			}
 
-			if err := lcli.RegitsterNode(lr, locatorURL, types.NodeCandidate); err != nil {
+			code := cctx.String("code")
+			if len(code) == 0 {
+				return fmt.Errorf("--code can not empty")
+			}
+
+			if err := lcli.RegisterCandidateNode(lr, locatorURL, code); err != nil {
 				return err
 			}
 		}
@@ -275,7 +286,7 @@ var daemonStartCmd = &cli.Command{
 		}
 		log.Infof("Remote version %s", v)
 
-		var shutdownChan = make(chan struct{})
+		shutdownChan := make(chan struct{})
 		var httpServer *httpserver.HttpServer
 		var candidateAPI api.Candidate
 		stop, err := node.New(cctx.Context,
@@ -285,6 +296,7 @@ var daemonStartCmd = &cli.Command{
 			node.Override(new(dtypes.NodeID), dtypes.NodeID(nodeID)),
 			node.Override(new(api.Scheduler), schedulerAPI),
 			node.Override(new(dtypes.ShutdownChan), shutdownChan),
+			node.Override(new(*quic.Transport), transport),
 			node.Override(new(*asset.Manager), modules.NewAssetsManager(ctx, &candidateCfg.Puller, candidateCfg.IPFSAPIURL)),
 			node.Override(new(dtypes.NodeMetadataPath), func() dtypes.NodeMetadataPath {
 				metadataPath := candidateCfg.MetadataPath
@@ -352,7 +364,8 @@ var daemonStartCmd = &cli.Command{
 
 		handler := CandidateHandler(candidateAPI.AuthVerify, candidateAPI, true)
 		handler = httpServer.NewHandler(handler)
-		handler = validation.AppendHandler(handler, schedulerAPI, privateKey)
+		handler = validation.AppendHandler(handler, schedulerAPI, privateKey, time.Duration(candidateCfg.ValidateDuration)*time.Second)
+		handler = tunnel.NewTunserver(handler)
 
 		httpSrv := &http.Server{
 			ReadHeaderTimeout: 30 * time.Second,
@@ -468,7 +481,6 @@ var daemonStartCmd = &cli.Command{
 							} else if errNode.Code == int(terrors.NodeOffline) && readyCh == nil {
 								break
 							}
-
 						}
 					} else if curSession != schedulerSession {
 						log.Warn("change session id")
@@ -490,7 +502,7 @@ var daemonStartCmd = &cli.Command{
 
 // private minio storage only, not public storage
 func isPrivateMinioOnly(config *config.CandidateCfg) bool {
-	if len(config.AccessKeyID) > 0 && len(config.SecretAccessKey) > 0 && len(config.Endpoint) > 0 {
+	if config.IsPrivate {
 		return true
 	}
 	return false

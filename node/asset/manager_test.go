@@ -56,7 +56,8 @@ func TestManager(t *testing.T) {
 		return
 	}
 
-	mgr.addToWaitList(c, nil, false)
+	aw := &assetWaiter{Root: c, Dss: nil, isSyncData: false}
+	mgr.addToWaitList(aw)
 
 	time.Sleep(1 * time.Minute)
 }

@@ -2,13 +2,16 @@ package user
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/common"
 	"github.com/Filecoin-Titan/titan/node/config"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/Filecoin-Titan/titan/node/sqldb"
+	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/gbrlsnchs/jwt/v3"
 )
 
@@ -44,6 +47,23 @@ func TestUserAllocateStorage(t *testing.T) {
 	}
 
 	// u.CreateAPIKey(context.Background(), "abc")
+}
+
+func TestCandidateConnet(t *testing.T) {
+	candidate, close, err := client.NewCandidate(context.TODO(), "https://192.30.242.140:65283/rpc/v0", nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
+	if err != nil {
+		fmt.Println("NewCandidate ", err)
+		return
+	}
+	defer close()
+
+	v, err := candidate.Version(context.Background())
+	if err != nil {
+		fmt.Println("Version ", err)
+		return
+	}
+
+	fmt.Printf("version: %#v\n", v)
 }
 
 func TestUserAPIKey(t *testing.T) {

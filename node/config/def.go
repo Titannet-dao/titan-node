@@ -52,12 +52,18 @@ func DefaultEdgeCfg() *EdgeCfg {
 			MemoryGB: 1,
 		},
 		Bandwidth: Bandwidth{
-			// 10MB/s
-			BandwidthMB: 10,
-			// 100MB/s
-			BandwidthUp: 100,
-			// 1G/s
-			BandwidthDown: 1024,
+			// unlimited
+			BandwidthMB: 0,
+			// unlimited
+			BandwidthUp: 0,
+			// unlimited
+			BandwidthDown: 0,
+		},
+		Netflow: Netflow{
+			// unlimited
+			NetflowUp: 0,
+			// unlimited
+			NetflowDown: 0,
 		},
 		CPU: CPU{
 			Cores: 1,
@@ -99,12 +105,18 @@ func DefaultCandidateCfg() *CandidateCfg {
 			MemoryGB: 1,
 		},
 		Bandwidth: Bandwidth{
-			// 1GB/s
-			BandwidthMB: 1024,
-			// 1GB/s
-			BandwidthUp: 1024,
-			// 1GB/s
-			BandwidthDown: 1024,
+			// unlimited
+			BandwidthMB: 0,
+			// unlimited
+			BandwidthUp: 0,
+			// unlimited
+			BandwidthDown: 0,
+		},
+		Netflow: Netflow{
+			// unlimited
+			NetflowUp: 0,
+			// unlimited
+			NetflowDown: 0,
 		},
 		CPU: CPU{
 			Cores: 1,
@@ -115,6 +127,7 @@ func DefaultCandidateCfg() *CandidateCfg {
 		MetadataPath: "",
 		AssetsPaths:  []string{},
 		WebRedirect:  "https://storage.titannet.io/#/redirect",
+		IsPrivate:    false,
 	}
 }
 
@@ -129,7 +142,6 @@ func DefaultLocatorCfg() *LocatorCfg {
 		PrivateKeyPath:     "",
 		CaCertificatePath:  "",
 		EtcdAddresses:      []string{"127.0.0.1:2379"},
-		DefaultAreaID:      "Asia-China-Guangdong-Shenzhen",
 		DNSServerAddress:   "0.0.0.0:53",
 	}
 }
@@ -143,24 +155,25 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		CertificatePath:         "",
 		PrivateKeyPath:          "",
 		CaCertificatePath:       "",
+		GeoDBPath:               "./city.mmdb",
 		AreaID:                  "Asia-China-Guangdong-Shenzhen",
 		DatabaseAddress:         "mysql_user:mysql_password@tcp(127.0.0.1:3306)/titan",
 		EnableValidation:        true,
 		EtcdAddresses:           []string{},
-		CandidateReplicas:       0,
+		CandidateReplicas:       1,
 		ValidatorRatio:          1,
 		ValidatorBaseBwDn:       100,
 		ValidationProfit:        0,
 		WorkloadProfit:          0,
-		ElectionCycle:           5,
+		ElectionCycle:           1,
 		LotusRPCAddress:         "http://api.node.glif.io/rpc/v0",
 		LotusToken:              "",
 		EdgeDownloadRatio:       0.7,
-		AssetPullTaskLimit:      100,
-		UploadAssetReplicaCount: 10,
+		AssetPullTaskLimit:      10,
+		UploadAssetReplicaCount: 20,
 		UploadAssetExpiration:   150,
 		IPLimit:                 5,
-		FillAssetEdgeCount:      4000,
+		FillAssetEdgeCount:      500,
 		L2ValidatorCount:        0,
 		StorageCandidates:       []string{},
 		NodeScoreLevel: map[string][]int{
@@ -181,7 +194,11 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		Weight:                   100,
 		MaxAPIKey:                5,
 		// Maximum number of node registrations for the same IP on the same day
-		MaxNumberOfRegistrations: 15,
+		MaxNumberOfRegistrations: 50,
+		AndroidSymbol:            "+android-",
+		IOSSymbol:                "+ios-",
+		WindowsSymbol:            "+windows-",
+		MacosSymbol:              "+macos-",
 	}
 }
 
@@ -190,7 +207,7 @@ var (
 	_ encoding.TextUnmarshaler = (*Duration)(nil)
 )
 
-// Duration is a wrapper type for time.Duration
+// Duration is a cgo type for time.Duration
 // for decoding and encoding from/to TOML
 type Duration time.Duration
 

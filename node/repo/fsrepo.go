@@ -411,6 +411,7 @@ func (fsr *FsRepo) Lock(repoType RepoType) (LockedRepo, error) {
 	if err != nil {
 		return nil, xerrors.Errorf("could not lock the repo: %w", err)
 	}
+
 	return &fsLockedRepo{
 		path:       fsr.path,
 		configPath: fsr.configPath,

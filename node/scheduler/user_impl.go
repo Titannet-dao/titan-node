@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
@@ -10,6 +11,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/handler"
+	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/Filecoin-Titan/titan/node/scheduler/user"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	"golang.org/x/xerrors"
@@ -426,4 +428,45 @@ func (s *Scheduler) GetAPPKeyPermissions(ctx context.Context, userID string, key
 		permissions = append(permissions, string(accessControl))
 	}
 	return permissions, nil
+}
+
+func (s *Scheduler) GetNodeUploadInfo(ctx context.Context, userID string) (*types.UploadInfo, error) {
+	uID := handler.GetUserID(ctx)
+	if len(uID) > 0 {
+		userID = uID
+	}
+
+	_, nodes := s.NodeManager.GetAllCandidateNodes()
+
+	cNodes := make([]*node.Node, 0)
+	for _, node := range nodes {
+		if node.IsStorageOnly {
+			cNodes = append(cNodes, node)
+		}
+	}
+
+	if len(cNodes) == 0 {
+		return nil, &api.ErrWeb{Code: terrors.NodeOffline.Int(), Message: fmt.Sprintf("storage's nodes not found")}
+	}
+
+	index := rand.Intn(len(cNodes))
+	cNode := cNodes[index]
+
+	if cNode == nil {
+		return nil, &api.ErrWeb{Code: terrors.NodeOffline.Int(), Message: fmt.Sprintf("storage's nodes not found")}
+	}
+
+	payload := &types.JWTPayload{Allow: []auth.Permission{api.RoleUser}, ID: userID}
+
+	token, err := cNode.API.AuthNew(context.Background(), payload)
+	if err != nil {
+		return nil, &api.ErrWeb{Code: terrors.RequestNodeErr.Int(), Message: err.Error()}
+	}
+
+	uploadURL := fmt.Sprintf("http://%s/uploadv2", cNode.RemoteAddr)
+	if len(cNode.ExternalURL) > 0 {
+		uploadURL = fmt.Sprintf("%s/uploadv2", cNode.ExternalURL)
+	}
+
+	return &types.UploadInfo{UploadURL: uploadURL, Token: token, NodeID: cNode.NodeID}, nil
 }

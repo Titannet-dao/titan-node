@@ -9,7 +9,55 @@ type DocField struct {
 }
 
 var Doc = map[string][]DocField{
+	"Bandwidth": []DocField{
+		{
+			Name: "BandwidthMB",
+			Type: "int64",
+
+			Comment: `unit is MiB/s, 0 means no limit`,
+		},
+		{
+			Name: "BandwidthUp",
+			Type: "int64",
+
+			Comment: `upload file bandwidth, unit is MiB/s, 0 means no limit`,
+		},
+		{
+			Name: "BandwidthDown",
+			Type: "int64",
+
+			Comment: `download file bandwidth, unit is MiB/s, 0 means no limit`,
+		},
+	},
+	"Basic": []DocField{
+		{
+			Name: "Token",
+			Type: "string",
+
+			Comment: ``,
+		},
+	},
+	"CPU": []DocField{
+		{
+			Name: "Cores",
+			Type: "int",
+
+			Comment: ``,
+		},
+	},
 	"CandidateCfg": []DocField{
+		{
+			Name: "MetadataPath",
+			Type: "string",
+
+			Comment: `metadata path`,
+		},
+		{
+			Name: "AssetsPaths",
+			Type: "[]string",
+
+			Comment: `assets path`,
+		},
 		{
 			Name: "WebRedirect",
 			Type: "string",
@@ -25,22 +73,10 @@ var Doc = map[string][]DocField{
 	},
 	"EdgeCfg": []DocField{
 		{
-			Name: "ListenAddress",
-			Type: "string",
+			Name: "Network",
+			Type: "Network",
 
-			Comment: `host address and port the edge node api will listen on`,
-		},
-		{
-			Name: "Timeout",
-			Type: "string",
-
-			Comment: `used when 'ListenAddress' is unspecified. must be a valid duration recognized by golang's time.ParseDuration function`,
-		},
-		{
-			Name: "NodeID",
-			Type: "string",
-
-			Comment: `node id`,
+			Comment: ``,
 		},
 		{
 			Name: "AreaID",
@@ -53,36 +89,6 @@ var Doc = map[string][]DocField{
 			Type: "string",
 
 			Comment: `used auth when connect to scheduler`,
-		},
-		{
-			Name: "MetadataPath",
-			Type: "string",
-
-			Comment: `metadata path`,
-		},
-		{
-			Name: "AssetsPaths",
-			Type: "[]string",
-
-			Comment: `assets path`,
-		},
-		{
-			Name: "BandwidthUp",
-			Type: "int64",
-
-			Comment: `upload file bandwidth, unit is B/s`,
-		},
-		{
-			Name: "BandwidthDown",
-			Type: "int64",
-
-			Comment: `download file bandwidth, unit is B/s`,
-		},
-		{
-			Name: "Locator",
-			Type: "bool",
-
-			Comment: `if true, get scheduler url from locator`,
 		},
 		{
 			Name: "InsecureSkipVerify",
@@ -111,24 +117,6 @@ be used if InsecureSkipVerify is true`,
 			Comment: `self sign certificate, use for client`,
 		},
 		{
-			Name: "PullBlockTimeout",
-			Type: "int",
-
-			Comment: `PullBlockTimeout get block timeout`,
-		},
-		{
-			Name: "PullBlockRetry",
-			Type: "int",
-
-			Comment: `PullBlockRetry retry when get block failed`,
-		},
-		{
-			Name: "PullBlockParallel",
-			Type: "int",
-
-			Comment: `PullBlockParallel the number of goroutine to pull block`,
-		},
-		{
 			Name: "TCPSrvAddr",
 			Type: "string",
 
@@ -153,28 +141,46 @@ be used if InsecureSkipVerify is true`,
 			Comment: ``,
 		},
 		{
-			Name: "Storage",
-			Type: "int64",
+			Name: "Puller",
+			Type: "Puller",
 
-			Comment: `Storage for use by node`,
-		},
-		{
-			Name: "Memory",
-			Type: "int64",
-
-			Comment: `Memory for use by node`,
-		},
-		{
-			Name: "CPU",
-			Type: "int",
-
-			Comment: `CPU for use by node`,
+			Comment: ``,
 		},
 		{
 			Name: "Bandwidth",
-			Type: "int64",
+			Type: "Bandwidth",
 
-			Comment: `Bandwidth for use by node`,
+			Comment: ``,
+		},
+		{
+			Name: "Netflow",
+			Type: "Netflow",
+
+			Comment: ``,
+		},
+		{
+			Name: "Storage",
+			Type: "Storage",
+
+			Comment: ``,
+		},
+		{
+			Name: "Memory",
+			Type: "Memory",
+
+			Comment: ``,
+		},
+		{
+			Name: "CPU",
+			Type: "CPU",
+
+			Comment: ``,
+		},
+		{
+			Name: "Basic",
+			Type: "Basic",
+
+			Comment: ``,
 		},
 	},
 	"LocatorCfg": []DocField{
@@ -246,6 +252,20 @@ be used if InsecureSkipVerify is false`,
 
 			Comment: ``,
 		},
+		{
+			Name: "LoadBalanceExcludeArea",
+			Type: "[]string",
+
+			Comment: ``,
+		},
+	},
+	"Memory": []DocField{
+		{
+			Name: "MemoryGB",
+			Type: "int64",
+
+			Comment: ``,
+		},
 	},
 	"MinioConfig": []DocField{
 		{
@@ -265,6 +285,60 @@ be used if InsecureSkipVerify is false`,
 			Type: "string",
 
 			Comment: ``,
+		},
+	},
+	"Netflow": []DocField{
+		{
+			Name: "NetflowUp",
+			Type: "int64",
+
+			Comment: `upload network flow limit, unit is GB, 0 means no limit`,
+		},
+		{
+			Name: "NetflowDown",
+			Type: "int64",
+
+			Comment: `download network flow limit, unit is GB, 0 means no limit`,
+		},
+	},
+	"Network": []DocField{
+		{
+			Name: "ListenAddress",
+			Type: "string",
+
+			Comment: `host address and port the edge node api will listen on`,
+		},
+		{
+			Name: "Timeout",
+			Type: "string",
+
+			Comment: `used when 'ListenAddress' is unspecified. must be a valid duration recognized by golang's time.ParseDuration function`,
+		},
+		{
+			Name: "LocatorURL",
+			Type: "string",
+
+			Comment: `the url of locator`,
+		},
+	},
+	"Puller": []DocField{
+		{
+			Name: "PullBlockTimeout",
+			Type: "int",
+
+			Comment: `PullBlockTimeout get block timeout`,
+		},
+		{
+			Name: "PullBlockRetry",
+			Type: "int",
+
+			Comment: `PullBlockRetry retry when get block failed`,
+		},
+		{
+			Name: "PullBlockParallel",
+			Type: "int",
+
+			Comment: `PullBlockParallel the number of goroutine to pull block`,
 		},
 	},
 	"SchedulerCfg": []DocField{
@@ -364,7 +438,7 @@ be used if InsecureSkipVerify is true`,
 			Name: "ElectionCycle",
 			Type: "int",
 
-			Comment: `ElectionCycle cycle (Unit:day)`,
+			Comment: `ElectionCycle cycle (Unit:Hour)`,
 		},
 		{
 			Name: "NodeScoreLevel",
@@ -452,6 +526,74 @@ indicating how many select weight this level can get (the more select weight, th
 		{
 			Name: "MaxAPIKey",
 			Type: "int",
+
+			Comment: ``,
+		},
+		{
+			Name: "IPWhitelist",
+			Type: "[]string",
+
+			Comment: ``,
+		},
+		{
+			Name: "MaxNumberOfRegistrations",
+			Type: "int",
+
+			Comment: ``,
+		},
+		{
+			Name: "IPLimit",
+			Type: "int",
+
+			Comment: ``,
+		},
+		{
+			Name: "FillAssetEdgeCount",
+			Type: "int64",
+
+			Comment: ``,
+		},
+		{
+			Name: "StorageCandidates",
+			Type: "[]string",
+
+			Comment: ``,
+		},
+		{
+			Name: "TestCandidates",
+			Type: "map[string]int",
+
+			Comment: ``,
+		},
+		{
+			Name: "L2ValidatorCount",
+			Type: "int",
+
+			Comment: ``,
+		},
+		{
+			Name: "AndroidSymbol",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "IOSSymbol",
+			Type: "string",
+
+			Comment: ``,
+		},
+	},
+	"Storage": []DocField{
+		{
+			Name: "StorageGB",
+			Type: "int64",
+
+			Comment: ``,
+		},
+		{
+			Name: "Path",
+			Type: "string",
 
 			Comment: ``,
 		},

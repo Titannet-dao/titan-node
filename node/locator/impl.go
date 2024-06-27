@@ -3,6 +3,7 @@ package locator
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -237,7 +238,7 @@ func (l *Locator) getAreaID(remoteAddr string) (string, error) {
 		return geoInfo.Geo, nil
 	}
 
-	return l.DefaultAreaID, nil
+	return "", fmt.Errorf("can not get AreaID for %s", ip)
 }
 
 func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*SchedulerAPI, cid string) ([]*types.EdgeDownloadInfoList, error) {
@@ -396,7 +397,6 @@ func (l *Locator) GetAssetSourceDownloadInfos(ctx context.Context, cid string) (
 
 // GetUserAccessPoint get user access point for special user ip
 func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.AccessPoint, error) {
-	areaID := l.DefaultAreaID
 	if len(userIP) == 0 {
 		remoteAddr := handler.GetRemoteAddr(ctx)
 		host, _, err := net.SplitHostPort(remoteAddr)
@@ -412,43 +412,129 @@ func (l *Locator) GetUserAccessPoint(ctx context.Context, userIP string) (*api.A
 		return nil, err
 	}
 
-	if geoInfo != nil && isValid(geoInfo.Geo) {
-		areaID = geoInfo.Geo
+	if geoInfo.Longitude == 0 && geoInfo.Longitude == 0 {
+		return nil, fmt.Errorf("Can not get geo info for user %s", userIP)
 	}
+
+	log.Infof("GetUserAccessPoint ip %s, areaID %s", userIP, geoInfo.Geo)
 
 	configs := l.GetAllSchedulerConfigs()
 	if cfg, err := l.getSchedulerWithUserLastEntry(configs, userIP); err != nil {
 		return nil, err
 	} else if cfg != nil {
 		log.Debugf("getSchedulerWithUserLastEntry %s %s", cfg.SchedulerURL, userIP)
-		return &api.AccessPoint{AreaID: cfg.AreaID, SchedulerURLs: []string{cfg.SchedulerURL}}, nil
+		return &api.AccessPoint{AreaID: geoInfo.Geo, SchedulerURLs: []string{cfg.SchedulerURL}}, nil
 	}
 
-	exculdeAreas := convertAreasToMap(l.LocatorCfg.LoadBalanceExcludeArea)
-	schedulerURLs := make(map[string][]string)
-	for _, config := range configs {
-		if _, ok := exculdeAreas[config.AreaID]; ok {
+	schedulers := l.getSchedulerWithGeoInfo(geoInfo, configs)
+	if len(schedulers) == 0 {
+		schedulers = l.getSchedulerWithDefaultArea(configs)
+	}
+
+	scheduler := l.getSchedulerByLowestNumberOfNodes(schedulers)
+	if scheduler != nil {
+		return &api.AccessPoint{AreaID: geoInfo.Geo, SchedulerURLs: []string{scheduler.SchedulerURL}}, nil
+	}
+	return &api.AccessPoint{AreaID: geoInfo.Geo, SchedulerURLs: make([]string, 0)}, nil
+}
+
+// Filtering schedulers in the same region
+func (l *Locator) getSchedulerWithGeoInfo(geoInfo *region.GeoInfo, schedulerCfgs []*types.SchedulerCfg) []*types.SchedulerCfg {
+	sameCity := make([]*types.SchedulerCfg, 0)
+	sameProvince := make([]*types.SchedulerCfg, 0)
+	sameCountry := make([]*types.SchedulerCfg, 0)
+
+	for _, cfg := range schedulerCfgs {
+		_, country, province, city := region.DecodeAreaID(cfg.AreaID)
+		if strings.ToLower(geoInfo.Country) != strings.ToLower(country) {
 			continue
 		}
 
-		urls, ok := schedulerURLs[config.AreaID]
-		if !ok {
-			urls = make([]string, 0)
+		if strings.ToLower(province) == strings.ToLower(geoInfo.Province) &&
+			strings.ToLower(city) == strings.ToLower(geoInfo.City) {
+			sameCity = append(sameCity, cfg)
+			continue
 		}
 
-		urls = append(urls, config.SchedulerURL)
-		schedulerURLs[config.AreaID] = urls
+		if strings.ToLower(province) == strings.ToLower(geoInfo.Province) {
+			sameProvince = append(sameProvince, cfg)
+			continue
+		}
+
+		sameCountry = append(sameCountry, cfg)
 	}
 
-	if len(schedulerURLs) == 0 {
-		return &api.AccessPoint{AreaID: areaID, SchedulerURLs: make([]string, 0)}, nil
+	if len(sameCity) > 0 {
+		return sameCity
 	}
 
-	// get scheduler configs of first areaID
-	for area, schedulers := range schedulerURLs {
-		return &api.AccessPoint{AreaID: area, SchedulerURLs: schedulers}, nil
+	if len(sameProvince) > 0 {
+		return sameProvince
 	}
-	return &api.AccessPoint{AreaID: areaID, SchedulerURLs: make([]string, 0)}, nil
+
+	return sameCountry
+}
+
+func (l *Locator) getSchedulerWithDefaultArea(schedulerCfgs []*types.SchedulerCfg) []*types.SchedulerCfg {
+	defaultAreas := make(map[string]struct{})
+	for _, area := range l.DefaultAreas {
+		defaultAreas[area] = struct{}{}
+	}
+
+	cfgs := make([]*types.SchedulerCfg, 0)
+	for _, schedulerCfg := range schedulerCfgs {
+		if _, ok := defaultAreas[schedulerCfg.AreaID]; ok {
+			cfgs = append(cfgs, schedulerCfg)
+		}
+	}
+
+	return cfgs
+}
+
+// Get the scheduler with the lowest number of nodes
+func (l *Locator) getSchedulerByLowestNumberOfNodes(schedulerCfgs []*types.SchedulerCfg) *types.SchedulerCfg {
+	if len(schedulerCfgs) == 0 {
+		return nil
+	}
+	if len(schedulerCfgs) == 1 {
+		return schedulerCfgs[0]
+	}
+
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(schedulerCfgs)
+	if err != nil {
+		return nil
+	}
+
+	lock := sync.Mutex{}
+	wg := &sync.WaitGroup{}
+	var config *types.SchedulerCfg
+	var minCount = math.MaxInt64
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, s := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(schedulerAPI *SchedulerAPI) {
+			defer wg.Done()
+			count, err := schedulerAPI.GetOnlineNodeCount(ctx, types.NodeEdge)
+			if err != nil {
+				log.Errorf("getSchedulerByLowestNumberOfNodes GetOnlineNodeCount %s", err.Error())
+				return
+			}
+
+			lock.Lock()
+			if count < minCount {
+				minCount = count
+				config = schedulerAPI.config
+			}
+			lock.Unlock()
+		}(s)
+	}
+
+	wg.Wait()
+
+	return config
 }
 
 func (l *Locator) getSchedulerWithUserLastEntry(configs []*types.SchedulerCfg, userIP string) (*types.SchedulerCfg, error) {
@@ -619,6 +705,53 @@ func (l *Locator) GetSchedulerWithAPIKey(ctx context.Context, apiKey string) (st
 	wg.Wait()
 
 	return schedulerURL, nil
+}
+
+func (l *Locator) AllocateSchedulerForNode(ctx context.Context, nodeType types.NodeType, code string) (string, error) {
+	configs := l.GetAllSchedulerConfigs()
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
+	if err != nil {
+		return "", err
+	}
+
+	if len(schedulerAPIs) == 0 {
+		return "", fmt.Errorf("no scheduler exist")
+	}
+
+	timeout, err := time.ParseDuration(l.Timeout)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	defer cancel()
+
+	var scheduler string
+	wg := &sync.WaitGroup{}
+	for _, api := range schedulerAPIs {
+		wg.Add(1)
+
+		go func(ctx context.Context, s *SchedulerAPI) {
+			defer wg.Done()
+
+			if ok, err := s.CandidateCodeExist(ctx, code); err == nil {
+				if ok {
+					scheduler = s.config.SchedulerURL
+					cancel()
+				}
+			} else {
+				log.Debugf("CandidateCodeExist %s", err.Error())
+			}
+		}(ctx, api)
+	}
+	wg.Wait()
+
+	if len(scheduler) == 0 {
+		return "", fmt.Errorf("code %s not exist any scheduler", code)
+	}
+
+	return scheduler, nil
+
 }
 
 func convertAreasToMap(areas []string) map[string]struct{} {

@@ -19,10 +19,12 @@ import (
 var log = logging.Logger("device")
 
 const (
-	// 1MB/s
+	// 1MiB/s
 	BandwidthUnit = 1024 * 1024
 	// 1GB
 	StorageUnit = 1024 * 1024 * 1024
+	// 1GB
+	NetFlowUnit = 1024 * 1024 * 1024
 )
 
 // Device represents a device and its properties
@@ -43,6 +45,8 @@ type Resources struct {
 	Storage *config.Storage
 	// Bandwidth Limit bandwidth usage
 	Bandwidth *config.Bandwidth
+	// Netflow Limit network-flow usage
+	Netflow *config.Netflow
 }
 
 // Storage represents a storage system and its properties.
@@ -98,6 +102,12 @@ func (device *Device) GetNodeInfo(ctx context.Context) (types.NodeInfo, error) {
 
 	if device.resources.Storage != nil {
 		info.AvailableDiskSpace = float64(device.resources.Storage.StorageGB) * StorageUnit
+	}
+
+	if device.resources.Netflow != nil {
+		// info.NetflowTotal = device.resources.Netflow.Total
+		info.NetFlowUp = device.resources.Netflow.NetflowUp * NetFlowUnit
+		info.NetFlowDown = device.resources.Netflow.NetflowDown * NetFlowUnit
 	}
 
 	// mac, err := getMacAddr(info.InternalIP)

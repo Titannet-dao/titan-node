@@ -19,12 +19,19 @@ type Storage struct {
 }
 
 type Bandwidth struct {
-	// unit is MB/s
+	// unit is MiB/s, 0 means no limit
 	BandwidthMB int64
-	// upload file bandwidth, unit is MB/s
+	// upload file bandwidth, unit is MiB/s, 0 means no limit
 	BandwidthUp int64
-	// download file bandwidth, unit is <B/s
+	// download file bandwidth, unit is MiB/s, 0 means no limit
 	BandwidthDown int64
+}
+
+type Netflow struct {
+	// upload network flow limit, unit is GB, 0 means no limit
+	NetflowUp int64
+	// download network flow limit, unit is GB, 0 means no limit
+	NetflowDown int64
 }
 
 type Memory struct {
@@ -74,6 +81,7 @@ type EdgeCfg struct {
 	Puller Puller
 
 	Bandwidth Bandwidth
+	Netflow   Netflow
 	Storage   Storage
 	Memory    Memory
 	CPU       CPU
@@ -96,6 +104,8 @@ type CandidateCfg struct {
 	MinioConfig
 	WebRedirect string
 	ExternalURL string
+	// Let the scheduler know that this node does not do tasks
+	IsPrivate bool
 }
 
 // LocatorCfg locator config
@@ -117,11 +127,10 @@ type LocatorCfg struct {
 	// self sign certificate, use for client
 	CaCertificatePath string
 	// etcd server addresses
-	EtcdAddresses          []string
-	DefaultAreaID          string
-	DNSServerAddress       string
-	DNSRecords             map[string]string
-	LoadBalanceExcludeArea []string
+	EtcdAddresses    []string
+	DNSServerAddress string
+	DNSRecords       map[string]string
+	DefaultAreas     []string
 }
 
 // SchedulerCfg scheduler config
@@ -132,6 +141,8 @@ type SchedulerCfg struct {
 	ListenAddress string
 	// database address
 	DatabaseAddress string
+	// geodb path
+	GeoDBPath string
 	// area id
 	AreaID string
 	// InsecureSkipVerify skip tls verify
@@ -158,7 +169,7 @@ type SchedulerCfg struct {
 	ValidationProfit float64
 	// Increased profit after node workload passes
 	WorkloadProfit float64
-	// ElectionCycle cycle (Unit:Hour)
+	// ElectionCycle cycle (Unit:Day)
 	ElectionCycle int
 	// Node score level scale
 	// The key of map is the rank name, and the value of map is a int array containing two elements,
@@ -200,4 +211,9 @@ type SchedulerCfg struct {
 	StorageCandidates []string
 
 	L2ValidatorCount int
+
+	AndroidSymbol string
+	IOSSymbol     string
+	WindowsSymbol string
+	MacosSymbol   string
 }

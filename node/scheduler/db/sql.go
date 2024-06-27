@@ -27,25 +27,32 @@ func NewSQLDB(db *sqlx.DB) (*SQLDB, error) {
 
 const (
 	// Database table names.
-	assetRecordTable      = "asset_record"
-	replicaInfoTable      = "replica_info"
+	nodeRegisterTable = "node_register_info"
+	nodeInfoTable     = "node_info"
+
+	userAssetTable      = "user_asset"
+	userInfoTable       = "user_info"
+	userAssetGroupTable = "user_asset_group"
+	assetRecordTable    = "asset_record"
+	replicaInfoTable    = "replica_info"
+	assetsViewTable     = "asset_view"
+	bucketTable         = "bucket"
+
 	edgeUpdateTable       = "edge_update_info"
-	nodeInfoTable         = "node_info"
 	validatorsTable       = "validators"
-	nodeRegisterTable     = "node_register_info"
 	validationResultTable = "validation_result"
-	assetsViewTable       = "asset_view"
-	bucketTable           = "bucket"
 	workloadRecordTable   = "workload_record"
-	userAssetTable        = "user_asset"
-	userInfoTable         = "user_info"
 	replicaEventTable     = "replica_event"
 	retrieveEventTable    = "retrieve_event"
 	assetVisitCountTable  = "asset_visit_count"
 	replenishBackupTable  = "replenish_backup"
-	userAssetGroupTable   = "user_asset_group"
 	awsDataTable          = "aws_data"
 	profitDetailsTable    = "profit_details"
+	candidateCodeTable    = "candidate_code"
+	projectInfoTable      = "project_info"
+	projectReplicasTable  = "project_replicas"
+	projectEventTable     = "project_event"
+	onlineCountTable      = "online_count"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 1000
@@ -65,8 +72,16 @@ func assetStateTable(serverID dtypes.ServerID) string {
 	return fmt.Sprintf("asset_state_%s", str)
 }
 
+// projectStateTable returns the project state table name for the given serverID.
+func projectStateTable(serverID dtypes.ServerID) string {
+	str := strings.ReplaceAll(string(serverID), "-", "")
+	return fmt.Sprintf("project_state_%s", str)
+}
+
 // InitTables initializes data tables.
 func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
+	doExec(d)
+
 	// init table
 	tx, err := d.db.Beginx()
 	if err != nil {
@@ -101,6 +116,23 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cUserAssetGroupTable, userAssetGroupTable))
 	tx.MustExec(fmt.Sprintf(cAWSDataTable, awsDataTable))
 	tx.MustExec(fmt.Sprintf(cProfitDetailsTable, profitDetailsTable))
+	tx.MustExec(fmt.Sprintf(cCandidateCodeTable, candidateCodeTable))
+	tx.MustExec(fmt.Sprintf(cProjectStateTable, projectStateTable(serverID)))
+	tx.MustExec(fmt.Sprintf(cProjectInfosTable, projectInfoTable))
+	tx.MustExec(fmt.Sprintf(cProjectReplicasTable, projectReplicasTable))
+	tx.MustExec(fmt.Sprintf(cProjectEventTable, projectEventTable))
+	tx.MustExec(fmt.Sprintf(cOnlineCountTable, onlineCountTable))
 
 	return tx.Commit()
+}
+
+func doExec(d *SQLDB) {
+	_, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD is_test 	  BOOLEAN        DEFAULT false;", candidateCodeTable))
+	if err != nil {
+		log.Errorf("InitTables doExec err:%s", err.Error())
+	}
+	// _, err = d.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN nat_type ;", nodeInfoTable))
+	// if err != nil {
+	// 	log.Errorf("InitTables doExec err:%s", err.Error())
+	// }
 }

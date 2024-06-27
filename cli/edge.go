@@ -1,19 +1,27 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto"
 	"crypto/rsa"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,8 +35,11 @@ import (
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/docker/go-units"
 	"github.com/filecoin-project/go-jsonrpc"
+	"github.com/google/go-github/v61/github"
 	"github.com/google/uuid"
 	"github.com/mitchellh/go-homedir"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
 )
@@ -45,6 +56,9 @@ var EdgeCmds = []*cli.Command{
 	bindCmd,
 	syncDataCmd,
 	deleteLocalAssetCmd,
+	upgradeCmd,
+	udpTestCmd,
+	freeUpDiskCmd,
 }
 
 var showCmds = &cli.Command{
@@ -80,10 +94,14 @@ var nodeInfoCmd = &cli.Command{
 		fmt.Printf("disk space: %s \n", units.BytesSize(info.DiskSpace))
 		fmt.Printf("titan disk usage: %s\n", units.BytesSize(info.TitanDiskUsage))
 		fmt.Printf("titan disk space: %s\n", units.BytesSize(info.AvailableDiskSpace))
-		fmt.Printf("fsType: %s \n", info.IoSystem)
+		fmt.Printf("fsType: %s \n", info.DiskType)
 		fmt.Printf("mac: %s \n", info.MacLocation)
 		fmt.Printf("download bandwidth: %s \n", units.BytesSize(float64(info.BandwidthDown)))
 		fmt.Printf("upload bandwidth: %s \n", units.BytesSize(float64(info.BandwidthUp)))
+		// fmt.Printf("netflow total: %s \n", units.BytesSize(float64(info.NetflowTotal)))
+		fmt.Printf("netflow upload: %s \n", units.BytesSize(float64(info.NetFlowUp)))
+		fmt.Printf("netflow download: %s \n", units.BytesSize(float64(info.NetFlowDown)))
+		// fmt.Printf("upload bandwidth: %s \n", units.BytesSize(float64(info.BandwidthUp)))
 		fmt.Printf("cpu percent: %.2f %s \n", info.CPUUsage, "%")
 		return nil
 	},
@@ -477,8 +495,8 @@ func getRepoType(cctx *cli.Context) (repo.RepoType, error) {
 	}
 
 	return t, nil
-
 }
+
 func readPrivateKey(path string) (*rsa.PrivateKey, error) {
 	pem, err := os.ReadFile(path)
 	if err != nil {
@@ -680,32 +698,12 @@ var mergeConfigCmd = &cli.Command{
 
 		edgeConfig := cfg.(*config.EdgeCfg)
 
-		if len(edgeConfig.Basic.Token) == 0 {
-			_, lr, err := openRepoAndLock(cctx)
-			if err != nil {
-				return xerrors.Errorf("open repo error %w", err)
-			}
-			defer lr.Close()
-
-			if err := RegitsterNode(lr, newEdgeConfig.Network.LocatorURL, types.NodeEdge); err != nil {
-				return xerrors.Errorf("import private key error %w", err)
-			}
-
-			// reload config
-			cfg, err := config.FromFile(configPath, config.DefaultEdgeCfg())
-			if err != nil {
-				return xerrors.Errorf("load local config file error %w", err)
-			}
-
-			edgeConfig = cfg.(*config.EdgeCfg)
-		}
-
 		edgeConfig.Storage = newEdgeConfig.Storage
 		edgeConfig.Memory = newEdgeConfig.Memory
 		edgeConfig.CPU = newEdgeConfig.CPU
 		edgeConfig.Bandwidth.BandwidthMB = newEdgeConfig.Bandwidth.BandwidthMB
-		edgeConfig.Bandwidth.BandwidthUp = newEdgeConfig.Bandwidth.BandwidthMB
-		edgeConfig.Bandwidth.BandwidthDown = newEdgeConfig.Bandwidth.BandwidthMB
+		edgeConfig.Bandwidth.BandwidthUp = newEdgeConfig.Bandwidth.BandwidthUp
+		edgeConfig.Bandwidth.BandwidthDown = newEdgeConfig.Bandwidth.BandwidthDown
 
 		configBytes, err := config.GenerateConfigUpdate(edgeConfig, config.DefaultEdgeCfg(), true)
 		if err != nil {
@@ -735,49 +733,7 @@ func checkPath(path string) error {
 	return nil
 }
 
-func RegitsterNode(lr repo.LockedRepo, locatorURL string, nodeType types.NodeType) error {
-	schedulerURL, err := getUserAccessPoint(locatorURL)
-	if err != nil {
-		return err
-	}
-
-	schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
-	if err != nil {
-		return err
-	}
-	defer closer()
-
-	var bits = 1024
-
-	privateKey, err := titanrsa.GeneratePrivateKey(bits)
-	if err != nil {
-		return err
-	}
-
-	pem := titanrsa.PublicKey2Pem(&privateKey.PublicKey)
-	var nodeID string
-	if nodeType == types.NodeEdge {
-		nodeID = fmt.Sprintf("e_%s", uuid.NewString())
-	} else if nodeType == types.NodeCandidate {
-		nodeID = fmt.Sprintf("c_%s", uuid.NewString())
-	} else {
-		return fmt.Errorf("invalid node type %s", nodeType.String())
-	}
-
-	info, err := schedulerAPI.RegisterNode(context.Background(), nodeID, string(pem), nodeType)
-	if err != nil {
-		return err
-	}
-
-	privatePem := titanrsa.PrivateKey2Pem(privateKey)
-	if err := lr.SetPrivateKey(privatePem); err != nil {
-		return err
-	}
-
-	if err := lr.SetNodeID([]byte(nodeID)); err != nil {
-		return err
-	}
-
+func saveConfigAfterRegister(lr repo.LockedRepo, info *types.ActivationDetail, locatorURL string) error {
 	tokenBytes, err := json.Marshal(info)
 	if err != nil {
 		return err
@@ -797,6 +753,45 @@ func RegitsterNode(lr repo.LockedRepo, locatorURL string, nodeType types.NodeTyp
 		cfg.Basic.Token = base64.StdEncoding.EncodeToString(tokenBytes)
 		cfg.AreaID = info.AreaID
 	})
+}
+
+func RegisterEdgeNode(lr repo.LockedRepo, locatorURL string) error {
+	schedulerURL, err := getUserAccessPoint(locatorURL)
+	if err != nil {
+		return err
+	}
+
+	schedulerAPI, closer, err := client.NewScheduler(context.Background(), schedulerURL, nil, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	bits := 1024
+
+	privateKey, err := titanrsa.GeneratePrivateKey(bits)
+	if err != nil {
+		return err
+	}
+
+	pem := titanrsa.PublicKey2Pem(&privateKey.PublicKey)
+	nodeID := fmt.Sprintf("e_%s", uuid.NewString())
+
+	info, err := schedulerAPI.RegisterNode(context.Background(), nodeID, string(pem), types.NodeEdge)
+	if err != nil {
+		return err
+	}
+
+	privatePem := titanrsa.PrivateKey2Pem(privateKey)
+	if err := lr.SetPrivateKey(privatePem); err != nil {
+		return err
+	}
+
+	if err := lr.SetNodeID([]byte(nodeID)); err != nil {
+		return err
+	}
+
+	return saveConfigAfterRegister(lr, info, locatorURL)
 }
 
 var stateCmd = &cli.Command{
@@ -1049,5 +1044,336 @@ var deleteLocalAssetCmd = &cli.Command{
 		}
 
 		return nil
+	},
+}
+
+var upgradeCmd = &cli.Command{
+	Name:  "upgrade",
+	Usage: "Upgrade titan egde",
+	Flags: []cli.Flag{},
+	Action: func(cctx *cli.Context) error {
+		client := github.NewClient(nil)
+
+		owner := "Titannet-dao"
+		repo := "titan-node"
+
+		release, _, err := client.Repositories.GetLatestRelease(cctx.Context, owner, repo)
+		if err != nil {
+			return fmt.Errorf("cannot access release repo: %s", err.Error())
+		}
+
+		latestVersion, err := newVersion(pickVersionInString(release.GetTagName()))
+		if err != nil {
+			return fmt.Errorf("cannot parse latest version: %s", err.Error())
+		}
+
+		curEdgeVersion, err := currentEdgeVersion()
+		if err != nil {
+			return err
+		}
+
+		if latestVersion == curEdgeVersion {
+			log.Info("Titan-Edge is already update to date")
+			return nil
+		}
+
+		if latestVersion > curEdgeVersion {
+			// fetch download url
+			downloadUrl := releaseUrlFromGithub(latestVersion, release.Assets)
+			if downloadUrl == "" {
+				return errors.New("cannot find download url for the release")
+			}
+
+			// download
+			tar, err := downloadApp(downloadUrl)
+			if err != nil {
+				return fmt.Errorf("cannot download application: %s", err.Error())
+			}
+
+			// unpack and replace current binary
+			err = unpackAndReplaceBinary(tar)
+			if err != nil {
+				return fmt.Errorf("cannot unpack and replace binary: %s", err.Error())
+			}
+
+			log.Info("Titan-Edge has been updated to latest version, please restart titan-edge!")
+		}
+
+		return nil
+	},
+}
+
+func currentEdgeVersion() (api.Version, error) {
+	currentEdge, err := os.Executable()
+	if err != nil {
+		return api.Version(0), fmt.Errorf("failed to get current executable path: %s", err.Error())
+	}
+
+	cmd := exec.Command(currentEdge, "-v")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return api.Version(0), fmt.Errorf("failed to get stdout pipe: %s", err.Error())
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		return api.Version(0), fmt.Errorf("failed to get current edge version: %s", err.Error())
+	}
+
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, stdout) // titan-edge version 0.1.18
+	if err != nil {
+		return api.Version(0), fmt.Errorf("failed to read stdout: %s", err.Error())
+	}
+	v := pickVersionInString(buf.String())
+	if v == "" {
+		return api.Version(0), errors.New("invalid version format")
+	}
+
+	return newVersion(v)
+}
+
+func pickVersionInString(from string) string {
+	pattern := `\d+.\d+.\d+`
+	re := regexp.MustCompile(pattern)
+	return re.FindString(from)
+}
+
+func releaseUrlFromGithub(version api.Version, assests []*github.ReleaseAsset) string {
+	for _, v := range assests {
+		if strings.Contains(v.GetName(), runtime.GOARCH) &&
+			strings.Contains(v.GetName(), runtime.GOOS) &&
+			strings.Contains(v.GetName(), version.String()) &&
+			strings.HasSuffix(v.GetName(), ".tar.gz") {
+			return v.GetBrowserDownloadURL()
+		}
+	}
+
+	return ""
+}
+
+func downloadApp(downloadURL string) ([]byte, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Infof("Downloading titan-edge from %s", downloadURL)
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Errorf("Failed to download titan-edge: %v", err)
+		return nil, err
+	}
+
+	defer resp.Body.Close() //nolint:errcheck // ignore error
+
+	log.Info("Download complete")
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func unpackAndReplaceBinary(f []byte) error {
+	buf := bytes.NewBuffer(f)
+
+	gzipReader, err := gzip.NewReader(buf)
+	if err != nil {
+		return err
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+	var found bool
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+
+		if header.Typeflag == tar.TypeReg && strings.Contains(header.Name, "titan-edge") {
+			header.Name = header.Name[strings.LastIndex(header.Name, "/")+1:]
+			found = true
+
+			// check whether exsist same tmp file
+			if _, err := os.Stat(header.Name + "_tmp"); err == nil {
+				if err := os.Remove(header.Name + "_tmp"); err != nil {
+					return err
+				}
+			}
+
+			// write new binary to tmp
+			outFile, err := os.Create(header.Name + "_tmp")
+			if err != nil {
+				return err
+			}
+			defer outFile.Close()
+
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				return err
+			}
+
+			// remove old binary
+			oldFileName, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			if err := os.Remove(oldFileName); err != nil {
+				return err
+			}
+
+			// set tmp binary to final name
+			if err := os.Rename(header.Name+"_tmp", header.Name); err != nil {
+				return err
+			}
+
+			// set permission
+			if err := os.Chmod(header.Name, 0o755); err != nil {
+				return err
+			}
+
+			return nil
+		}
+	}
+
+	if !found {
+		return errors.New("binary not found in archive")
+	}
+
+	return nil
+}
+
+var udpTestCmd = &cli.Command{
+	Name:  "udp-test",
+	Usage: "Test client quic network through udp is available", // 测试以udp为传输层的quic网络是否通畅
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "test-url",
+			Usage: "network test access url, example: --test-url=https://www.google.com",
+			Value: "https://www.google.com",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		addr := cctx.String("test-url")
+		if addr == "" {
+			return errors.New("please input a specified url to run test")
+		}
+		_, err := url.Parse(addr)
+		if err != nil {
+			return errors.New("please input a valid url to run test")
+		}
+
+		hclient := &http.Client{
+			Transport: &http3.RoundTripper{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+				QuicConfig: &quic.Config{
+					MaxIncomingStreams:    100,
+					MaxIncomingUniStreams: 100,
+				},
+			},
+		}
+
+		_, err = hclient.Get(addr)
+		if err != nil {
+			return fmt.Errorf("network test failed: %s", err.Error())
+		}
+
+		log.Info("network test success")
+		return nil
+	},
+}
+
+var freeUpDiskCmd = &cli.Command{
+	Name:  "fuds",
+	Usage: "Free up disk space",
+	Subcommands: []*cli.Command{
+		{
+			Name:  "state",
+			Usage: "Check the last request to free up disk space is done. Example: --state",
+			Action: func(cctx *cli.Context) error {
+				api, edgeClose, err := getEdgeAPI(cctx)
+				if err != nil {
+					log.Errorf("get egde api failed: %s", err.Error())
+					return err
+				}
+				defer edgeClose()
+
+				ret, err := api.StateFreeUpDisk(cctx.Context)
+
+				if err != nil {
+					log.Errorf("fetch state of fuds task error: %s, next release time is %s", err.Error(), time.Unix(ret.NextTime, 0).Format("2006-01-02 15:04:05"))
+					return err
+				}
+
+				if len(ret.Hashes) == 0 {
+					log.Info("task is done!")
+					return nil
+				}
+				log.Info("task in in-progress!")
+				return nil
+			},
+		},
+		{
+			Name:  "clear",
+			Usage: "Clear the previous failed free-up-disk task",
+			Action: func(cctx *cli.Context) error {
+				api, edgeClose, err := getEdgeAPI(cctx)
+				if err != nil {
+					log.Errorf("get egde api failed: %s", err.Error())
+					return err
+				}
+				defer edgeClose()
+
+				err = api.ClearFreeUpDisk(cctx.Context)
+
+				if err != nil {
+					log.Errorf("clear fuds task error: %s", err.Error())
+					return err
+				}
+				return nil
+			},
+		},
+	},
+	Flags: []cli.Flag{
+		&cli.Float64Flag{
+			Name:  "size",
+			Value: 0,
+			Usage: "Size of request free up disk space, units is GB, example: --size 1.1",
+			Action: func(cctx *cli.Context, f float64) error {
+				if f <= 0 {
+					return nil
+				}
+
+				api, edgeClose, err := getEdgeAPI(cctx)
+				if err != nil {
+					log.Errorf("get egde api failed: %s", err.Error())
+					return err
+				}
+				defer edgeClose()
+
+				if err := api.RequestFreeUpDisk(cctx.Context, f); err != nil {
+					log.Warnf("request to free up disk failed: %s, if previous task exists, please call --clear to remove", err.Error())
+					return err
+				}
+
+				return nil
+			},
+		},
+
+		// &cli.ActionFunc{
+		// 	Name:  "state",
+		// 	Usage: "Check the last request to free up disk space is done. Example: --state",
+		// 	Action: func(ctx *cli.Context, i int) error {
+		// 		return nil
+		// 	},
+		// },
 	},
 }

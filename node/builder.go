@@ -97,6 +97,33 @@ func Repo(r repo.Repo) Option {
 	}
 }
 
+func RepoCtx(ctx context.Context, r repo.Repo) Option {
+	return func(settings *Settings) error {
+		lr, err := r.Lock(settings.nodeType)
+		if err != nil {
+			return err
+		}
+		c, err := lr.Config()
+		if err != nil {
+			return err
+		}
+		return Options(
+			Override(CheckFDLimit, modules.CheckFdLimit),
+			Override(new(repo.LockedRepo), modules.LockedRepo(lr)), // module handles closing
+			Override(new(*jwt.HMACSHA), secret.APISecret),
+			Override(new(*common.CommonAPI), common.NewCommonAPI),
+			Override(new(helpers.MetricsCtx), func() context.Context {
+				return metricsi.CtxScope(ctx, "titan")
+			}),
+			Override(new(dtypes.PermissionWebToken), modules.GenerateTokenWithWebPermission),
+			ApplyIf(IsType(repo.Scheduler), ConfigScheduler(c)),
+			ApplyIf(IsType(repo.Locator), ConfigLocator(c)),
+			ApplyIf(IsType(repo.Edge), ConfigEdge(c)),
+			ApplyIf(IsType(repo.Candidate), ConfigCandidate(c)),
+		)(settings)
+	}
+}
+
 type StopFunc func(context.Context) error
 
 // New builds and starts new Titan node
