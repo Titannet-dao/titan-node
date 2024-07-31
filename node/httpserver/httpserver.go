@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"github.com/Filecoin-Titan/titan/node/container"
 	gopath "path"
 	"sync"
 
@@ -43,6 +44,7 @@ type HttpServer struct {
 	maxSizeOfUploadFile int
 	webRedirect         string
 	rateLimiter         *types.RateLimiter
+	client              *container.Client
 }
 
 type HttpServerOptions struct {
@@ -54,6 +56,7 @@ type HttpServerOptions struct {
 	MaxSizeOfUploadFile int
 	WebRedirect         string
 	RateLimiter         *types.RateLimiter
+	Client              *container.Client
 }
 
 // NewHttpServer creates a new HttpServer with the given Asset, Scheduler, and RSA private key.
@@ -68,6 +71,7 @@ func NewHttpServer(opts *HttpServerOptions) *HttpServer {
 		maxSizeOfUploadFile: opts.MaxSizeOfUploadFile,
 		webRedirect:         opts.WebRedirect,
 		rateLimiter:         opts.RateLimiter,
+		client:              opts.Client,
 	}
 
 	if hs.validation != nil {

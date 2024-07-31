@@ -2,7 +2,6 @@ package asset
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -103,8 +102,8 @@ func (a *Asset) PullAssetV2(ctx context.Context, req *types.AssetPullRequest) er
 		return nil
 	}
 
-	buf, _ := json.Marshal(req)
-	log.Infof("PullAssetV2 %s, dss %s", root.String(), string(buf))
+	// buf, _ := json.Marshal(req)
+	// log.Infof("PullAssetV2 %s, dss %s", root.String(), string(buf))
 
 	aw := &assetWaiter{Root: root, Dss: req.Dss, isSyncData: false, workloadID: req.WorkloadID}
 	a.mgr.addToWaitList(aw)

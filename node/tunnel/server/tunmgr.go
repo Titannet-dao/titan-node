@@ -1,4 +1,4 @@
-package tunnel
+package tunserver
 
 import (
 	"sync"
@@ -15,11 +15,11 @@ type TunManager struct {
 }
 
 func (tm *TunManager) addTunnel(tunnel *Tunnel) {
-	tm.tunnels.Store(tunnel.ID, tunnel)
+	tm.tunnels.Store(tunnel.id, tunnel)
 }
 
 func (tm *TunManager) removeTunnel(tunnel *Tunnel) {
-	tm.tunnels.Delete(tunnel.ID)
+	tm.tunnels.Delete(tunnel.id)
 }
 
 func (tm *TunManager) getTunnel(id string) *Tunnel {
@@ -44,7 +44,7 @@ func (tm *TunManager) keepAlive() {
 
 			if time.Since(tunnel.lastActivitTime) > keepaliveTimeout {
 				tunnel.conn.Close()
-				log.Infof("tunnel client %s offline", tunnel.ID)
+				log.Infof("tunnel client %s offline", tunnel.id)
 			}
 			return true
 		})

@@ -117,6 +117,8 @@ func (t *TCPServer) handleMessage(conn *net.TCPConn) {
 	log.Debugf("node %s connect to Validator", nodeID)
 
 	timer := time.NewTimer(time.Duration(t.config.ValidateDuration+validateTimeout) * time.Second)
+	defer timer.Stop()
+
 	for {
 		select {
 		case <-timer.C:

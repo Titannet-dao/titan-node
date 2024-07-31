@@ -142,7 +142,7 @@ func (m *Manager) GetProjectInfo(uuid string) (*types.ProjectInfo, error) {
 		return nil, err
 	}
 
-	list, err := m.LoadProjectReplicasInfos(uuid)
+	list, err := m.LoadProjectReplicaInfos(uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -156,10 +156,16 @@ func (m *Manager) GetProjectInfo(uuid string) (*types.ProjectInfo, error) {
 
 		vNode := m.nodeMgr.GetNode(node.WSServerID)
 		if vNode == nil {
-			continue
+			vNode, err = m.nodeMgr.UpdateTunserverURL(node.NodeID)
+			if err != nil {
+				log.Errorf("GetProjectInfo UpdateTunserverURL err:%s", err.Error())
+				continue
+			}
 		}
 
 		dInfo.WsURL = vNode.WsURL()
+		dInfo.IP = node.ExternalIP
+		dInfo.GeoID = node.AreaID
 	}
 
 	info.DetailsList = list

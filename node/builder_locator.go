@@ -46,7 +46,7 @@ func ConfigLocator(c interface{}) Option {
 	return Options(
 		Override(new(*config.LocatorCfg), cfg),
 		Override(new(dtypes.ServerID), modules.NewServerID),
-		Override(new(region.Region), modules.NewRegion),
+		Override(new(region.Region), locator.NewRegion(cfg)),
 		Override(new(locator.Storage), modules.NewLocatorStorage),
 		Override(new(locator.SchedulerAPIMap), modules.NewSchedulerAPIMap),
 		Override(new(dtypes.EtcdAddresses), func() dtypes.EtcdAddresses {

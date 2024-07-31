@@ -9,7 +9,6 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/node/modules/helpers"
-	"github.com/Filecoin-Titan/titan/node/tunnel"
 	"github.com/Filecoin-Titan/titan/node/workerd"
 
 	"github.com/Filecoin-Titan/titan/build"
@@ -22,6 +21,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/Filecoin-Titan/titan/node/scheduler/projects"
+	tunclient "github.com/Filecoin-Titan/titan/node/tunnel/client"
 	"github.com/Filecoin-Titan/titan/node/types"
 	"github.com/google/uuid"
 	"go.uber.org/fx"
@@ -149,7 +149,7 @@ func WorkerdPath(lr repo.LockedRepo) dtypes.WorkerdPath {
 }
 
 // NewWorkerd creates a new workerd object at the given path.
-func NewWorkerd(mctx helpers.MetricsCtx, l fx.Lifecycle, schedulerAPI api.Scheduler, ts *tunnel.Services, nodeId dtypes.NodeID, path dtypes.WorkerdPath) (*workerd.Workerd, error) {
+func NewWorkerd(mctx helpers.MetricsCtx, l fx.Lifecycle, schedulerAPI api.Scheduler, ts *tunclient.Services, nodeId dtypes.NodeID, path dtypes.WorkerdPath) (*workerd.Workerd, error) {
 	ctx := helpers.LifecycleCtx(mctx, l)
 
 	w, err := workerd.NewWorkerd(ctx, schedulerAPI, ts, string(nodeId), string(path))

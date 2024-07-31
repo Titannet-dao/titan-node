@@ -35,6 +35,66 @@ var nodeCmds = &cli.Command{
 		generateCandidateCodeCmd,
 		nodeFromGeoCmd,
 		getRegionInfosCmd,
+		setTunserverURLCmd,
+		reimburseProfitCmd,
+	},
+}
+
+var reimburseProfitCmd = &cli.Command{
+	Name:  "rp",
+	Usage: "reimburse profit",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+		&cli.StringFlag{
+			Name:  "note",
+			Usage: "note",
+			Value: "",
+		},
+		&cli.Float64Flag{
+			Name:  "profit",
+			Usage: "profit",
+			Value: 0.0,
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		note := cctx.String("note")
+		nodeID := cctx.String("node-id")
+		profit := cctx.Float64("profit")
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.ReimburseNodeProfit(ctx, nodeID, note, profit)
+	},
+}
+
+var setTunserverURLCmd = &cli.Command{
+	Name:  "sts",
+	Usage: "set node tun server url",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+		&cli.StringFlag{
+			Name:  "ws-node",
+			Usage: "ws node id",
+			Value: "",
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		wsNodeID := cctx.String("ws-node")
+		nodeID := cctx.String("node-id")
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.SetTunserverURL(ctx, nodeID, wsNodeID)
 	},
 }
 
@@ -94,55 +154,6 @@ var freeUpDiskSpaceCmd = &cli.Command{
 
 		_, err = schedulerAPI.FreeUpDiskSpace(ctx, nodeID, size)
 		return err
-	},
-}
-
-var generateCandidateCodeCmd = &cli.Command{
-	Name:  "gcodes",
-	Usage: "generate code",
-	Flags: []cli.Flag{
-		nodeTypeFlag,
-		&cli.Int64Flag{
-			Name:  "count",
-			Usage: "code count",
-			Value: 0,
-		},
-		&cli.BoolFlag{
-			Name:  "test",
-			Usage: "is test",
-			Value: false,
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		nodeType := cctx.Int("node-type")
-		count := cctx.Int("count")
-		isTest := cctx.Bool("test")
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		if nodeType != int(types.NodeCandidate) && nodeType != int(types.NodeValidator) {
-			return nil
-		}
-
-		if count <= 0 {
-			return nil
-		}
-
-		list, err := schedulerAPI.GenerateCandidateCode(ctx, count, types.NodeType(nodeType), isTest)
-		if err != nil {
-			return err
-		}
-
-		for _, code := range list {
-			fmt.Println(code)
-		}
-
-		return nil
 	},
 }
 
@@ -240,7 +251,6 @@ var listNodeCmd = &cli.Command{
 
 		tw := tablewriter.New(
 			tablewriter.Col("NodeID"),
-			tablewriter.Col("NodeType"),
 			tablewriter.Col("Status"),
 			tablewriter.Col("Nat"),
 			tablewriter.Col("IP"),
@@ -248,20 +258,15 @@ var listNodeCmd = &cli.Command{
 			tablewriter.Col("OnlineDuration"),
 			tablewriter.Col("OfflineDuration"),
 			tablewriter.Col("Geo"),
-			tablewriter.Col("Disk"),
+			// tablewriter.Col("Test"),
+			// tablewriter.Col("Ver"),
 		)
 
 		for w := 0; w < len(r.Data); w++ {
 			info := r.Data[w]
 
-			geo := ""
-			if info.GeoInfo != nil {
-				geo = info.GeoInfo.Geo
-			}
-
 			m := map[string]interface{}{
 				"NodeID":          info.NodeID,
-				"NodeType":        info.Type.String(),
 				"Status":          colorOnline(info.Status),
 				"Nat":             info.NATType,
 				"IP":              info.ExternalIP,
@@ -269,8 +274,9 @@ var listNodeCmd = &cli.Command{
 				"Profit":          fmt.Sprintf("%.4f", info.Profit),
 				"OnlineDuration":  fmt.Sprintf("%d", info.OnlineDuration),
 				"OfflineDuration": fmt.Sprintf("%d", info.OfflineDuration),
-				"Geo":             fmt.Sprintf("%s", geo),
-				"Disk":            fmt.Sprintf("%s/%s   %.4f", units.BytesSize(info.TitanDiskUsage), units.BytesSize(info.AvailableDiskSpace), info.DiskUsage),
+				"Geo":             fmt.Sprintf("%s", info.AreaID),
+				// "Test":            info.IsTestNode,
+				// "Ver":             info.SystemVersion,
 			}
 
 			tw.Write(m)
@@ -560,9 +566,7 @@ var showNodeInfoCmd = &cli.Command{
 		fmt.Printf("cpu percent: %.2f %s \n", info.CPUUsage, "%")
 		fmt.Printf("NatType: %s \n", info.NATType)
 		fmt.Printf("OnlineDuration: %d \n", info.OnlineDuration)
-		if info.GeoInfo != nil {
-			fmt.Printf("Geo: %s \n", info.GeoInfo.Geo)
-		}
+		fmt.Printf("Geo: %s \n", info.AreaID)
 		fmt.Printf("netflow upload: %s \n", units.BytesSize(float64(info.NetFlowUp)))
 		fmt.Printf("netflow download: %s \n", units.BytesSize(float64(info.NetFlowDown)))
 
@@ -687,6 +691,7 @@ var listProfitDetailsCmd = &cli.Command{
 			tablewriter.Col("Size"),
 			tablewriter.Col("Profit"),
 			tablewriter.Col("CreatedTime"),
+			tablewriter.Col("Rate"),
 			tablewriter.Col("Note"),
 			// tablewriter.NewLineCol("Processes"),
 		)
@@ -707,6 +712,7 @@ var listProfitDetailsCmd = &cli.Command{
 				"Size":        units.BytesSize(float64(info.Size)),
 				"Profit":      info.Profit,
 				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
+				"Rate":        info.Rate,
 				"Note":        info.Note,
 			}
 

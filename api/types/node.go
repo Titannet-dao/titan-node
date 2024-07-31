@@ -19,6 +19,7 @@ type NodeDynamicInfo struct {
 	DiskUsage          float64   `json:"disk_usage" form:"diskUsage" gorm:"column:disk_usage;comment:;" db:"disk_usage"`
 	LastSeen           time.Time `db:"last_seen"`
 	Profit             float64   `db:"profit"`
+	PenaltyProfit      float64   `db:"penalty_profit"`
 	TitanDiskUsage     float64   `db:"titan_disk_usage"`
 	AvailableDiskSpace float64   `json:"available_disk_space" form:"availableDiskSpace" gorm:"column:available_disk_space;comment:;" db:"available_disk_space"`
 	BandwidthUp        int64     `json:"bandwidth_up" db:"bandwidth_up"`
@@ -40,8 +41,10 @@ type NodeInfo struct {
 	ClientType      NodeClientType
 	BackProjectTime int64
 	RemoteAddr      string
+	Level           int
 	IncomeIncr      float64 // Base points increase every half hour (30 minute)
-	GeoInfo         *region.GeoInfo
+	AreaID          string
+	Mx              float64
 	AssetCount      int64 `db:"asset_count"`
 	RetrieveCount   int64 `db:"retrieve_count"`
 
@@ -85,10 +88,6 @@ const (
 	NodeOffline NodeStatus = iota
 
 	NodeServicing
-
-	NodeUnregister
-	// Exceptions
-	NodeNatSymmetric
 )
 
 func (n NodeStatus) String() string {
@@ -97,10 +96,6 @@ func (n NodeStatus) String() string {
 		return "offline"
 	case NodeServicing:
 		return "servicing"
-	case NodeUnregister:
-		return "unregister"
-	case NodeNatSymmetric:
-		return "nat-symmetric"
 	}
 
 	return ""
@@ -118,6 +113,7 @@ const (
 	NodeScheduler
 	NodeLocator
 	NodeUpdater
+	NodeL5
 )
 
 func (n NodeType) String() string {
@@ -128,10 +124,12 @@ func (n NodeType) String() string {
 		return "candidate"
 	case NodeScheduler:
 		return "scheduler"
-	case NodeValidator:
-		return "validator"
+	// case NodeValidator:
+	// 	return "validator"
 	case NodeLocator:
 		return "locator"
+	case NodeL5:
+		return "l5"
 	}
 
 	return ""
@@ -178,26 +176,26 @@ type EdgeDownloadInfoList struct {
 	SchedulerKey string
 }
 
-type DownloadSource int
+// type DownloadSource int
 
-const (
-	DownloadSourceIPFS DownloadSource = iota
-	DownloadSourceAWS
-	DownloadSourceSDK
-)
+// const (
+// 	DownloadSourceIPFS DownloadSource = iota
+// 	DownloadSourceAWS
+// 	DownloadSourceSDK
+// )
 
-func (n DownloadSource) String() string {
-	switch n {
-	case DownloadSourceIPFS:
-		return "ipfs"
-	case DownloadSourceAWS:
-		return "aws"
-	case DownloadSourceSDK:
-		return "sdk"
-	}
+// func (n DownloadSource) String() string {
+// 	switch n {
+// 	case DownloadSourceIPFS:
+// 		return "ipfs"
+// 	case DownloadSourceAWS:
+// 		return "aws"
+// 	case DownloadSourceSDK:
+// 		return "sdk"
+// 	}
 
-	return ""
-}
+// 	return ""
+// }
 
 // CandidateDownloadInfo represents download information for a candidate
 type CandidateDownloadInfo struct {
@@ -401,6 +399,16 @@ type Token struct {
 	Sign string
 }
 
+// ProjectRecordReq
+type ProjectRecordReq struct {
+	NodeID            string
+	ProjectID         string
+	BandwidthUpSize   float64
+	BandwidthDownSize float64
+	StartTime         time.Time
+	EndTime           time.Time
+}
+
 type WorkloadEvent int
 
 const (
@@ -468,6 +476,8 @@ type ConnectOptions struct {
 	// private minio storage only, not public storage
 	IsPrivateMinioOnly bool
 	ExternalURL        string
+
+	GeoInfo *region.GeoInfo
 }
 
 type GeneratedCarInfo struct {
@@ -549,6 +559,10 @@ const (
 	ProfitTypeDownload
 	// ProfitTypeUpload
 	ProfitTypeUpload
+	// ProfitTypeOfflinePenalty
+	ProfitTypeOfflinePenalty
+	// ProfitTypeReimburse
+	ProfitTypeReimburse
 )
 
 type ProfitDetails struct {
@@ -560,6 +574,8 @@ type ProfitDetails struct {
 	Size        int64      `db:"size"`
 	Note        string     `db:"note"`
 	CID         string     `db:"cid"`
+	Rate        float64    `db:"rate"`
+	Penalty     float64
 }
 
 // ListNodeProfitDetailsRsp list node profit
@@ -584,4 +600,21 @@ type CandidateCodeInfo struct {
 type TunserverRsp struct {
 	URL    string
 	NodeID string
+}
+
+type TunserverReq struct {
+	IP     string
+	AreaID string
+}
+
+type CreateTunnelReq struct {
+	NodeID    string
+	ProjectID string
+	WsURL     string
+	TunnelID  string
+}
+
+type AccessPointRsp struct {
+	Schedulers []string
+	GeoInfo    *region.GeoInfo
 }

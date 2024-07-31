@@ -43,7 +43,7 @@ func (d *Datastore) Get(ctx context.Context, key datastore.Key) (value []byte, e
 		return nil, err
 	}
 
-	cInfo.DetailsList, err = d.projectDB.LoadProjectReplicasInfos(cInfo.UUID)
+	cInfo.DetailsList, err = d.projectDB.LoadProjectReplicaInfos(cInfo.UUID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (d *Datastore) Query(ctx context.Context, q query.Query) (query.Results, er
 			continue
 		}
 
-		cInfo.DetailsList, err = d.projectDB.LoadProjectReplicasInfos(cInfo.UUID)
+		cInfo.DetailsList, err = d.projectDB.LoadProjectReplicaInfos(cInfo.UUID)
 		if err != nil {
 			log.Errorf("project %s load replicas err: %s", cInfo.UUID, err.Error())
 			continue

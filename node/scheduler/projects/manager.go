@@ -391,7 +391,7 @@ func (m *Manager) checkProjectReplicas(limit, offset int) int {
 			continue
 		}
 
-		cInfo.DetailsList, err = m.LoadProjectReplicasInfos(cInfo.UUID)
+		cInfo.DetailsList, err = m.LoadProjectReplicaInfos(cInfo.UUID)
 		if err != nil {
 			log.Errorf("checkProjectReplicas %s load replicas err: %s", cInfo.UUID, err.Error())
 			continue
@@ -522,7 +522,7 @@ func (m *Manager) chooseNodes(needCount int, filterMap map[string]struct{}, info
 	out := make([]*node.Node, 0)
 	continent, country, province, city := region.DecodeAreaID(info.AreaID)
 	if continent != "" {
-		list := m.nodeMgr.FindNodesFromGeo(continent, country, province, city)
+		list := m.nodeMgr.GeoMgr.FindNodesFromGeo(continent, country, province, city, types.NodeEdge)
 		sort.Slice(list, func(i, j int) bool {
 			return list[i].BackProjectTime < list[j].BackProjectTime
 		})
@@ -568,13 +568,13 @@ func (m *Manager) checkNode(nodeID string, filterMap map[string]struct{}, info P
 		return nil
 	}
 
-	if node.CPUCores < int(info.CPUCores) {
-		return nil
-	}
+	// if node.CPUCores < int(info.CPUCores) {
+	// 	return nil
+	// }
 
-	if node.Memory < float64(info.Memory) {
-		return nil
-	}
+	// if node.Memory < float64(info.Memory) {
+	// 	return nil
+	// }
 
 	return node
 }

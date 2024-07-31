@@ -2,26 +2,33 @@ package types
 
 import "time"
 
-type AssetProperty struct {
-	AssetCID  string
-	AssetName string
-	AssetSize int64
-	AssetType string
-	NodeID    string
-	Password  string
-	GroupID   int
+type CreateSyncAssetReq struct {
+	AssetCID      string
+	AssetSize     int64
+	ReplicaCount  int64
+	ExpirationDay int
+
+	DownloadInfo *SourceDownloadInfo
 }
 
 type CreateAssetReq struct {
-	UserID string
-	AssetProperty
+	UserID        string
+	AssetCID      string
+	AssetSize     int64
+	NodeID        string
+	ReplicaCount  int64
+	ExpirationDay int
 }
 
 type UploadInfo struct {
-	UploadURL     string
-	Token         string
-	NodeID        string
+	List          []*NodeUploadInfo
 	AlreadyExists bool
+}
+
+type NodeUploadInfo struct {
+	UploadURL string
+	Token     string
+	NodeID    string
 }
 
 type AuthUserUploadDownloadAsset struct {

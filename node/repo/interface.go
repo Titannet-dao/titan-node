@@ -105,4 +105,11 @@ type LockedRepo interface {
 
 	// Readonly returns true if the repo is readonly
 	Readonly() bool
+
+	// GetCertificatePath returns certificate path
+	GetCertificatePath() string
+	// GetCertificateKeyPath returns certificate key path
+	GetCertificateKeyPath() string
+	// SetCertificate sets ca crt and key
+	SetCertificate([]byte, []byte) error
 }

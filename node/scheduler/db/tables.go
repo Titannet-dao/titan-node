@@ -4,7 +4,7 @@ package db
 var cAssetStateTable = `
     CREATE TABLE if not exists %s (
 		hash                VARCHAR(128) NOT NULL UNIQUE,
-		state               VARCHAR(16)  DEFAULT '',
+		state               VARCHAR(32)  DEFAULT '',
 		retry_count         INT          DEFAULT 0,
 		replenish_replicas  INT          DEFAULT 0,
 		PRIMARY KEY (hash)
@@ -49,6 +49,7 @@ var cNodeInfoTable = `
 	    online_duration      INT             DEFAULT 0,
 	    offline_duration     INT             DEFAULT 0,
 	    profit               DECIMAL(20, 6)  DEFAULT 0,
+		penalty_profit       DECIMAL(20, 6)  DEFAULT 0,
 	    last_seen            DATETIME        DEFAULT CURRENT_TIMESTAMP,
 	    disk_usage           FLOAT           DEFAULT 0,
     	upload_traffic       BIGINT          DEFAULT 0,
@@ -67,7 +68,7 @@ var cValidationResultsTable = `
 	    round_id          VARCHAR(128)   NOT NULL,
 	    node_id           VARCHAR(128)   NOT NULL,
 	    validator_id      VARCHAR(128)   NOT NULL,
-	    cid               VARCHAR(128)   NOT NULL,
+	    cid               VARCHAR(128)   DEFAULT '',
 	    block_number      BIGINT         DEFAULT 0,
 	    status            TINYINT        DEFAULT 0,
 	    duration          BIGINT         DEFAULT 0,
@@ -167,37 +168,6 @@ var cWorkloadTable = `
 		KEY idx_end_time (client_end_time)
 	) ENGINE=InnoDB COMMENT='workload report';`
 
-var cUserAssetTable = `
-    CREATE TABLE if not exists %s (
-	    hash              VARCHAR(128) NOT NULL,
-	    user_id           VARCHAR(128) NOT NULL,
-	    asset_name        VARCHAR(128) DEFAULT '' ,
-		asset_type        VARCHAR(128) DEFAULT '' ,
-		share_status      TINYINT      DEFAULT 0,
-	    created_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
-		total_size        BIGINT       DEFAULT 0,
-		expiration        DATETIME     DEFAULT CURRENT_TIMESTAMP,
-		password          VARCHAR(128) DEFAULT '' ,		
-		group_id          INT          DEFAULT 0,
-		PRIMARY KEY (hash,user_id),
-		KEY idx_user_id (user_id),
-		KEY idx_group_id (group_id)
-    ) ENGINE=InnoDB COMMENT='user asset';`
-
-var cUserInfoTable = `
-    CREATE TABLE if not exists %s (
-	    user_id             VARCHAR(128) NOT NULL,
-		total_storage_size 	BIGINT      DEFAULT 0,
-		used_storage_size 	BIGINT      DEFAULT 0,
-		api_keys		    BLOB,
-		total_traffic       BIGINT      DEFAULT 0,
-		peak_bandwidth 	    INT         DEFAULT 0,
-		download_count 	    INT         DEFAULT 0,
-		enable_vip  	    BOOLEAN 	DEFAULT false,
-		update_peak_time    DATETIME    DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (user_id)
-    ) ENGINE=InnoDB COMMENT='user infos';`
-
 var cReplicaEventTable = `
     CREATE TABLE if not exists %s (
 		hash          VARCHAR(128) NOT NULL,
@@ -228,30 +198,11 @@ var cRetrieveEventTable = `
 		KEY idx_created_time (created_time)
 	) ENGINE=InnoDB COMMENT='asset retrieve event';`
 
-var cAssetVisitCountTable = `
-    CREATE TABLE if not exists %s (
-	    hash        VARCHAR(128) NOT NULL,
-		count       INT 		 DEFAULT 0,
-		PRIMARY KEY (hash)
-    ) ENGINE=InnoDB COMMENT='user asset visit count';`
-
 var cReplenishBackupTable = `
     CREATE TABLE if not exists %s (
 	    hash        VARCHAR(128) NOT NULL,
 		PRIMARY KEY (hash)
     ) ENGINE=InnoDB COMMENT='Assets that need to be replenish backed up to candidate nodes';`
-
-var cUserAssetGroupTable = `
-    CREATE TABLE if not exists %s (
-		id            INT UNSIGNED AUTO_INCREMENT,
-	    user_id       VARCHAR(128) NOT NULL,
-		name          VARCHAR(32)  DEFAULT '',
-		parent        INT          DEFAULT 0,
-	    created_time  DATETIME     DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (id),
-	    KEY idx_user_id (user_id),
-	    KEY idx_parent (parent)
-    ) ENGINE=InnoDB COMMENT='user asset group';`
 
 var cAWSDataTable = `
     CREATE TABLE if not exists %s (
@@ -274,8 +225,10 @@ var cProfitDetailsTable = `
 		profit_type   INT            NOT NULL,
 		note          VARCHAR(1024)  DEFAULT '', 
 		cid           VARCHAR(128)   DEFAULT '',
+		rate          DECIMAL(5, 4)  DEFAULT 0,
 		PRIMARY KEY (id),
 	    KEY idx_node_id (node_id),
+	    KEY profit_type_id (profit_type),
 	    KEY idx_time (created_time)
     ) ENGINE=InnoDB COMMENT='profit details';`
 
@@ -293,7 +246,7 @@ var cCandidateCodeTable = `
 var cProjectStateTable = `
     CREATE TABLE if not exists %s (
 		id                  VARCHAR(128) NOT NULL UNIQUE,	
-		state               VARCHAR(16)  DEFAULT 0,		
+		state               VARCHAR(32)  DEFAULT 0,		
 		retry_count         INT          DEFAULT 0,
 		replenish_replicas  INT          DEFAULT 0,
 		PRIMARY KEY (id)
@@ -345,7 +298,145 @@ var cProjectEventTable = `
 var cOnlineCountTable = `
 	CREATE TABLE if not exists %s (
 		node_id         VARCHAR(128)  NOT NULL,
-		create_time     DATETIME      NOT NULL,
+		created_time    DATETIME      NOT NULL,
 		online_count    INT           DEFAULT 0,
-		PRIMARY KEY (node_id,create_time)
+		PRIMARY KEY (node_id,created_time)
 	) ENGINE=InnoDB COMMENT='node and server online count';`
+
+// var cUserAssetTable = `
+//     CREATE TABLE if not exists %s (
+// 	    hash              VARCHAR(128) NOT NULL,
+// 	    user_id           VARCHAR(128) NOT NULL,
+// 	    asset_name        VARCHAR(128) DEFAULT '' ,
+// 		asset_type        VARCHAR(128) DEFAULT '' ,
+// 		share_status      TINYINT      DEFAULT 0,
+// 	    created_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+// 		total_size        BIGINT       DEFAULT 0,
+// 		expiration        DATETIME     DEFAULT CURRENT_TIMESTAMP,
+// 		password          VARCHAR(128) DEFAULT '' ,
+// 		group_id          INT          DEFAULT 0,
+// 		PRIMARY KEY (hash,user_id),
+// 		KEY idx_user_id (user_id),
+// 		KEY idx_group_id (group_id)
+//     ) ENGINE=InnoDB COMMENT='user asset';`
+
+// var cUserInfoTable = `
+//     CREATE TABLE if not exists %s (
+// 	    user_id             VARCHAR(128) NOT NULL,
+// 		total_storage_size 	BIGINT      DEFAULT 0,
+// 		used_storage_size 	BIGINT      DEFAULT 0,
+// 		api_keys		    BLOB,
+// 		total_traffic       BIGINT      DEFAULT 0,
+// 		peak_bandwidth 	    INT         DEFAULT 0,
+// 		download_count 	    INT         DEFAULT 0,
+// 		enable_vip  	    BOOLEAN 	DEFAULT false,
+// 		update_peak_time    DATETIME    DEFAULT CURRENT_TIMESTAMP,
+// 		PRIMARY KEY (user_id)
+//     ) ENGINE=InnoDB COMMENT='user infos';`
+
+// var cAssetVisitCountTable = `
+//     CREATE TABLE if not exists %s (
+// 	    hash        VARCHAR(128) NOT NULL,
+// 		count       INT 		 DEFAULT 0,
+// 		PRIMARY KEY (hash)
+//     ) ENGINE=InnoDB COMMENT='user asset visit count';`
+
+// var cUserAssetGroupTable = `
+//     CREATE TABLE if not exists %s (
+// 		id            INT UNSIGNED AUTO_INCREMENT,
+// 	    user_id       VARCHAR(128) NOT NULL,
+// 		name          VARCHAR(32)  DEFAULT '',
+// 		parent        INT          DEFAULT 0,
+// 	    created_time  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+// 		PRIMARY KEY (id),
+// 	    KEY idx_user_id (user_id),
+// 	    KEY idx_parent (parent)
+//     ) ENGINE=InnoDB COMMENT='user asset group';`
+
+var cUserAssetGroupTable = `
+    CREATE TABLE if not exists %s (
+		id            INT UNSIGNED AUTO_INCREMENT,
+	    user_id       VARCHAR(128) NOT NULL,
+		name          VARCHAR(32)  DEFAULT '',
+		parent        INT          DEFAULT 0,
+	    created_time  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+	    KEY idx_user_id (user_id),
+	    KEY idx_parent (parent)
+    ) ENGINE=InnoDB COMMENT='user asset group';`
+
+var cDeploymentTable = `
+CREATE TABLE IF NOT EXISTS %s (
+    id VARCHAR(128) NOT NULL UNIQUE,
+    owner VARCHAR(128) NOT NULL,
+    name VARCHAR(128) NOT NULL DEFAULT '',
+    state INT DEFAULT 0,
+    type INT DEFAULT 0,
+    authority TINYINT(1) DEFAULT 0,
+    version VARCHAR(128) DEFAULT '',
+    balance FLOAT        DEFAULT 0,
+    cost FLOAT        DEFAULT 0,
+    provider_id VARCHAR(128) NOT NULL,
+    expiration DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+    )ENGINE=InnoDB COMMENT='deployments';`
+
+var cProviderTable = `
+CREATE TABLE IF NOT EXISTS %s(
+    id VARCHAR(128) NOT NULL UNIQUE,
+    owner VARCHAR(128) NOT NULL,
+    remote_addr VARCHAR(128) NOT NULL,
+    ip VARCHAR(128) NOT NULL,
+    state INT DEFAULT 0,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+    )ENGINE=InnoDB COMMENT='providers';`
+
+var cPropertiesTable = `
+CREATE TABLE IF NOT EXISTS %s(
+    id INT UNSIGNED AUTO_INCREMENT,
+    provider_id VARCHAR(128) NOT NULL UNIQUE,
+    app_id VARCHAR(128) NOT NULL,
+    app_type INT DEFAULT 0,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_provider_id (provider_id)
+    )ENGINE=InnoDB COMMENT='properties';`
+
+var cServicesTable = `
+CREATE TABLE IF NOT EXISTS %s(
+    id INT UNSIGNED AUTO_INCREMENT,
+    name VARCHAR(128) NOT NULL DEFAULT '',
+    image VARCHAR(128) NOT NULL DEFAULT '',
+    ports VARCHAR(256) NOT NULL DEFAULT '',
+    state INT DEFAULT 0,
+    cpu FLOAT        DEFAULT 0,
+    gpu FLOAT        DEFAULT 0,
+    memory FLOAT        DEFAULT 0,
+    storage VARCHAR(128),
+    env VARCHAR(128) DEFAULT NULL,
+    arguments VARCHAR(128) DEFAULT NULL,
+    deployment_id VARCHAR(128) NOT NULL,
+    error_message VARCHAR(128) DEFAULT NULL,
+    replicas INT NOT NULL DEFAULT 0,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_deployment_id_image (deployment_id, image)
+    )ENGINE=InnoDB COMMENT='services';`
+
+var cDomainTable = `
+CREATE TABLE IF NOT EXISTS %s(
+    id INT UNSIGNED AUTO_INCREMENT,
+    name VARCHAR(128) NOT NULL DEFAULT '',
+    deployment_id VARCHAR(128) NOT NULL DEFAULT '',
+    provider_id VARCHAR(128) NOT NULL DEFAULT '',
+    state VARCHAR(128) NOT NULL DEFAULT '',
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY idx_name (name)
+    )ENGINE=InnoDB COMMENT='domains'`

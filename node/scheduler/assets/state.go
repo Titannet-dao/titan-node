@@ -7,6 +7,8 @@ type AssetState string
 const (
 	// SeedSelect select first candidate to pull seed asset
 	SeedSelect AssetState = "SeedSelect"
+	// SeedSync sync seed from other scheduler
+	SeedSync AssetState = "SeedSync"
 	// SeedPulling Waiting for candidate nodes to pull seed asset
 	SeedPulling AssetState = "SeedPulling"
 	// UploadInit Initialize user upload preparation
@@ -23,6 +25,8 @@ const (
 	EdgesPulling AssetState = "EdgesPulling"
 	// Servicing Asset cache completed and in service
 	Servicing AssetState = "Servicing"
+	// SyncFailed Unable to select candidate nodes or failed to pull seed asset
+	SyncFailed AssetState = "SyncFailed"
 	// SeedFailed Unable to select candidate nodes or failed to pull seed asset
 	SeedFailed AssetState = "SeedFailed"
 	// CandidatesFailed Unable to select candidate nodes or failed to pull asset
@@ -54,6 +58,7 @@ var (
 	// PullingStates contains a list of asset pull states that represent pulling.
 	PullingStates = []string{
 		SeedSelect.String(),
+		SeedSync.String(),
 		SeedPulling.String(),
 		UploadInit.String(),
 		SeedUploading.String(),

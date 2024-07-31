@@ -89,7 +89,7 @@ func (s *Scheduler) GetProjectInfos(ctx context.Context, userID string, limit, o
 	}
 
 	for _, pInfo := range infos {
-		list, err := s.db.LoadProjectReplicasInfos(pInfo.UUID)
+		list, err := s.db.LoadProjectReplicaInfos(pInfo.UUID)
 		if err != nil {
 			return nil, err
 		}
@@ -107,6 +107,8 @@ func (s *Scheduler) GetProjectInfos(ctx context.Context, userID string, limit, o
 			}
 
 			dInfo.WsURL = vNode.WsURL()
+			dInfo.IP = node.ExternalIP
+			dInfo.GeoID = node.AreaID
 		}
 
 		pInfo.DetailsList = list

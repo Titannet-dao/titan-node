@@ -20,6 +20,7 @@ var defaultArea = ""
 // Region represents a geo region interface
 type Region interface {
 	GetGeoInfo(ip string) (*GeoInfo, error)
+	GetGeoInfoFromAreaID(areaID string) (*GeoInfo, error)
 }
 
 // GeoInfo represents the geo information

@@ -8,10 +8,11 @@ import (
 
 // startNodeKeepaliveTimer periodically sends keepalive requests to all nodes and checks if any nodes have been offline for too long
 func (m *Manager) startNodeKeepaliveTimer() {
-	start := time.Now()
+	// start := time.Now()
 
-	offset := (time.Minute - time.Duration(start.Second())*time.Second - time.Duration(start.Nanosecond())) + (time.Minute * 10)
-	time.Sleep(offset)
+	// offset := (time.Minute - time.Duration(start.Second())*time.Second - time.Duration(start.Nanosecond())) + (time.Minute * 10)
+	// time.Sleep(offset)
+	time.Sleep(penaltyFreeTime)
 
 	ticker := time.NewTicker(keepaliveTime)
 	defer ticker.Stop()
@@ -36,32 +37,18 @@ func (m *Manager) nodesKeepalive() {
 		string(m.ServerID),
 	}
 
-	m.edgeNodes.Range(func(key, value interface{}) bool {
-		node := value.(*Node)
-		if node == nil {
-			return true
-		}
-
-		node.KeepaliveCount++
+	eList := m.GetAllEdgeNode()
+	for _, node := range eList {
 		if m.checkNodeStatus(node, t) {
 			nodes = append(nodes, node.NodeID)
 		}
-
-		return true
-	})
-
-	m.candidateNodes.Range(func(key, value interface{}) bool {
-		node := value.(*Node)
-		if node == nil {
-			return true
-		}
-
+	}
+	_, cList := m.GetAllCandidateNodes()
+	for _, node := range cList {
 		if m.checkNodeStatus(node, t) {
 			nodes = append(nodes, node.NodeID)
 		}
-
-		return true
-	})
+	}
 
 	if len(nodes) > 0 {
 		err := m.UpdateOnlineCount(nodes, 2, date)
@@ -76,13 +63,15 @@ func (m *Manager) checkNodeStatus(node *Node, t time.Time) bool {
 	lastTime := node.LastRequestTime()
 
 	if !lastTime.After(t) {
-		m.RemoveNodeIP(node.NodeID, node.ExternalIP)
-		m.RemoveNodeGeo(node.NodeID, node.GeoInfo)
+		m.IPMgr.RemoveNodeIP(node.NodeID, node.ExternalIP)
+		m.GeoMgr.RemoveNodeGeo(node.NodeID, node.Type, node.AreaID)
 
-		if node.Type == types.NodeCandidate || node.Type == types.NodeValidator {
+		if node.Type == types.NodeCandidate {
 			m.deleteCandidateNode(node)
 		} else if node.Type == types.NodeEdge {
 			m.deleteEdgeNode(node)
+		} else if node.Type == types.NodeL5 {
+			m.deleteL5Node(node)
 		}
 
 		log.Infof("node offline %s, %s", node.NodeID, node.ExternalIP)

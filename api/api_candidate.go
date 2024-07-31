@@ -13,6 +13,8 @@ type Candidate interface {
 	Validation
 	DataSync
 	Asset
+	ProviderAPI
+
 	WaitQuiet(ctx context.Context) error                                                                             //perm:admin
 	GetBlocksWithAssetCID(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error) //perm:admin
 	// GetExternalAddress retrieves the external address of the caller.
@@ -22,6 +24,9 @@ type Candidate interface {
 	// CheckNetworkConnectable check network if connectable
 	CheckNetworkConnectable(ctx context.Context, network, targetURL string) (bool, error) //perm:admin
 	GetMinioConfig(ctx context.Context) (*types.MinioConfig, error)                       //perm:admin
+
+	DeactivateNode(ctx context.Context) error                             //perm:default
+	CalculateExitProfit(ctx context.Context) (types.ExitProfitRsp, error) //perm:default
 }
 
 // ValidationResult node Validation result

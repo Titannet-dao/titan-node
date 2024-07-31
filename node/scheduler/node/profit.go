@@ -2,13 +2,15 @@ package node
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 )
 
 const (
-	uploadTrafficProfit   = 220.0 // p/GB
-	downloadTrafficProfit = 55.0  // p/GB
+	validatableUploadTrafficProfit = 15.0 // p/GB
+	uploadTrafficProfit            = 50.0 // p/GB
+	downloadTrafficProfit          = 30.0 // p/GB
 
 	mr = 1.0
 	mo = 1.0
@@ -21,8 +23,10 @@ const (
 	exitRate = 0.6
 
 	l2PhoneRate = 500.0 / 17280.0 // every 5s
-	l2PCRate    = 200.0 / 17280.0 // every 5s
-	l2OtherRate = 50.0 / 17280.0  // every 5s
+	l2PCRate    = 300.0 / 17280.0 // every 5s
+	l2OtherRate = 150.0 / 17280.0 // every 5s
+
+	l2ProfitLimit = 7000
 )
 
 var (
@@ -59,67 +63,38 @@ var (
 // 	}
 // }
 
-// func (m *Manager) startMxTimer() {
-// 	ticker := time.NewTicker(time.Minute * 1)
-// 	defer ticker.Stop()
+func (m *Manager) isExceededLimit(nodeID string) bool {
+	start := time.Now()
+	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+	end := start.Add(24 * time.Hour)
 
-// 	mx = updateMx()
+	todayProfit, err := m.LoadTodayProfitsForNode(nodeID, start, end)
+	if err != nil {
+		log.Errorf("%s LoadTodayProfitsForNode err:%s", nodeID, err.Error())
+		return true
+	}
 
-// 	for {
-// 		<-ticker.C
-// 		mx = updateMx()
-// 	}
-// }
+	if todayProfit > l2ProfitLimit {
+		log.Infof("%s LoadTodayProfitsForNode %.4f > %d", nodeID, todayProfit, l2ProfitLimit)
+		return true
+	}
 
-// func (m *Manager) GetNodeBaseProfitDetails(node *Node, count float64) *types.ProfitDetails {
-// 	p := count * m.NodeCalculateMCx()
+	return false
+}
 
-// 	if p < 0.000001 {
-// 		return nil
-// 	}
-
-// 	return &types.ProfitDetails{
-// 		NodeID: node.NodeID,
-// 		Profit: p,
-// 		PType:  types.ProfitTypeBase,
-// 	}
-// }
-
-// func (m *Manager) GetNodePullProfitDetails(node *Node, size float64, note string) *types.ProfitDetails {
-// 	w := 1.0
-// 	if node.IsPhone {
-// 		w = phoneWeighting
-// 	}
-
-// 	d := bToGB(size)
-// 	mip := calculateMip(node.NATType)
-// 	lip := len(m.GetNodeOfIP(node.ExternalIP))
-// 	mn := calculateMn(lip)
-
-// 	mbnd := mr * mx * mo * d * downloadTrafficProfit * mip * mn * w
-
-// 	if mbnd < 0.000001 {
-// 		return nil
-// 	}
-
-// 	return &types.ProfitDetails{
-// 		NodeID: node.NodeID,
-// 		Profit: mbnd,
-// 		PType:  types.ProfitTypePull,
-// 		Size:   int64(size),
-// 		Note:   fmt.Sprintf("lip:[%d] ; mr:[%.4f], mx:[%.4f], mo:[%.4f], d:[%.6f]GB, [%.4f], mip:[%.4f], mn:[%.4f] ,w:[%.1f] ", lip, mr, mx, mo, d, downloadTrafficProfit, mip, mn, w),
-// 	}
-// }
-
+// GetNodeBePullProfitDetails Provide download rewards
 func (m *Manager) GetNodeBePullProfitDetails(node *Node, size float64, note string) *types.ProfitDetails {
-	u := bToGB(size)
-	b := calculateB(node.BandwidthUp)
-	mip := calculateMip(node.NATType)
-	lip := len(m.GetNodeOfIP(node.ExternalIP))
-	mn := calculateMn(lip)
-	mx := rateOfL2Mx(node.OnlineDuration)
+	if m.isExceededLimit(node.NodeID) {
+		return nil
+	}
 
-	mbnu := mr * mx * mo * u * b * uploadTrafficProfit * mip * mn
+	u := bToGB(size)
+	mip := calculateMip(node.NATType)
+	lip := len(m.IPMgr.GetNodeOfIP(node.ExternalIP))
+	mn := calculateMn(lip)
+	mx := RateOfL2Mx(node.OnlineDuration)
+
+	mbnu := mr * mx * mo * u * uploadTrafficProfit * mip * mn
 
 	if mbnu < 0.000001 {
 		return nil
@@ -130,49 +105,22 @@ func (m *Manager) GetNodeBePullProfitDetails(node *Node, size float64, note stri
 		Profit: mbnu,
 		PType:  types.ProfitTypeBePull,
 		Size:   int64(size),
-		Note:   fmt.Sprintf("lip:[%d] BandwidthUp:[%d]; mr:[%.4f], mx:[%.4f], mo:[%.4f], u:[%.6f]GB, b:[%.4f], [%.4f], mip:[%.4f], mn:[%.4f]", lip, node.BandwidthUp, mr, mx, mo, u, b, uploadTrafficProfit, mip, mn),
+		Note:   fmt.Sprintf("lip:[%d]  mr:[%.4f], mx:[%.4f], mo:[%.4f], u:[%.6f]GB, [%.2f], mip:[%.4f], mn:[%.4f]", lip, mr, mx, mo, u, uploadTrafficProfit, mip, mn),
 	}
 }
 
-// func (m *Manager) GetNodeValidatorProfitDetails(node *Node, size float64) *types.ProfitDetails {
-// 	w := 1.0
-// 	if node.IsPhone {
-// 		w = phoneWeighting
-// 	}
-
-// 	d := bToGB(size)
-
-// 	mip := calculateMip(node.NATType)
-// 	lip := len(m.GetNodeOfIP(node.ExternalIP))
-// 	mn := calculateMn(lip)
-
-// 	mbnd := mr * mx * mo * d * downloadTrafficProfit * mip * mn * w
-
-// 	if mbnd < 0.000001 {
-// 		return nil
-// 	}
-
-// 	return &types.ProfitDetails{
-// 		NodeID: node.NodeID,
-// 		Profit: mbnd,
-// 		PType:  types.ProfitTypeValidator,
-// 		Size:   int64(size),
-// 		Note:   fmt.Sprintf("lip:[%d] ; mr:[%.4f], mx:[%.4f], mo:[%.4f], d:[%.4f], [%.4f], mip:[%.4f], mn:[%.4f],w:[%.1f]", lip, mr, mx, mo, d, downloadTrafficProfit, mip, mn, w),
-// 	}
-// }
-
+// GetNodeValidatableProfitDetails Rewards for random inspection
 func (m *Manager) GetNodeValidatableProfitDetails(node *Node, size float64) *types.ProfitDetails {
 	ds := float64(node.TitanDiskUsage)
 	s := bToGB(ds)
 	u := bToGB(size)
-	mx := rateOfL2Mx(node.OnlineDuration)
+	mx := RateOfL2Mx(node.OnlineDuration)
 	mt := 1.0
-	b := calculateB(node.BandwidthUp)
 	mip := calculateMip(node.NATType)
-	lip := len(m.GetNodeOfIP(node.ExternalIP))
+	lip := len(m.IPMgr.GetNodeOfIP(node.ExternalIP))
 	mn := calculateMn(lip)
 
-	ms := (mr * mx * mo * min(s, 50) * 0.211148649 * mt) + (u * b * uploadTrafficProfit * mip * mn)
+	ms := (mr * mx * mo * min(s, 50) * 1.5 * mt) + (u * validatableUploadTrafficProfit * mip * mn)
 
 	if ms < 0.000001 {
 		return nil
@@ -183,43 +131,65 @@ func (m *Manager) GetNodeValidatableProfitDetails(node *Node, size float64) *typ
 		Profit: ms,
 		PType:  types.ProfitTypeValidatable,
 		Size:   int64(size),
-		Note:   fmt.Sprintf("lip:[%d] BandwidthUp:[%d]; mr:[%.4f], mx:[%.4f], mo:[%.4f], s:[%.4f], u:[%.6f]GB, b:[%.4f], [%.4f], mip:[%.4f], mn:[%.4f]", lip, node.BandwidthUp, mr, mx, mo, s, u, b, uploadTrafficProfit, mip, mn),
+		Note:   fmt.Sprintf("lip:[%d] mr:[%.4f], mx:[%.4f], mo:[%.4f], s:[%.4f], u:[%.6f]GB, [%.1f], mip:[%.4f], mn:[%.4f]", lip, mr, mx, mo, s, u, validatableUploadTrafficProfit, mip, mn),
 	}
 }
 
-func (m *Manager) GetEdgeBaseProfitDetails(node *Node) (float64, *types.ProfitDetails) {
+// GetEdgeBaseProfitDetails Basic Rewards
+func (m *Manager) GetEdgeBaseProfitDetails(node *Node, minute int) (float64, *types.ProfitDetails) {
 	// Every 5 s
-	mx := rateOfL2Mx(node.OnlineDuration)
+	mx := RateOfL2Mx(node.OnlineDuration)
 	mb := rateOfL2Base(node.ClientType)
 	mcx := mr * mx * mo * mb
 
-	p := mcx * float64(node.KeepaliveCount)
+	count := minute * 12
+	p := mcx * float64(count)
 
-	return mcx, &types.ProfitDetails{
+	// client incr
+	cIncr := mcx * 360
+
+	if p < 0.000001 {
+		return cIncr, nil
+	}
+
+	return cIncr, &types.ProfitDetails{
 		NodeID: node.NodeID,
 		Profit: p,
 		PType:  types.ProfitTypeBase,
-		Note:   fmt.Sprintf(" mr:[%.1f], mx:[%0.4f], mo:[%0.1f], mb:[%.4f],count:[%d] ClientType:[%d] , online min:[%d]", mr, mx, mo, mb, node.KeepaliveCount, node.ClientType, node.OnlineDuration),
+		Note:   fmt.Sprintf(" mr:[%.1f], mx:[%0.4f], mo:[%0.1f], mb:[%.4f],count:[%d] ClientType:[%d] , online min:[%d]", mr, mx, mo, mb, count, node.ClientType, node.OnlineDuration),
 	}
 }
 
-func (m *Manager) GetCandidateBaseProfitDetails(node *Node) *types.ProfitDetails {
+// GetCandidateBaseProfitDetails Basic Rewards
+func (m *Manager) GetCandidateBaseProfitDetails(node *Node, minute int) *types.ProfitDetails {
 	// Every 5 minutes
 	arR := rateOfAR(node.OnlineRate)
 	mcx := l1RBase * node.OnlineRate * arR
+
+	count := roundDivision(minute, 5)
+	mcx = mcx * float64(count)
+
+	if mcx < 0.000001 {
+		return nil
+	}
 
 	return &types.ProfitDetails{
 		NodeID: node.NodeID,
 		Profit: mcx,
 		PType:  types.ProfitTypeBase,
-		Note:   fmt.Sprintf("rbase:[%.4f],node rate:[%.4f] ar rate:[%.4f]", l1RBase, node.OnlineRate, arR),
+		Note:   fmt.Sprintf("rbase:[%.4f],node rate:[%.4f] ar rate:[%.4f] , count[%d]", l1RBase, node.OnlineRate, arR, count),
 	}
 }
 
-func (m *Manager) GetDownloadProfitDetails(node *Node, size float64) *types.ProfitDetails {
+// GetDownloadProfitDetails Downstream traffic reward
+func (m *Manager) GetDownloadProfitDetails(node *Node, size float64, pid string) *types.ProfitDetails {
+	if m.isExceededLimit(node.NodeID) {
+		return nil
+	}
+
 	d := bToGB(size)
-	mx := rateOfL2Mx(node.OnlineDuration)
-	lip := len(m.GetNodeOfIP(node.ExternalIP))
+	mx := RateOfL2Mx(node.OnlineDuration)
+	lip := len(m.IPMgr.GetNodeOfIP(node.ExternalIP))
 	mn := calculateMn(lip)
 
 	ms := mr * mx * mo * d * downloadTrafficProfit * mn
@@ -233,19 +203,24 @@ func (m *Manager) GetDownloadProfitDetails(node *Node, size float64) *types.Prof
 		Profit: ms,
 		PType:  types.ProfitTypeDownload,
 		Size:   int64(size),
-		Note:   fmt.Sprintf("lip:[%d] ; mr:[%.4f], mx:[%.4f], mo:[%.4f], d:[%.4f]GB, [%.4f], mn:[%.4f]", lip, mr, mx, mo, d, downloadTrafficProfit, mn),
+		CID:    pid,
+		Note:   fmt.Sprintf("lip:[%d] ; mr:[%.4f], mx:[%.4f], mo:[%.4f], d:[%.4f]GB, [%.4f], mn:[%.4f], Profit:[%.4f]", lip, mr, mx, mo, d, downloadTrafficProfit, mn, ms),
 	}
 }
 
-func (m *Manager) GetUploadProfitDetails(node *Node, size float64) *types.ProfitDetails {
+// GetUploadProfitDetails Upstream traffic reward
+func (m *Manager) GetUploadProfitDetails(node *Node, size float64, pid string) *types.ProfitDetails {
+	if m.isExceededLimit(node.NodeID) {
+		return nil
+	}
+
 	u := bToGB(size)
-	mx := rateOfL2Mx(node.OnlineDuration)
-	b := calculateB(node.BandwidthUp)
+	mx := RateOfL2Mx(node.OnlineDuration)
 	mip := calculateMip(node.NATType)
-	lip := len(m.GetNodeOfIP(node.ExternalIP))
+	lip := len(m.IPMgr.GetNodeOfIP(node.ExternalIP))
 	mn := calculateMn(lip)
 
-	ms := (mr * mx * mo * u * b * uploadTrafficProfit * mn)
+	ms := mr * mx * mo * u * uploadTrafficProfit * mn
 
 	if ms < 0.000001 {
 		return nil
@@ -256,20 +231,46 @@ func (m *Manager) GetUploadProfitDetails(node *Node, size float64) *types.Profit
 		Profit: ms,
 		PType:  types.ProfitTypeUpload,
 		Size:   int64(size),
-		Note:   fmt.Sprintf("lip:[%d] BandwidthUp:[%d]; mr:[%.4f], mx:[%.4f], mo:[%.4f], u:[%.6f]GB, b:[%.4f], [%.4f], mip:[%.4f], mn:[%.4f]", lip, node.BandwidthUp, mr, mx, mo, u, b, uploadTrafficProfit, mip, mn),
+		CID:    pid,
+		Note:   fmt.Sprintf("lip:[%d] mr:[%.4f], mx:[%.4f], mo:[%.4f], u:[%.6f]GB, [%.4f], mip:[%.4f], mn:[%.4f], Profit:[%.4f]", lip, mr, mx, mo, u, uploadTrafficProfit, mip, mn, ms),
 	}
 }
 
-func (m *Manager) CalculatePenalty(nodeID string, profit float64, offlineDuration int) float64 {
+// CalculatePenalty Penalty
+func (m *Manager) CalculatePenalty(nodeID string, profit float64, offlineDuration int) *types.ProfitDetails {
 	od := float64(offlineDuration / 200)
 	pr := (penaltyRate + penaltyRate*od)
 	pn := profit * pr
 
-	log.Infof("CalculatePenalty %s ,pn:[%.4f]  profit:[%.4f] pr:[%.4f] od:[%.4f] , offlineDuration:[%d]", nodeID, pn, profit, pr, od, offlineDuration)
+	if pn > profit {
+		pn = profit
+	}
 
-	return pn
+	return &types.ProfitDetails{
+		NodeID:  nodeID,
+		Profit:  -pn,
+		Penalty: pn,
+		PType:   types.ProfitTypeOfflinePenalty,
+		Rate:    pr,
+		Note:    fmt.Sprintf("pn:[%.4f]  profit:[%.4f] pr:[%.4f] od:[%.4f] , offlineDuration:[%d]", pn, profit, pr, od, offlineDuration),
+	}
 }
 
+// GetReimburseProfitDetails Reimburse
+func (m *Manager) GetReimburseProfitDetails(nodeID string, profit float64, note string) *types.ProfitDetails {
+	if profit < 0.000001 {
+		return nil
+	}
+
+	return &types.ProfitDetails{
+		NodeID: nodeID,
+		Profit: profit,
+		PType:  types.ProfitTypeReimburse,
+		Note:   note,
+	}
+}
+
+// CalculateExitProfit Exit penalty calculation
 func (m *Manager) CalculateExitProfit(profit float64) (float64, float64) {
 	rExit := profit * (1 - exitRate)
 
@@ -308,19 +309,6 @@ func calculateMn(ipNum int) float64 {
 	return 0.1
 }
 
-func calculateB(upload int64) float64 {
-	mb := bToMB(float64(upload))
-	if mb >= 30 {
-		return 1.2
-	}
-
-	if mb >= 5 {
-		return 1
-	}
-
-	return 0.8
-}
-
 func rateOfAR(ar float64) float64 {
 	if ar >= 0.98 {
 		return 1.1
@@ -346,28 +334,32 @@ func rateOfL2Base(nct types.NodeClientType) float64 {
 	return l2OtherRate
 }
 
-func rateOfL2Mx(onlineDuration int) float64 {
+// RateOfL2Mx mx
+func RateOfL2Mx(onlineDuration int) float64 {
 	onlineHour := onlineDuration / 60
 
-	if onlineHour < 24 {
-		return 0
-	} else if onlineHour < 48 {
-		return 0.15
-	} else if onlineHour < 72 {
-		return 0.3
-	} else if onlineHour < 96 {
-		return 0.5
-	} else if onlineHour < 120 {
-		return 0.7
-	} else if onlineHour < 144 {
-		return 0.9
-	} else if onlineHour < 168 {
+	if onlineHour < 168 {
 		return 1
 	}
 
 	onlineDay := onlineHour / 24
-
 	count := onlineDay - 7
 
 	return 1.0 + (float64(count) * 0.03)
+}
+
+func bToGB(b float64) float64 {
+	return b / 1024 / 1024 / 1024
+}
+
+func bToMB(b float64) float64 {
+	return b / 1024 / 1024
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+
+	return b
 }

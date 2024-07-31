@@ -3,6 +3,7 @@ package locator
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"net"
 	"strings"
 	"time"
@@ -140,6 +141,13 @@ func (h *dnsHandler) HandlerQuery(m *dns.Msg, remoteAddr string) {
 				return
 			}
 
+			if ok, err := h.ReserveDeploymentHostnames(m, domain); err != nil {
+				log.Infof("ReserveDeploymentHostnames %s", err.Error())
+				return
+			} else if ok {
+				return
+			}
+
 			if ok, err := h.handlerNodeLocation(m, domain); err != nil {
 				log.Infof("handlerCandidateLocation %s", err.Error())
 				return
@@ -198,7 +206,7 @@ func (h *dnsHandler) handlerNodeLocation(m *dns.Msg, domain string) (bool, error
 	if len(fields) < 4 {
 		return false, fmt.Errorf("invalid domain %s", domain)
 	}
-
+	
 	nodeID := fields[0]
 	// check node id
 	if !h.isMatchNodeID(nodeID) {
@@ -248,7 +256,7 @@ func (h *dnsHandler) handlerAssetLocation(m *dns.Msg, domain, remoteAddr string)
 	targetIP := getUserNearestIP(userIP, ipList, h.dnsServer.reg)
 	rr := &dns.A{
 		Hdr: dns.RR_Header{
-			Name:   domain,
+			Name:   fmt.Sprintf("%s.", domain),
 			Rrtype: dns.TypeA,
 			Class:  dns.ClassINET,
 			Ttl:    60, // 60s
@@ -285,4 +293,28 @@ func (h *dnsHandler) isMatchNodeID(id string) bool {
 func (h *dnsHandler) isValidCID(cidString string) bool {
 	_, err := cid.Decode(cidString)
 	return err == nil
+}
+
+func (h *dnsHandler) ReserveDeploymentHostnames(m *dns.Msg, domain string) (bool, error) {
+	fields := strings.Split(domain, ".")
+	if len(fields) < 4 {
+		return false, fmt.Errorf("invalid domain %s", domain)
+	}
+
+	// check if it is deployment id
+	deploymentId := fields[0]
+	if len(deploymentId) != lengthOfNodeIDV1 {
+		return false, nil
+	}
+
+	deployUUID := uuid.MustParse(deploymentId)
+	ip, err := h.dnsServer.GetDeploymentCandidateIP(context.Background(), deployUUID.String())
+	if err != nil {
+		return false, err
+	}
+
+	if rr, err := dns.NewRR(fmt.Sprintf("%s A %s", domain, ip)); err == nil {
+		m.Answer = append(m.Answer, rr)
+	}
+	return true, err
 }

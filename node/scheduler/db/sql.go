@@ -26,33 +26,41 @@ func NewSQLDB(db *sqlx.DB) (*SQLDB, error) {
 }
 
 const (
+	// userAssetTable       = "user_asset"
+	// userInfoTable        = "user_info"
+	// userAssetGroupTable  = "user_asset_group"
+	// assetVisitCountTable = "asset_visit_count"
+
 	// Database table names.
-	nodeRegisterTable = "node_register_info"
-	nodeInfoTable     = "node_info"
+	nodeRegisterTable  = "node_register_info"
+	nodeInfoTable      = "node_info"
+	onlineCountTable   = "online_count"
+	candidateCodeTable = "candidate_code"
 
-	userAssetTable      = "user_asset"
-	userInfoTable       = "user_info"
-	userAssetGroupTable = "user_asset_group"
-	assetRecordTable    = "asset_record"
-	replicaInfoTable    = "replica_info"
-	assetsViewTable     = "asset_view"
-	bucketTable         = "bucket"
+	assetRecordTable = "asset_record"
+	replicaInfoTable = "replica_info"
+	assetsViewTable  = "asset_view"
+	bucketTable      = "bucket"
 
-	edgeUpdateTable       = "edge_update_info"
-	validatorsTable       = "validators"
+	projectEventTable     = "project_event"
 	validationResultTable = "validation_result"
-	workloadRecordTable   = "workload_record"
 	replicaEventTable     = "replica_event"
 	retrieveEventTable    = "retrieve_event"
-	assetVisitCountTable  = "asset_visit_count"
-	replenishBackupTable  = "replenish_backup"
-	awsDataTable          = "aws_data"
-	profitDetailsTable    = "profit_details"
-	candidateCodeTable    = "candidate_code"
-	projectInfoTable      = "project_info"
-	projectReplicasTable  = "project_replicas"
-	projectEventTable     = "project_event"
-	onlineCountTable      = "online_count"
+
+	edgeUpdateTable      = "edge_update_info"
+	validatorsTable      = "validators"
+	workloadRecordTable  = "workload_record"
+	replenishBackupTable = "replenish_backup"
+	awsDataTable         = "aws_data"
+	profitDetailsTable   = "profit_details"
+	projectInfoTable     = "project_info"
+	projectReplicasTable = "project_replicas"
+
+	deploymentTable = "deployments"
+	providersTable  = "providers"
+	propertiesTable = "properties"
+	servicesTable   = "services"
+	domainsTable    = "domains"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 1000
@@ -80,7 +88,7 @@ func projectStateTable(serverID dtypes.ServerID) string {
 
 // InitTables initializes data tables.
 func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
-	doExec(d)
+	doExec(d, serverID)
 
 	// init table
 	tx, err := d.db.Beginx()
@@ -107,13 +115,9 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cAssetViewTable, assetsViewTable))
 	tx.MustExec(fmt.Sprintf(cBucketTable, bucketTable))
 	tx.MustExec(fmt.Sprintf(cWorkloadTable, workloadRecordTable))
-	tx.MustExec(fmt.Sprintf(cUserAssetTable, userAssetTable))
-	tx.MustExec(fmt.Sprintf(cUserInfoTable, userInfoTable))
 	tx.MustExec(fmt.Sprintf(cReplicaEventTable, replicaEventTable))
 	tx.MustExec(fmt.Sprintf(cRetrieveEventTable, retrieveEventTable))
-	tx.MustExec(fmt.Sprintf(cAssetVisitCountTable, assetVisitCountTable))
 	tx.MustExec(fmt.Sprintf(cReplenishBackupTable, replenishBackupTable))
-	tx.MustExec(fmt.Sprintf(cUserAssetGroupTable, userAssetGroupTable))
 	tx.MustExec(fmt.Sprintf(cAWSDataTable, awsDataTable))
 	tx.MustExec(fmt.Sprintf(cProfitDetailsTable, profitDetailsTable))
 	tx.MustExec(fmt.Sprintf(cCandidateCodeTable, candidateCodeTable))
@@ -122,16 +126,29 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cProjectReplicasTable, projectReplicasTable))
 	tx.MustExec(fmt.Sprintf(cProjectEventTable, projectEventTable))
 	tx.MustExec(fmt.Sprintf(cOnlineCountTable, onlineCountTable))
+	tx.MustExec(fmt.Sprintf(cDeploymentTable, deploymentTable))
+	tx.MustExec(fmt.Sprintf(cProviderTable, providersTable))
+	tx.MustExec(fmt.Sprintf(cPropertiesTable, propertiesTable))
+	tx.MustExec(fmt.Sprintf(cServicesTable, servicesTable))
+	tx.MustExec(fmt.Sprintf(cDomainTable, domainsTable))
 
 	return tx.Commit()
 }
 
-func doExec(d *SQLDB) {
-	_, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD is_test 	  BOOLEAN        DEFAULT false;", candidateCodeTable))
-	if err != nil {
-		log.Errorf("InitTables doExec err:%s", err.Error())
-	}
-	// _, err = d.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN nat_type ;", nodeInfoTable))
+func doExec(d *SQLDB, serverID dtypes.ServerID) {
+	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s CHANGE create_time created_time    DATETIME      NOT NULL", onlineCountTable))
+	// if err != nil {
+	// 	log.Errorf("InitTables doExec err:%s", err.Error())
+	// }
+	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD penalty_profit       DECIMAL(20, 6)  DEFAULT 0;", nodeInfoTable))
+	// if err != nil {
+	// 	log.Errorf("InitTables doExec err:%s", err.Error())
+	// }
+	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN nat_type ;", nodeInfoTable))
+	// if err != nil {
+	// 	log.Errorf("InitTables doExec err:%s", err.Error())
+	// }
+	// _, err = d.db.Exec(fmt.Sprintf("UPDATE  %s AS ni SET ni.penalty_profit = (SELECT ABS(COALESCE(SUM(pd.profit), 0)) FROM profit_details AS pd  WHERE pd.node_id = ni.node_id AND pd.profit_type = 7);", nodeInfoTable))
 	// if err != nil {
 	// 	log.Errorf("InitTables doExec err:%s", err.Error())
 	// }

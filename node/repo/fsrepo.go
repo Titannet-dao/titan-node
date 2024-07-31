@@ -4,13 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
-
 	"github.com/ipfs/go-datastore"
 	fslock "github.com/ipfs/go-fs-lock"
 	logging "github.com/ipfs/go-log/v2"
@@ -18,6 +11,12 @@ import (
 	"github.com/multiformats/go-base32"
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/xerrors"
+	"io"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/Filecoin-Titan/titan/node/config"
 
@@ -36,6 +35,9 @@ const (
 	fsServerID      = "sid"
 	fsPrivateKey    = "private.key"
 	fsNodeID        = "node_id"
+	fsCert          = "cert"
+	fsCAKey         = "titannet.io.key"
+	fsCACrt         = "titannet.io.crt"
 )
 
 func NewRepoTypeFromString(t string) RepoType {
@@ -734,5 +736,33 @@ func (fsr *fsLockedRepo) Delete(name string) error {
 	if err != nil {
 		return xerrors.Errorf("deleting key '%s': %w", name, err)
 	}
+	return nil
+}
+
+func (fsr *fsLockedRepo) GetCertificatePath() string {
+	return fsr.join(filepath.Join(fsCert, fsCACrt))
+}
+
+func (fsr *fsLockedRepo) GetCertificateKeyPath() string {
+	return fsr.join(filepath.Join(fsCert, fsCAKey))
+}
+
+func (fsr *fsLockedRepo) SetCertificate(crt, key []byte) error {
+	if err := fsr.stillValid(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(fsr.join(fsCert), 0755); err != nil {
+		return fmt.Errorf("failed to mk directory: %w", err)
+	}
+
+	if err := os.WriteFile(fsr.GetCertificatePath(), crt, 0o600); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(fsr.GetCertificateKeyPath(), key, 0o600); err != nil {
+		return err
+	}
+
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
@@ -15,7 +16,7 @@ func detectFullConeNAT(ctx context.Context, candidate *node.Node, eURL string) (
 }
 
 // checks if an edge node is behind a Restricted NAT
-func detectRestrictedNAT(ctx context.Context, http3Client *http.Client, eURL string) (bool, error) {
+func detectRestrictedNAT(http3Client *http.Client, eURL string) (bool, error) {
 	resp, err := http3Client.Get(eURL)
 	if err != nil {
 		log.Debugf("detectRestrictedNAT failed: %s", err.Error())
@@ -71,7 +72,7 @@ func analyzeNodeNATType(ctx context.Context, eNode *node.Node, candidateNodes []
 
 	log.Debugf("check candidate %s to edge %s udp connectivity failed", candidate2.NodeID, eURL)
 
-	if isBehindRestrictedNAT, err := detectRestrictedNAT(ctx, http3Client, eURL); err != nil {
+	if isBehindRestrictedNAT, err := detectRestrictedNAT(http3Client, eURL); err != nil {
 		return types.NatTypeUnknown, err
 	} else if isBehindRestrictedNAT {
 		return types.NatTypeRestricted, nil
@@ -81,7 +82,10 @@ func analyzeNodeNATType(ctx context.Context, eNode *node.Node, candidateNodes []
 }
 
 // determineNATType detect the NAT type of an edge node
-func determineNodeNATType(ctx context.Context, edgeNode *node.Node, candidateNodes []*node.Node, http3Client *http.Client) string {
+func determineNodeNATType(edgeNode *node.Node, candidateNodes []*node.Node, http3Client *http.Client) string {
+	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
+	defer cancel()
+
 	natType, err := analyzeNodeNATType(ctx, edgeNode, candidateNodes, http3Client)
 	if err != nil {
 		log.Warnf("determineNATType, %s error: %s", edgeNode.NodeID, err.Error())

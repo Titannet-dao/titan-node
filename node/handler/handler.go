@@ -53,7 +53,8 @@ func GetRemoteAddr(ctx context.Context) string {
 // GetNodeID returns the node ID of the client
 func GetNodeID(ctx context.Context) string {
 	// check role
-	if !api.HasPerm(ctx, api.RoleDefault, api.RoleEdge) && !api.HasPerm(ctx, api.RoleDefault, api.RoleCandidate) {
+	if !api.HasPerm(ctx, api.RoleDefault, api.RoleEdge) && !api.HasPerm(ctx, api.RoleDefault, api.RoleCandidate) &&
+		!api.HasPerm(ctx, api.RoleDefault, api.RoleL5) {
 		log.Warnf("client is not edge and candidate")
 		return ""
 	}

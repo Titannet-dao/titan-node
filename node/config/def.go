@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/docker/go-units"
 )
 
 const (
@@ -88,7 +90,7 @@ func DefaultCandidateCfg() *CandidateCfg {
 		TCPSrvAddr:          "0.0.0.0:9000",
 		IPFSAPIURL:          "http://127.0.0.1:5001",
 		ValidateDuration:    10,
-		MaxSizeOfUploadFile: 104857600, // 100 MB
+		MaxSizeOfUploadFile: 100 * units.GiB, // 100 GiB
 
 		Puller: Puller{
 			PullBlockTimeout:  180,
@@ -127,7 +129,12 @@ func DefaultCandidateCfg() *CandidateCfg {
 		MetadataPath: "",
 		AssetsPaths:  []string{},
 		WebRedirect:  "https://storage.titannet.io/#/redirect",
+		AcmeUrl:      "https://api-test1.container1.titannet.io/api/v2/acme",
 		IsPrivate:    false,
+		ProviderConfig: ProviderConfig{
+			KubeConfigPath:   "/etc/rancher/k3s/k3s.yaml",
+			IngressClassName: "nginx",
+		},
 	}
 }
 
@@ -149,33 +156,29 @@ func DefaultLocatorCfg() *LocatorCfg {
 // DefaultSchedulerCfg returns the default scheduler config
 func DefaultSchedulerCfg() *SchedulerCfg {
 	return &SchedulerCfg{
-		ExternalURL:             "https://localhost:3456/rpc/v0",
-		ListenAddress:           "0.0.0.0:3456",
-		InsecureSkipVerify:      true,
-		CertificatePath:         "",
-		PrivateKeyPath:          "",
-		CaCertificatePath:       "",
-		GeoDBPath:               "./city.mmdb",
-		AreaID:                  "Asia-China-Guangdong-Shenzhen",
-		DatabaseAddress:         "mysql_user:mysql_password@tcp(127.0.0.1:3306)/titan",
-		EnableValidation:        true,
-		EtcdAddresses:           []string{},
-		CandidateReplicas:       1,
-		ValidatorRatio:          1,
-		ValidatorBaseBwDn:       100,
-		ValidationProfit:        0,
-		WorkloadProfit:          0,
-		ElectionCycle:           1,
-		LotusRPCAddress:         "http://api.node.glif.io/rpc/v0",
-		LotusToken:              "",
-		EdgeDownloadRatio:       0.7,
-		AssetPullTaskLimit:      10,
-		UploadAssetReplicaCount: 20,
-		UploadAssetExpiration:   150,
-		IPLimit:                 5,
-		FillAssetEdgeCount:      500,
-		L2ValidatorCount:        0,
-		StorageCandidates:       []string{},
+		ExternalURL:        "https://localhost:3456/rpc/v0",
+		ListenAddress:      "0.0.0.0:3456",
+		InsecureSkipVerify: true,
+		CertificatePath:    "",
+		PrivateKeyPath:     "",
+		CaCertificatePath:  "",
+		GeoDBPath:          "./city.mmdb",
+		AreaID:             "Asia-China-Guangdong-Shenzhen",
+		DatabaseAddress:    "mysql_user:mysql_password@tcp(127.0.0.1:3306)/titan",
+		EnableValidation:   true,
+		EtcdAddresses:      []string{},
+		CandidateReplicas:  9,
+		ValidatorRatio:     1,
+		ValidatorBaseBwDn:  100,
+		ValidationProfit:   0,
+		WorkloadProfit:     0,
+		ElectionCycle:      1,
+		LotusRPCAddress:    "http://api.node.glif.io/rpc/v0",
+		LotusToken:         "",
+		EdgeDownloadRatio:  0.7,
+		AssetPullTaskLimit: 10,
+		IPLimit:            5,
+		L2ValidatorCount:   0,
 		NodeScoreLevel: map[string][]int{
 			"A": {90, 100},
 			"B": {50, 89},
@@ -198,7 +201,7 @@ func DefaultSchedulerCfg() *SchedulerCfg {
 		AndroidSymbol:            "+android-",
 		IOSSymbol:                "+ios-",
 		WindowsSymbol:            "+windows-",
-		MacosSymbol:              "+macos-",
+		MacosSymbol:              "+mac-",
 	}
 }
 

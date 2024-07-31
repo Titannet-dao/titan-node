@@ -1,4 +1,4 @@
-package tunnel
+package tunserver
 
 import "strings"
 
@@ -20,7 +20,7 @@ func isNetErrConnectionResetByPeer(err error) bool {
 	return false
 }
 
-func isNetErrUseOfCloseNetworkConnection(err error) bool {
+func IsNetErrUseOfCloseNetworkConnection(err error) bool {
 	if strings.Contains(err.Error(), netErrUseOfCloseNetworkConnection) {
 		return true
 	}

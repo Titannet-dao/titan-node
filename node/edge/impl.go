@@ -12,6 +12,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/device"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
+	tunclient "github.com/Filecoin-Titan/titan/node/tunnel/client"
 	validate "github.com/Filecoin-Titan/titan/node/validation"
 	"github.com/Filecoin-Titan/titan/node/workerd"
 	logging "github.com/ipfs/go-log/v2"
@@ -37,6 +38,9 @@ type Edge struct {
 
 	RestartChan     dtypes.RestartChan
 	RestartDoneChan dtypes.RestartDoneChan
+
+	*tunclient.Services
+	*TunManager
 }
 
 // WaitQuiet waits for the edge device to become idle.

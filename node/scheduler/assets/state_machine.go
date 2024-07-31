@@ -33,6 +33,11 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 		on(SelectFailed{}, SeedFailed),
 		on(SkipStep{}, CandidatesSelect),
 	),
+	SeedSync: planOne(
+		on(PullRequestSent{}, SeedUploading),
+		on(SelectFailed{}, SyncFailed),
+		on(SkipStep{}, CandidatesSelect),
+	),
 	SeedPulling: planOne(
 		on(PullSucceed{}, CandidatesSelect),
 		on(PullFailed{}, SeedFailed),
@@ -77,6 +82,7 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 	EdgesFailed: planOne(
 		on(AssetRePull{}, EdgesSelect),
 	),
+	SyncFailed:   planOne(),
 	UploadFailed: planOne(),
 	Remove:       planOne(),
 	Stop:         planOne(),
@@ -110,6 +116,8 @@ func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (fu
 	// Happy path
 	case SeedSelect:
 		return m.handleSeedSelect, processed, nil
+	case SeedSync:
+		return m.handleSeedSync, processed, nil
 	case SeedPulling:
 		return m.handleSeedPulling, processed, nil
 	case UploadInit:
@@ -204,7 +212,7 @@ func apply(mut mutator) func() (mutator, func(*AssetPullingInfo) (bool, error)) 
 }
 
 // initStateMachines init all asset state machines
-func (m *Manager) initStateMachines( ) error {
+func (m *Manager) initStateMachines() error {
 	// initialization
 	defer m.stateMachineWait.Done()
 

@@ -8,6 +8,7 @@ import (
 	"github.com/Filecoin-Titan/titan/api/terrors"
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node/edge/clib"
+	"github.com/Filecoin-Titan/titan/region"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	"golang.org/x/xerrors"
 )
@@ -18,6 +19,7 @@ type heartbeatParams struct {
 	schedulerAPI api.Scheduler
 	nodeID       string
 	daemonSwitch *clib.DaemonSwitch
+	geoInfo      *region.GeoInfo
 }
 
 func heartbeat(ctx context.Context, hbp heartbeatParams) error {
@@ -58,7 +60,7 @@ func heartbeat(ctx context.Context, hbp heartbeatParams) error {
 			// basically when ctx.Done or hbp.daemonSwitch.StopChan receive signal, break the heartbeat loop
 			select {
 			case <-readyCh:
-				opts := &types.ConnectOptions{Token: token}
+				opts := &types.ConnectOptions{Token: token, GeoInfo: hbp.geoInfo}
 				if err := hbp.schedulerAPI.EdgeConnect(ctx, opts); err != nil {
 					log.Errorf("Registering edge failed: %s", err.Error())
 					hbp.daemonSwitch.ErrMsg = err.Error()

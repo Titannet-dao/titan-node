@@ -16,16 +16,6 @@ import (
 
 var log = logging.Logger("workload")
 
-const (
-	workloadInterval = 24 * time.Hour
-	confirmationTime = 7 * 24 * time.Hour
-
-	// Process 500 pieces of workload result data at a time
-	vWorkloadLimit = 500
-
-	handlerWorkers = 50
-)
-
 // Manager node workload
 type Manager struct {
 	config        dtypes.GetSchedulerConfigFunc
@@ -117,8 +107,26 @@ func (m *Manager) handleClientWorkload(data *types.WorkloadRecordReq, nodeID str
 	limit := int64(float64(record.AssetSize))
 
 	for _, dw := range data.Workloads {
-		if dw.SourceID == types.DownloadSourceAWS.String() || dw.SourceID == types.DownloadSourceIPFS.String() || dw.SourceID == types.DownloadSourceSDK.String() {
+		// update node bandwidths
+		speed := int64((float64(dw.DownloadSize) / float64(dw.CostTime)) * 1000)
+		if speed > 0 {
+			// m.nodeMgr.UpdateNodeBandwidths(dw.SourceID, 0, speed)
+			m.nodeMgr.UpdateNodeBandwidths(record.ClientID, speed, 0)
+		}
+
+		// Only edge can get this reward
+		node := m.nodeMgr.GetEdgeNode(dw.SourceID)
+		if node == nil {
 			continue
+		}
+		node.UploadTraffic += dw.DownloadSize
+
+		dInfo := m.nodeMgr.GetNodeBePullProfitDetails(node, float64(dw.DownloadSize), "")
+		if dInfo != nil {
+			dInfo.CID = record.AssetCID
+			dInfo.Note = fmt.Sprintf("%s,%s", dInfo.Note, record.WorkloadID)
+
+			detailsList = append(detailsList, dInfo)
 		}
 
 		if dw.DownloadSize > limit {
@@ -135,27 +143,6 @@ func (m *Manager) handleClientWorkload(data *types.WorkloadRecordReq, nodeID str
 			EndTime:     time.Now().Unix(),
 		}
 		eventList = append(eventList, retrieveEvent)
-
-		// Only edge can get this reward
-		node := m.nodeMgr.GetEdgeNode(dw.SourceID)
-		if node != nil {
-			dInfo := m.nodeMgr.GetNodeBePullProfitDetails(node, float64(dw.DownloadSize), "")
-			if dInfo != nil {
-				dInfo.CID = retrieveEvent.CID
-				dInfo.Note = fmt.Sprintf("%s,%s", dInfo.Note, record.WorkloadID)
-
-				detailsList = append(detailsList, dInfo)
-			}
-
-			node.UploadTraffic += dw.DownloadSize
-		}
-
-		// update node bandwidths
-		speed := int64((float64(dw.DownloadSize) / float64(dw.CostTime)) * 1000)
-		if speed > 0 {
-			// m.nodeMgr.UpdateNodeBandwidths(dw.SourceID, 0, speed)
-			m.nodeMgr.UpdateNodeBandwidths(record.ClientID, speed, 0)
-		}
 	}
 
 	// Retrieve Event

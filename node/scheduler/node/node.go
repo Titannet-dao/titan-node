@@ -28,24 +28,54 @@ type Node struct {
 	// NodeID string
 	*API
 	jsonrpc.ClientCloser
-	*types.NodeInfo
-	token string
+	// *types.NodeInfo
 
-	selectWeights              []int // The select weights assigned by the scheduler to each online node
-	numberOfIPChanges          int64
-	resetNumberOfIPChangesTime time.Time
+	Token string
+
+	selectWeights             []int // The select weights assigned by the scheduler to each online node
+	countOfIPChanges          int64
+	resetCountOfIPChangesTime time.Time
 
 	// node info
 	PublicKey          *rsa.PublicKey
 	TCPPort            int
 	ExternalURL        string
 	IsPrivateMinioOnly bool
-	IsStorageOnly      bool
+	IsStorageNode      bool
 
 	OnlineRate float64
 
-	KeepaliveCount   int
+	// Increase the count every 5 seconds
+	// KeepaliveCount   int
 	LastValidateTime int64
+
+	types.NodeDynamicInfo
+	IsTestNode      bool
+	Type            types.NodeType
+	ExternalIP      string
+	CPUUsage        float64
+	MemoryUsage     float64
+	NATType         string
+	ClientType      types.NodeClientType
+	BackProjectTime int64
+	RemoteAddr      string
+	Level           int
+	IncomeIncr      float64 // Base points increase every half hour (30 minute)
+	// GeoInfo         *region.GeoInfo
+	Mx     float64
+	AreaID string
+	// InternalIP      string
+	// Status          types.NodeStatus
+
+	NetFlowUp      int64
+	NetFlowDown    int64
+	DiskSpace      float64
+	WSServerID     string
+	PortMapping    string
+	DeactivateTime int64
+	// FirstTime      time.Time
+	// Memory         float64
+	// CPUCores       int
 }
 
 // API represents the node API
@@ -57,10 +87,13 @@ type API struct {
 	api.DataSync
 	api.Asset
 	api.Workerd
+	api.ProviderAPI
 	WaitQuiet func(ctx context.Context) error
 	// edge api
 	// ExternalServiceAddress func(ctx context.Context, candidateURL string) (string, error)
 	UserNATPunch func(ctx context.Context, sourceURL string, req *types.NatPunchReq) error
+	CreateTunnel func(ctx context.Context, req *types.CreateTunnelReq) error
+
 	// candidate api
 	GetBlocksOfAsset        func(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error)
 	CheckNetworkConnectable func(ctx context.Context, network, targetURL string) (bool, error)
@@ -70,7 +103,7 @@ type API struct {
 // New creates a new node
 func New() *Node {
 	node := &Node{
-		resetNumberOfIPChangesTime: time.Now(),
+		resetCountOfIPChangesTime: time.Now(),
 	}
 
 	return node
@@ -87,6 +120,7 @@ func APIFromEdge(api api.Edge) *API {
 		WaitQuiet:    api.WaitQuiet,
 		UserNATPunch: api.UserNATPunch,
 		Workerd:      api,
+		CreateTunnel: api.CreateTunnel,
 	}
 	return a
 }
@@ -99,6 +133,7 @@ func APIFromCandidate(api api.Candidate) *API {
 		Validation:              api,
 		DataSync:                api,
 		Asset:                   api,
+		ProviderAPI:             api,
 		WaitQuiet:               api.WaitQuiet,
 		GetBlocksOfAsset:        api.GetBlocksWithAssetCID,
 		CheckNetworkConnectable: api.CheckNetworkConnectable,
@@ -107,16 +142,46 @@ func APIFromCandidate(api api.Candidate) *API {
 	return a
 }
 
-func (n *Node) SetNumberOfIPChanges(count int64) {
-	n.numberOfIPChanges = count
+func (n *Node) InitInfo(nodeInfo *types.NodeInfo) {
+	n.NodeDynamicInfo = nodeInfo.NodeDynamicInfo
+
+	n.NetFlowUp = nodeInfo.NetFlowUp
+	n.NetFlowDown = nodeInfo.NetFlowDown
+	n.DiskSpace = nodeInfo.DiskSpace
+	n.WSServerID = nodeInfo.WSServerID
+	// n.FirstTime = nodeInfo.FirstTime
+	n.PortMapping = nodeInfo.PortMapping
+	n.DeactivateTime = nodeInfo.DeactivateTime
+	// n.Memory = nodeInfo.Memory
+	// n.CPUCores = nodeInfo.CPUCores
+
+	n.IsTestNode = nodeInfo.IsTestNode
+	n.Type = nodeInfo.Type
+	n.ExternalIP = nodeInfo.ExternalIP
+	// n.InternalIP = nodeInfo.InternalIP
+	n.MemoryUsage = nodeInfo.MemoryUsage
+	n.AreaID = nodeInfo.AreaID
+	n.NATType = nodeInfo.NATType
+	n.ClientType = nodeInfo.ClientType
+	n.BackProjectTime = nodeInfo.BackProjectTime
+	n.RemoteAddr = nodeInfo.RemoteAddr
+	n.Level = nodeInfo.Level
+	n.IncomeIncr = nodeInfo.IncomeIncr
+	n.Mx = nodeInfo.Mx
+}
+
+// SetCountOfIPChanges node change ip count
+func (n *Node) SetCountOfIPChanges(count int64) {
+	n.countOfIPChanges = count
 
 	if count == 0 {
-		n.resetNumberOfIPChangesTime = time.Now()
+		n.resetCountOfIPChangesTime = time.Now()
 	}
 }
 
+// GetNumberOfIPChanges node change ip count
 func (n *Node) GetNumberOfIPChanges() (int64, time.Time) {
-	return n.numberOfIPChanges, n.resetNumberOfIPChangesTime
+	return n.countOfIPChanges, n.resetCountOfIPChangesTime
 }
 
 // ConnectRPC connects to the node RPC
@@ -129,7 +194,7 @@ func (n *Node) ConnectRPC(transport *quic.Transport, addr string, nodeType types
 	rpcURL := fmt.Sprintf("https://%s/rpc/v0", addr)
 
 	headers := http.Header{}
-	headers.Add("Authorization", "Bearer "+n.token)
+	headers.Add("Authorization", "Bearer "+n.Token)
 
 	if nodeType == types.NodeEdge {
 		// Connect to node
@@ -151,6 +216,18 @@ func (n *Node) ConnectRPC(transport *quic.Transport, addr string, nodeType types
 		}
 
 		n.API = APIFromCandidate(candidateAPI)
+		n.ClientCloser = closer
+		return nil
+	}
+
+	if nodeType == types.NodeL5 {
+		// Connect to node
+		l5API, closer, err := client.NewL5(context.Background(), rpcURL, headers, jsonrpc.WithHTTPClient(httpClient))
+		if err != nil {
+			return xerrors.Errorf("NewCandidate err:%s,url:%s", err.Error(), rpcURL)
+		}
+
+		n.API = &API{Common: l5API, WaitQuiet: l5API.WaitQuiet}
 		n.ClientCloser = closer
 		return nil
 	}
@@ -178,16 +255,6 @@ func (n *Node) SelectWeights() []int {
 	return n.selectWeights
 }
 
-// SetToken sets the token of the node
-func (n *Node) SetToken(t string) {
-	n.token = t
-}
-
-// GetToken get the token of the node
-func (n *Node) GetToken() string {
-	return n.token
-}
-
 // TCPAddr returns the tcp address of the node
 func (n *Node) TCPAddr() string {
 	index := strings.Index(n.RemoteAddr, ":")
@@ -200,6 +267,7 @@ func (n *Node) RPCURL() string {
 	return fmt.Sprintf("https://%s/rpc/v0", n.RemoteAddr)
 }
 
+// WsURL returns the ws url of the node
 func (n *Node) WsURL() string {
 	wsURL, err := transformURL(n.ExternalURL)
 	if err != nil {
@@ -254,8 +322,12 @@ func (n *Node) SetLastRequestTime(t time.Time) {
 	n.LastSeen = t
 }
 
-// Token returns the token of the node
-func (n *Node) Token(cid, clientID string, titanRsa *titanrsa.Rsa, privateKey *rsa.PrivateKey) (*types.Token, *types.TokenPayload, error) {
+// EncryptToken returns the token of the node
+func (n *Node) EncryptToken(cid, clientID string, titanRsa *titanrsa.Rsa, privateKey *rsa.PrivateKey) (*types.Token, error) {
+	if n == nil {
+		return nil, xerrors.Errorf("node is nil")
+	}
+
 	tkPayload := &types.TokenPayload{
 		ID:          uuid.NewString(),
 		NodeID:      n.NodeID,
@@ -267,15 +339,15 @@ func (n *Node) Token(cid, clientID string, titanRsa *titanrsa.Rsa, privateKey *r
 
 	b, err := n.encryptTokenPayload(tkPayload, n.PublicKey, titanRsa)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("%s encryptTokenPayload err:%s", n.NodeID, err.Error())
+		return nil, xerrors.Errorf("%s encryptTokenPayload err:%s", n.NodeID, err.Error())
 	}
 
 	sign, err := titanRsa.Sign(privateKey, b)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("%s Sign err:%s", n.NodeID, err.Error())
+		return nil, xerrors.Errorf("%s Sign err:%s", n.NodeID, err.Error())
 	}
 
-	return &types.Token{ID: tkPayload.ID, CipherText: hex.EncodeToString(b), Sign: hex.EncodeToString(sign)}, tkPayload, nil
+	return &types.Token{ID: tkPayload.ID, CipherText: hex.EncodeToString(b), Sign: hex.EncodeToString(sign)}, nil
 }
 
 // encryptTokenPayload encrypts a token payload object using the given public key and RSA instance.
@@ -290,26 +362,7 @@ func (n *Node) encryptTokenPayload(tkPayload *types.TokenPayload, publicKey *rsa
 	return rsa.Encrypt(buffer.Bytes(), publicKey)
 }
 
-func bToGB(b float64) float64 {
-	return b / 1024 / 1024 / 1024
-}
-
-func bToMB(b float64) float64 {
-	return b / 1024 / 1024
-}
-
-func bToKB(b float64) float64 {
-	return b / 1024
-}
-
-func min(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-
-	return b
-}
-
+// DiskEnough Is there enough storage on the compute node
 func (n *Node) DiskEnough(size float64) bool {
 	residual := ((100 - n.DiskUsage) / 100) * n.DiskSpace
 	if residual <= size {
@@ -324,6 +377,7 @@ func (n *Node) DiskEnough(size float64) bool {
 	return true
 }
 
+// NetFlowUpExcess  Whether the upstream traffic exceeds the limit
 func (n *Node) NetFlowUpExcess(size float64) bool {
 	if n.NetFlowUp <= 0 {
 		return false
@@ -336,6 +390,7 @@ func (n *Node) NetFlowUpExcess(size float64) bool {
 	return true
 }
 
+// NetFlowDownExcess  Whether the downstream traffic exceeds the limit
 func (n *Node) NetFlowDownExcess(size float64) bool {
 	if n.NetFlowDown <= 0 {
 		return false

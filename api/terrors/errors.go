@@ -33,6 +33,8 @@ const (
 	NodeOffline        // node offline
 
 	GenerateAccessToken // generate access token error
+	HashNotFound        // asset hash not found
+	AssetNotFound       // asset not found
 
 	Success = 0
 	Unknown = -1
