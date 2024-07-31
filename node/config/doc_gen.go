@@ -70,6 +70,18 @@ var Doc = map[string][]DocField{
 
 			Comment: ``,
 		},
+		{
+			Name: "AcmeUrl",
+			Type: "string",
+
+			Comment: `AcmeUrl automatically issue certificates for L1 node`,
+		},
+		{
+			Name: "IsPrivate",
+			Type: "bool",
+
+			Comment: `Let the scheduler know that this node does not do tasks`,
+		},
 	},
 	"EdgeCfg": []DocField{
 		{
@@ -235,12 +247,6 @@ be used if InsecureSkipVerify is false`,
 			Comment: `etcd server addresses`,
 		},
 		{
-			Name: "DefaultAreaID",
-			Type: "string",
-
-			Comment: ``,
-		},
-		{
 			Name: "DNSServerAddress",
 			Type: "string",
 
@@ -253,7 +259,7 @@ be used if InsecureSkipVerify is false`,
 			Comment: ``,
 		},
 		{
-			Name: "LoadBalanceExcludeArea",
+			Name: "DefaultAreas",
 			Type: "[]string",
 
 			Comment: ``,
@@ -361,6 +367,12 @@ be used if InsecureSkipVerify is false`,
 			Comment: `database address`,
 		},
 		{
+			Name: "GeoDBPath",
+			Type: "string",
+
+			Comment: `geodb path`,
+		},
+		{
 			Name: "AreaID",
 			Type: "string",
 
@@ -438,7 +450,7 @@ be used if InsecureSkipVerify is true`,
 			Name: "ElectionCycle",
 			Type: "int",
 
-			Comment: `ElectionCycle cycle (Unit:Hour)`,
+			Comment: `ElectionCycle cycle (Unit:Day)`,
 		},
 		{
 			Name: "NodeScoreLevel",
@@ -548,20 +560,8 @@ indicating how many select weight this level can get (the more select weight, th
 			Comment: ``,
 		},
 		{
-			Name: "FillAssetEdgeCount",
-			Type: "int64",
-
-			Comment: ``,
-		},
-		{
 			Name: "StorageCandidates",
 			Type: "[]string",
-
-			Comment: ``,
-		},
-		{
-			Name: "TestCandidates",
-			Type: "map[string]int",
 
 			Comment: ``,
 		},
@@ -579,6 +579,18 @@ indicating how many select weight this level can get (the more select weight, th
 		},
 		{
 			Name: "IOSSymbol",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "WindowsSymbol",
+			Type: "string",
+
+			Comment: ``,
+		},
+		{
+			Name: "MacosSymbol",
 			Type: "string",
 
 			Comment: ``,

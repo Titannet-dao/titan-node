@@ -25,8 +25,6 @@ type weightManager struct {
 	edgeMax            int            // Edge select weight , Distribute from 1
 	distributedEdges   map[int]string // Already allocated edge select weights
 	undistributedEdges map[int]string // Undistributed edge select weights
-
-	levelSelectWeight map[string]int
 }
 
 func newWeightManager(config dtypes.GetSchedulerConfigFunc) *weightManager {
@@ -43,8 +41,6 @@ func newWeightManager(config dtypes.GetSchedulerConfigFunc) *weightManager {
 		undistributedEdges:      make(map[int]string),
 		config:                  config,
 	}
-
-	manager.initWeightScale()
 
 	return manager
 }
@@ -160,22 +156,6 @@ func (wm *weightManager) cleanWeights() {
 	wm.edgeMax = 0
 }
 
-func (wm *weightManager) initWeightScale() {
-	wm.levelSelectWeight = map[string]int{}
-	cfg, err := wm.config()
-	if err != nil {
-		log.Errorf("get config err:%s", err.Error())
-		return
-	}
-
-	wm.levelSelectWeight = cfg.LevelSelectWeight
-}
-
-func (wm *weightManager) getWeightNum(scoreLevel string) int {
-	num, exist := wm.levelSelectWeight[scoreLevel]
-	if exist {
-		return num
-	}
-
-	return 1
+func (wm *weightManager) getWeightNum(scoreLevel int) int {
+	return levelSelectWeight[scoreLevel]
 }

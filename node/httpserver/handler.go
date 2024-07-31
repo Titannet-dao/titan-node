@@ -23,6 +23,7 @@ const (
 	// upload files
 	reqUploadv2           = "/uploadv2"
 	reqRpc                = "/rpc"
+	reqLease              = "/lease"
 	immutableCacheControl = "public, max-age=29030400, immutable"
 	domainFields          = 4
 )
@@ -70,6 +71,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(r.URL.Path, reqIpfs) &&
 		!strings.Contains(r.URL.Path, reqUpload) &&
 		!strings.Contains(r.URL.Path, reqRpc) &&
+		!strings.Contains(r.URL.Path, reqLease) &&
 		!strings.Contains(r.URL.Path, reqUploadv2) {
 		resetPath(r)
 	}
@@ -83,6 +85,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.hs.uploadHandler(w, r)
 	case reqUploadv2:
 		h.hs.uploadv2Handler(w, r)
+	case reqLease:
+		h.hs.LeaseShellHandler(w, r)
 	default:
 		h.handler.ServeHTTP(w, r)
 	}

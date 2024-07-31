@@ -21,4 +21,7 @@ type Edge interface {
 	GetEdgeOnlineStateFromScheduler(ctx context.Context) (bool, error) //perm:default
 	// Restart trigger graceful restart of edge node
 	Restart(ctx context.Context) error // perm:admin
+
+	// CreateTunnel create a tunnel for workerd communication
+	CreateTunnel(ctx context.Context, req *types.CreateTunnelReq) error // perm:admin
 }

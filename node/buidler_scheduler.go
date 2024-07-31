@@ -3,6 +3,7 @@ package node
 import (
 	"crypto/rsa"
 	"errors"
+	"github.com/Filecoin-Titan/titan/node/scheduler/container"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/lib/etcdcli"
@@ -86,5 +87,6 @@ func ConfigScheduler(c interface{}) Option {
 		// func() (*rsa.PrivateKey, error) {
 		// return rsa.GenerateKey(rand.Reader, units.KiB) //nolint:gosec   // need smaller key
 		// }),
+		Override(new(*container.Manager), modules.NewContainerManager),
 	)
 }

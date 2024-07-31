@@ -45,16 +45,18 @@ func (evt PullAssetFatalError) applyGlobal(state *AssetPullingInfo) bool {
 type AssetForceState struct {
 	State AssetState
 	// Requester  string
-	Details    string
-	SeedNodeID string
+	Details        string
+	SeedNodeIDs    []string
+	DownloadSource *SourceDownloadInfo
 }
 
 func (evt AssetForceState) applyGlobal(state *AssetPullingInfo) bool {
 	state.State = evt.State
 	// state.Requester = evt.Requester
 	state.Details = evt.Details
-	state.SeedNodeID = evt.SeedNodeID
+	state.SeedNodeIDs = evt.SeedNodeIDs
 	state.RetryCount = 0
+	state.DownloadSource = evt.DownloadSource
 	return true
 }
 
@@ -73,6 +75,7 @@ func (evt InfoUpdate) applyGlobal(state *AssetPullingInfo) bool {
 	return true
 }
 
+// Ignore Ignore
 func (evt InfoUpdate) Ignore() {
 }
 
@@ -89,6 +92,7 @@ func (evt PulledResult) apply(state *AssetPullingInfo) {
 	}
 }
 
+// Ignore Ignore
 func (evt PulledResult) Ignore() {
 }
 
@@ -105,6 +109,7 @@ func (evt AssetRePull) apply(state *AssetPullingInfo) {
 	state.RetryCount++
 }
 
+// Ignore Ignore
 func (evt AssetRePull) Ignore() {
 }
 
@@ -121,6 +126,7 @@ func (evt PullSucceed) apply(state *AssetPullingInfo) {
 	}
 }
 
+// Ignore Ignore
 func (evt PullSucceed) Ignore() {
 }
 
@@ -139,6 +145,7 @@ func (evt PullFailed) apply(state *AssetPullingInfo) {
 	state.RetryCount = 1
 }
 
+// Ignore Ignore
 func (evt PullFailed) Ignore() {
 }
 

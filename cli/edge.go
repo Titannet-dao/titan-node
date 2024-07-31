@@ -522,7 +522,10 @@ func getEdgeAPI(ctx *cli.Context) (api.Edge, jsonrpc.ClientCloser, error) {
 		return nil, nil, err
 	}
 
-	return client.NewEdge(ctx.Context, addr, headers)
+	addr = strings.Replace(addr, "ws", "https", 1)
+	addr = strings.Replace(addr, "0.0.0.0", "localhost", 1)
+
+	return client.NewEdge(ctx.Context, addr, headers, jsonrpc.WithHTTPClient(client.NewHTTP3Client()))
 }
 
 var configCmds = &cli.Command{

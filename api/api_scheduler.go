@@ -16,7 +16,7 @@ type AssetAPI interface {
 	// PullAsset Pull an asset based on the provided PullAssetReq structure.
 	PullAsset(ctx context.Context, info *types.PullAssetReq) error //perm:web,admin
 	// RemoveAssetRecord removes the asset record with the specified CID from the scheduler
-	RemoveAssetRecord(ctx context.Context, cid string) error //perm:admin
+	RemoveAssetRecord(ctx context.Context, cid string) error //perm:admin,web
 	// StopAssetRecord stop asset
 	StopAssetRecord(ctx context.Context, cids []string) error //perm:admin
 	// RemoveAssetReplica deletes an asset replica with the specified CID and node from the scheduler
@@ -47,16 +47,20 @@ type AssetAPI interface {
 	GetReplicaEvents(ctx context.Context, start, end time.Time, limit, offset int) (*types.ListReplicaEventRsp, error) //perm:web,admin
 	// CreateAsset creates an asset with car CID, car name, and car size.
 	CreateAsset(ctx context.Context, req *types.CreateAssetReq) (*types.UploadInfo, error) //perm:web,admin,user
-	// ListAssets lists the assets of the user.
-	ListAssets(ctx context.Context, userID string, limit, offset, groupID int) (*types.ListAssetRecordRsp, error) //perm:web,admin,user
-	// DeleteAsset deletes the asset of the user.
-	DeleteAsset(ctx context.Context, userID, assetCID string) error //perm:web,admin,user
+	// CreateSyncAsset Synchronizing assets from other schedulers
+	CreateSyncAsset(ctx context.Context, req *types.CreateSyncAssetReq) error //perm:web,admin,user
+	// GenerateTokenForDownloadSource Generate Token For Download Source
+	GenerateTokenForDownloadSource(ctx context.Context, nodeID string, cid string) (*types.SourceDownloadInfo, error) //perm:web,admin,user
+	// // ListAssets lists the assets of the user.
+	// ListAssets(ctx context.Context, userID string, limit, offset, groupID int) (*types.ListAssetRecordRsp, error) //perm:web,admin,user
+	// // DeleteAsset deletes the asset of the user.
+	// DeleteAsset(ctx context.Context, userID, assetCID string) error //perm:web,admin,user
 	// ShareAssets shares the assets of the user.
-	ShareAssets(ctx context.Context, userID string, assetCID []string) (map[string]string, error) //perm:web,admin,user
-	// UpdateShareStatus update share status of the user asset
-	UpdateShareStatus(ctx context.Context, userID, assetCID string) error //perm:web,admin
-	// GetAssetStatus retrieves a asset status
-	GetAssetStatus(ctx context.Context, userID, assetCID string) (*types.AssetStatus, error) //perm:web,admin
+	ShareAssets(ctx context.Context, userID string, assetCID []string) (map[string][]string, error) //perm:web,admin,user
+	// // UpdateShareStatus update share status of the user asset
+	// UpdateShareStatus(ctx context.Context, userID, assetCID string) error //perm:web,admin
+	// // GetAssetStatus retrieves a asset status
+	// GetAssetStatus(ctx context.Context, userID, assetCID string) (*types.AssetStatus, error) //perm:web,admin
 	// MinioUploadFileEvent the event of minio upload file
 	MinioUploadFileEvent(ctx context.Context, event *types.MinioUploadFileEvent) error //perm:candidate
 	// AddAWSData add aws resource information
@@ -98,6 +102,8 @@ type NodeAPI interface {
 	EdgeConnect(ctx context.Context, opts *types.ConnectOptions) error //perm:edge
 	// CandidateConnect candidate node login to the scheduler
 	CandidateConnect(ctx context.Context, opts *types.ConnectOptions) error //perm:candidate
+	// L5Connect l5 node login to the scheduler
+	L5Connect(ctx context.Context, opts *types.ConnectOptions) error //perm:l5
 	// GetExternalAddress retrieves the external address of the caller.
 	GetExternalAddress(ctx context.Context) (string, error) //perm:default
 	// NodeLogin generates an authentication token for a node with the specified node ID and signature
@@ -127,7 +133,7 @@ type NodeAPI interface {
 	// NodeKeepalive
 	NodeKeepalive(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate
 	// NodeKeepaliveV2 fix the problem of NodeKeepalive, Maintaining old device connections
-	NodeKeepaliveV2(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate
+	NodeKeepaliveV2(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate,l5
 	// RequestActivationCodes Get the device's encrypted activation code
 	RequestActivationCodes(ctx context.Context, nodeType types.NodeType, count int) ([]*types.NodeActivation, error) //perm:web,admin
 	// VerifyTokenWithLimitCount verify token in limit count
@@ -166,65 +172,68 @@ type NodeAPI interface {
 	GetNextFreeTime(ctx context.Context, nodeID string) (int64, error) //perm:edge,candidate,admin
 	// UpdateNodeDynamicInfo
 	UpdateNodeDynamicInfo(ctx context.Context, info *types.NodeDynamicInfo) error //perm:admin
-	// GenerateCandidateCode
-	GenerateCandidateCode(ctx context.Context, count int, nodeType types.NodeType, isTest bool) ([]string, error) //perm:admin
-	// CandidateCodeExist
-	CandidateCodeExist(ctx context.Context, code string) (bool, error) //perm:admin,web,locator
-	// GetCandidateCodeInfos
-	GetCandidateCodeInfos(ctx context.Context, nodeID, code string) ([]*types.CandidateCodeInfo, error) //perm:admin,web,locator
 	// ReDetermineNodeNATType
 	ReDetermineNodeNATType(ctx context.Context, nodeID string) error //perm:admin,web,locator
 	// AssignTunserverURL
 	AssignTunserverURL(ctx context.Context) (*types.TunserverRsp, error) //perm:edge
 	// UpdateTunserverURL
 	UpdateTunserverURL(ctx context.Context, nodeID string) error //perm:edge
+	// SetTunserverURL
+	SetTunserverURL(ctx context.Context, nodeID, wsNodeID string) error //perm:admin,web,locator
+	// ReimburseNodeProfit
+	ReimburseNodeProfit(ctx context.Context, nodeID, note string, profit float64) error //perm:admin,web,locator
+	// GetTunserverURLFromUser
+	GetTunserverURLFromUser(ctx context.Context, req *types.TunserverReq) (*types.TunserverRsp, error) //perm:admin,web,locator
+	// CreateTunnel create tunnel for workerd communication
+	CreateTunnel(ctx context.Context, req *types.CreateTunnelReq) error // perm:candidate
 }
 
 // UserAPI is an interface for user
 type UserAPI interface {
-	// UserAPIKeysExists checks if the user api key exists.
-	UserAPIKeysExists(ctx context.Context, userID string) error //perm:web
+	// // UserAPIKeysExists checks if the user api key exists.
+	// UserAPIKeysExists(ctx context.Context, userID string) error //perm:web
 
-	// User-related methods
-	// AllocateStorage allocates storage space.
-	AllocateStorage(ctx context.Context, userID string) (*types.UserInfo, error) //perm:web,admin
-	// GetUserInfo get user info
-	GetUserInfo(ctx context.Context, userID string) (*types.UserInfo, error) // perm:web,admin
-	// GetUserInfos get user infos
-	GetUserInfos(ctx context.Context, userIDs []string) (map[string]*types.UserInfo, error) // perm:web,admin
-	// CreateAPIKey creates a key for the client API.
-	CreateAPIKey(ctx context.Context, userID, keyName string, acl []types.UserAccessControl) (string, error) //perm:web,admin
-	// GetAPIKeys get all api key for user.
-	GetAPIKeys(ctx context.Context, userID string) (map[string]types.UserAPIKeysInfo, error) //perm:web,admin
-	// DeleteAPIKey delete a api key for user
-	DeleteAPIKey(ctx context.Context, userID, name string) error //perm:web,admin
+	// // User-related methods
+	// // AllocateStorage allocates storage space.
+	// AllocateStorage(ctx context.Context, userID string) (*types.UserInfo, error) //perm:web,admin
+	// // GetUserInfo get user info
+	// GetUserInfo(ctx context.Context, userID string) (*types.UserInfo, error) // perm:web,admin
+	// // GetUserInfos get user infos
+	// GetUserInfos(ctx context.Context, userIDs []string) (map[string]*types.UserInfo, error) // perm:web,admin
+	// // CreateAPIKey creates a key for the client API.
+	// CreateAPIKey(ctx context.Context, userID, keyName string, acl []types.UserAccessControl) (string, error) //perm:web,admin
+	// // GetAPIKeys get all api key for user.
+	// GetAPIKeys(ctx context.Context, userID string) (map[string]types.UserAPIKeysInfo, error) //perm:web,admin
+	// // DeleteAPIKey delete a api key for user
+	// DeleteAPIKey(ctx context.Context, userID, name string) error //perm:web,admin
 	// UserAssetDownloadResult After a user downloads a resource from a candidate node, the candidate node reports the download result
 	UserAssetDownloadResult(ctx context.Context, userID, cid string, totalTraffic, peakBandwidth int64) error //perm:candidate
-	// SetUserVIP set user vip state
-	SetUserVIP(ctx context.Context, userID string, enableVIP bool) error //perm:admin
-	// GetUserAccessToken get access token for user
-	GetUserAccessToken(ctx context.Context, userID string) (string, error) //perm:web,admin
-	// GetUserStorageStats
-	GetUserStorageStats(ctx context.Context, userID string) (*types.StorageStats, error) //perm:web,admin
-	// GetUsersStorageStatistics
-	ListUserStorageStats(ctx context.Context, limit, offset int) (*types.ListStorageStatsRsp, error) //perm:web,admin
 
-	// CreateAssetGroup create Asset group
-	CreateAssetGroup(ctx context.Context, userID, name string, parent int) (*types.AssetGroup, error) //perm:user,web,admin
-	// ListAssetGroup list Asset group
-	ListAssetGroup(ctx context.Context, userID string, parent, limit, offset int) (*types.ListAssetGroupRsp, error) //perm:user,web,admin
-	// ListAssetSummary list Asset and group
-	ListAssetSummary(ctx context.Context, userID string, parent, limit, offset int) (*types.ListAssetSummaryRsp, error) //perm:user,web,admin
-	// DeleteAssetGroup delete Asset group
-	DeleteAssetGroup(ctx context.Context, userID string, gid int) error //perm:user,web,admin
-	// RenameAssetGroup rename group
-	RenameAssetGroup(ctx context.Context, userID, newName string, groupID int) error //perm:user,web,admin
-	// MoveAssetToGroup move a asset to group
-	MoveAssetToGroup(ctx context.Context, userID, cid string, groupID int) error //perm:user,web,admin
-	// MoveAssetGroup move a asset group
-	MoveAssetGroup(ctx context.Context, userID string, groupID, targetGroupID int) error //perm:user,web,admin
-	// GetAPPKeyPermissions get the permissions of user app key
-	GetAPPKeyPermissions(ctx context.Context, userID, keyName string) ([]string, error) //perm:user,web,admin
+	// // SetUserVIP set user vip state
+	// SetUserVIP(ctx context.Context, userID string, enableVIP bool) error //perm:admin
+	// // GetUserAccessToken get access token for user
+	// GetUserAccessToken(ctx context.Context, userID string) (string, error) //perm:web,admin
+	// // GetUserStorageStats
+	// GetUserStorageStats(ctx context.Context, userID string) (*types.StorageStats, error) //perm:web,admin
+	// // GetUsersStorageStatistics
+	// ListUserStorageStats(ctx context.Context, limit, offset int) (*types.ListStorageStatsRsp, error) //perm:web,admin
+
+	// // CreateAssetGroup create Asset group
+	// CreateAssetGroup(ctx context.Context, userID, name string, parent int) (*types.AssetGroup, error) //perm:user,web,admin
+	// // ListAssetGroup list Asset group
+	// ListAssetGroup(ctx context.Context, userID string, parent, limit, offset int) (*types.ListAssetGroupRsp, error) //perm:user,web,admin
+	// // ListAssetSummary list Asset and group
+	// ListAssetSummary(ctx context.Context, userID string, parent, limit, offset int) (*types.ListAssetSummaryRsp, error) //perm:user,web,admin
+	// // DeleteAssetGroup delete Asset group
+	// DeleteAssetGroup(ctx context.Context, userID string, gid int) error //perm:user,web,admin
+	// // RenameAssetGroup rename group
+	// RenameAssetGroup(ctx context.Context, userID, newName string, groupID int) error //perm:user,web,admin
+	// // MoveAssetToGroup move a asset to group
+	// MoveAssetToGroup(ctx context.Context, userID, cid string, groupID int) error //perm:user,web,admin
+	// // MoveAssetGroup move a asset group
+	// MoveAssetGroup(ctx context.Context, userID string, groupID, targetGroupID int) error //perm:user,web,admin
+	// // GetAPPKeyPermissions get the permissions of user app key
+	// GetAPPKeyPermissions(ctx context.Context, userID, keyName string) ([]string, error) //perm:user,web,admin
 	// GetNodeUploadInfo
 	GetNodeUploadInfo(ctx context.Context, userID string) (*types.UploadInfo, error) //perm:user,web,admin
 }
@@ -252,11 +261,14 @@ type Scheduler interface {
 	NodeAPI
 	UserAPI
 	ProjectAPI
+	ContainerAPI
 
 	// NodeValidationResult processes the validation result for a node
 	NodeValidationResult(ctx context.Context, r io.Reader, sign string) error //perm:edge,candidate
 	// GetValidationResults retrieves a list of validation results with pagination using the specified node, page number, and page size
 	GetValidationResults(ctx context.Context, nodeID string, limit, offset int) (*types.ListValidationResultRsp, error) //perm:web,admin
+	// SubmitProjectReport
+	SubmitProjectReport(ctx context.Context, req *types.ProjectRecordReq) error //perm:candidate
 	// SubmitWorkloadReport
 	SubmitWorkloadReport(ctx context.Context, workload *types.WorkloadRecordReq) error //perm:default
 	// SubmitWorkloadReportV2
@@ -283,8 +295,14 @@ type Scheduler interface {
 	SetEdgeUpdateConfig(ctx context.Context, info *EdgeUpdateConfig) error //perm:admin
 	// DeleteEdgeUpdateConfig deletes the edge update configuration for the specified node type
 	DeleteEdgeUpdateConfig(ctx context.Context, nodeType int) error //perm:admin
-	// GetValidationInfo get information related to validation and election
-	GetValidationInfo(ctx context.Context) (*types.ValidationInfo, error) //perm:web,admin
-	// ElectValidators
-	ElectValidators(ctx context.Context, nodeIDs []string, cleanOld bool) error //perm:admin
+
+	// code
+	// GenerateCandidateCodes
+	GenerateCandidateCodes(ctx context.Context, count int, nodeType types.NodeType, isTest bool) ([]string, error) //perm:admin
+	// CandidateCodeExist
+	CandidateCodeExist(ctx context.Context, code string) (bool, error) //perm:admin,web,locator
+	// GetCandidateCodeInfos
+	GetCandidateCodeInfos(ctx context.Context, nodeID, code string) ([]*types.CandidateCodeInfo, error) //perm:admin,web,locator
+	ResetCandidateCode(ctx context.Context, nodeID, code string) error                                  //perm:admin,web,locator
+	RemoveCandidateCode(ctx context.Context, code string) error                                         //perm:admin,web,locator
 }

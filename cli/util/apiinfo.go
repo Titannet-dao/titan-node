@@ -43,7 +43,6 @@ func (a APIInfo) DialArgs(version string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-
 		return "ws://" + addr + "/rpc/" + version, nil
 	}
 

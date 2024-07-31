@@ -94,6 +94,19 @@ type MinioConfig struct {
 	SecretAccessKey string
 }
 
+type ProviderConfig struct {
+	// IngressHostName specifies the ingress hostname associated with the resource
+	IngressHostName string
+	// CertificatePath is the path to the security certificate file
+	IngressCertificatePath string
+	// CertificateKeyPath is the path to the key file for the security certificate
+	IngressCertificateKeyPath string
+	// IngressClassName specifies the class of the ingress resource
+	IngressClassName string
+	// KubeConfigPath specifies the path to the Kubernetes configuration file
+	KubeConfigPath string
+}
+
 // CandidateCfg candidate node config
 type CandidateCfg struct {
 	EdgeCfg
@@ -104,8 +117,11 @@ type CandidateCfg struct {
 	MinioConfig
 	WebRedirect string
 	ExternalURL string
+	// AcmeUrl automatically issue certificates for L1 node
+	AcmeUrl string
 	// Let the scheduler know that this node does not do tasks
 	IsPrivate bool
+	ProviderConfig
 }
 
 // LocatorCfg locator config
@@ -131,6 +147,7 @@ type LocatorCfg struct {
 	DNSServerAddress string
 	DNSRecords       map[string]string
 	DefaultAreas     []string
+	WebGeoAPI        string
 }
 
 // SchedulerCfg scheduler config
@@ -193,10 +210,6 @@ type SchedulerCfg struct {
 	AssetPullTaskLimit int
 
 	NatDetectConcurrency int
-	// Default number of backups for user uploaded files
-	UploadAssetReplicaCount int
-	// Default expiration time for user uploaded files
-	UploadAssetExpiration int // (Unit:day)
 	// Non vip user
 	MaxCountOfVisitShareLink int
 	// if the area has several scheduler, node will connect to the scheduler which weight is bigger
@@ -205,10 +218,7 @@ type SchedulerCfg struct {
 	IPWhitelist              []string
 	MaxNumberOfRegistrations int
 
-	IPLimit            int
-	FillAssetEdgeCount int64
-
-	StorageCandidates []string
+	IPLimit int
 
 	L2ValidatorCount int
 

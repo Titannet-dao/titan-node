@@ -48,7 +48,7 @@ type Common interface {
 	// Shutdown trigger graceful shutdown
 	Shutdown(context.Context) error //perm:admin
 	// Session returns a UUID of api provider session
-	Session(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate
+	Session(ctx context.Context) (uuid.UUID, error) //perm:edge,candidate,l5
 
 	// Closing jsonrpc closing
 	Closing(context.Context) (<-chan struct{}, error) //perm:admin

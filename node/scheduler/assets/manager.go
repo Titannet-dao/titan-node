@@ -3,6 +3,7 @@ package assets
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"database/sql"
 	"encoding/gob"
 	"fmt"
@@ -36,6 +37,8 @@ const (
 	seedReplicaCount = 1
 	// Interval to get asset pull progress from node (Unit:Second)
 	pullProgressInterval = 30 * time.Second
+	// Interval to get asset pull progress from node (Unit:Second)
+	uploadProgressInterval = time.Second
 	// Interval to check candidate backup of asset (Unit:Minute)
 	checkCandidateBackupInterval = 10 * time.Minute
 	// Maximum number of replicas per asset
@@ -56,6 +59,12 @@ const (
 	checkAssetReplicaLimit = 50
 
 	nodeProfitsLimitOfDay = 50000.0
+	// Maximum number of candidates for asset upload
+	maxCandidateForSelect = 5
+
+	expirationOfStorageAsset = 150 // day
+
+	defaultReplicaCount = 200
 )
 
 // Manager manages asset replicas
@@ -72,8 +81,8 @@ type Manager struct {
 
 	fillSwitch bool
 
-	fillAssets     sync.Map // Data being downloaded from aws
-	fillAssetNodes sync.Map // The node that is downloading data from aws
+	fillAssets sync.Map // Data being downloaded from aws
+	// fillAssetNodes sync.Map // The node that is downloading data from aws
 
 	isPullSpecifyAsset bool
 	sortEdges          bool
@@ -116,6 +125,7 @@ func (m *Manager) Start(ctx context.Context) {
 
 	go m.startCheckAssetsTimer()
 	go m.startCheckPullProgressesTimer()
+	go m.startCheckUploadProgressesTimer()
 	go m.startCheckCandidateBackupTimer()
 	go m.initFillDiskTimer()
 }
@@ -140,7 +150,7 @@ func (m *Manager) startCheckCandidateBackupTimer() {
 func (m *Manager) startCheckAssetsTimer() {
 	now := time.Now()
 
-	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, time.UTC)
+	nextTime := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, time.UTC)
 	if now.After(nextTime) {
 		nextTime = nextTime.Add(24 * time.Hour)
 	}
@@ -159,6 +169,7 @@ func (m *Manager) startCheckAssetsTimer() {
 
 		// m.processExpiredAssets()
 		offset = m.processMissingAssetReplicas(offset)
+		m.cleanUploadFailedAssetReplicas()
 
 		timer.Reset(24 * time.Hour)
 	}
@@ -171,7 +182,16 @@ func (m *Manager) startCheckPullProgressesTimer() {
 
 	for {
 		<-ticker.C
-		m.retrieveNodePullProgresses()
+		m.retrieveNodePullProgresses(false)
+	}
+}
+
+// startCheckUploadProgressesTimer Periodically gets asset upload progress
+func (m *Manager) startCheckUploadProgressesTimer() {
+	for {
+		time.Sleep(uploadProgressInterval)
+
+		m.retrieveNodePullProgresses(true)
 	}
 }
 
@@ -212,8 +232,12 @@ func (m *Manager) retrieveCandidateBackupOfAssets() {
 	}
 
 	for _, hash := range hashes {
-		exist, err := m.AssetExists(hash, m.nodeMgr.ServerID)
-		if err != nil || !exist {
+		stateInfo, err := m.LoadAssetStateInfo(hash, m.nodeMgr.ServerID)
+		if err != nil {
+			continue
+		}
+
+		if stateInfo.State == Remove.String() {
 			continue
 		}
 
@@ -245,7 +269,7 @@ func (m *Manager) getPullingAssetList() []string {
 	return list
 }
 
-func (m *Manager) retrieveNodePullProgresses() {
+func (m *Manager) retrieveNodePullProgresses(isUpload bool) {
 	nodePulls := make(map[string][]string)
 
 	toMap := make(map[string]*pullingAssetsInfo)
@@ -264,8 +288,14 @@ func (m *Manager) retrieveNodePullProgresses() {
 			continue
 		}
 
-		if stateInfo.State != EdgesPulling.String() && stateInfo.State != CandidatesPulling.String() && stateInfo.State != SeedPulling.String() && stateInfo.State != SeedUploading.String() {
-			continue
+		if isUpload {
+			if stateInfo.State != SeedUploading.String() {
+				continue
+			}
+		} else {
+			if stateInfo.State != EdgesPulling.String() && stateInfo.State != CandidatesPulling.String() && stateInfo.State != SeedPulling.String() {
+				continue
+			}
 		}
 
 		if info.count >= assetTimeoutLimit {
@@ -285,6 +315,8 @@ func (m *Manager) retrieveNodePullProgresses() {
 			log.Errorf("retrieveNodePullProgresses %s HashString2CIDString err:%s", hash, err.Error())
 			continue
 		}
+
+		log.Infof("retrieveNodePullProgresses check %s \n", cid)
 
 		replicas, err := m.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusPulling, types.ReplicaStatusWaiting})
 		if err != nil {
@@ -336,32 +368,130 @@ func (m *Manager) requestNodePullProgresses(nodeID string, cids []string) (resul
 	return
 }
 
+// GenerateTokenForDownloadSource Generate Token
+func (m *Manager) GenerateTokenForDownloadSource(nodeID, cid string) (*types.SourceDownloadInfo, error) {
+	hash, err := cidutil.CIDToHash(cid)
+	if err != nil {
+		return nil, &api.ErrWeb{Code: terrors.CidToHashFiled.Int(), Message: err.Error()}
+	}
+
+	var cNode *node.Node
+	if nodeID == "" {
+		replicas, err := m.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+		if err != nil {
+			return nil, &api.ErrWeb{Code: terrors.AssetNotFound.Int(), Message: err.Error()}
+		}
+
+		for _, rInfo := range replicas {
+			cNode = m.nodeMgr.GetCandidateNode(rInfo.NodeID)
+			if cNode != nil {
+				break
+			}
+		}
+	} else {
+		cNode = m.nodeMgr.GetCandidateNode(nodeID)
+	}
+
+	if cNode == nil {
+		return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int()}
+	}
+
+	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
+	tk, err := cNode.EncryptToken(cid, uuid.NewString(), titanRsa, m.nodeMgr.PrivateKey)
+	if err != nil {
+		return nil, &api.ErrWeb{Code: terrors.GenerateAccessToken.Int()}
+	}
+
+	out := &types.SourceDownloadInfo{
+		NodeID:  cNode.NodeID,
+		Address: cNode.DownloadAddr(),
+		Tk:      tk,
+	}
+
+	return out, nil
+}
+
+// CreateSyncAssetTask Synchronizing assets from other schedulers
+func (m *Manager) CreateSyncAssetTask(hash string, req *types.CreateSyncAssetReq) error {
+	m.stateMachineWait.Wait()
+	log.Infof("asset event: %s, add sync asset ", req.AssetCID)
+
+	if req.DownloadInfo == nil {
+		return &api.ErrWeb{Code: terrors.ParametersAreWrong.Int()}
+	}
+
+	bandwidth := int64(0)
+
+	day := req.ExpirationDay
+	if day <= 0 || day > 365*5 {
+		day = expirationOfStorageAsset
+	}
+	expiration := time.Now().Add(time.Duration(day) * 24 * time.Hour)
+
+	replicaCount := req.ReplicaCount
+	if replicaCount <= 0 || replicaCount > 1000 {
+		replicaCount = defaultReplicaCount
+	}
+
+	assetRecord, err := m.LoadAssetRecord(hash)
+	if err != nil && err != sql.ErrNoRows {
+		return &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	}
+
+	if assetRecord != nil && assetRecord.State != "" && assetRecord.State != Remove.String() && assetRecord.State != UploadFailed.String() {
+		m.UpdateAssetRecordExpiration(hash, expiration)
+
+		return nil
+	}
+
+	record := &types.AssetRecord{
+		Hash:                  hash,
+		CID:                   req.AssetCID,
+		ServerID:              m.nodeMgr.ServerID,
+		NeedEdgeReplica:       replicaCount,
+		NeedCandidateReplicas: int64(m.candidateReplicaCount),
+		Expiration:            expiration,
+		NeedBandwidth:         bandwidth,
+		State:                 UploadInit.String(),
+		TotalSize:             req.AssetSize,
+		CreatedTime:           time.Now(),
+		Source:                int64(AssetSourceStorage),
+	}
+
+	err = m.SaveAssetRecord(record)
+	if err != nil {
+		return &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	}
+
+	// create asset task
+	rInfo := AssetForceState{
+		State:          SeedSync,
+		DownloadSource: sourceDownloadInfoFrom(req.DownloadInfo),
+	}
+	if err := m.assetStateMachines.Send(AssetHash(hash), rInfo); err != nil {
+		return &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
+	}
+
+	return nil
+}
+
 // CreateAssetUploadTask create a new asset upload task
 func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) (*types.UploadInfo, error) {
 	// Waiting for state machine initialization
 	m.stateMachineWait.Wait()
 	log.Infof("asset event: %s, add asset ", req.AssetCID)
-	exist, err := m.AssetExistsOfUser(hash, req.UserID)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
-	}
 
-	if exist {
-		return nil, &api.ErrWeb{Code: terrors.NoDuplicateUploads.Int(), Message: fmt.Sprintf("Asset is exist, no duplicate uploads")}
-	}
-
-	// if m.getPullingAssetLen() >= m.assetPullTaskLimit {
-	// 	return nil, &api.ErrWeb{Code: terrors.BusyServer.Int(), Message: fmt.Sprintf("The task has reached its limit. Please try again later.")}
-	// }
-
-	replicaCount := int64(10)
 	bandwidth := int64(0)
-	expiration := time.Now().Add(150 * 24 * time.Hour)
 
-	cfg, err := m.config()
-	if err == nil {
-		replicaCount = int64(cfg.UploadAssetReplicaCount)
-		expiration = time.Now().Add(time.Duration(cfg.UploadAssetExpiration) * 24 * time.Hour)
+	day := req.ExpirationDay
+	if day <= 0 || day > 365*5 {
+		day = expirationOfStorageAsset
+	}
+	expiration := time.Now().Add(time.Duration(day) * 24 * time.Hour)
+
+	replicaCount := req.ReplicaCount
+	if replicaCount <= 0 || replicaCount > 1000 {
+		replicaCount = defaultReplicaCount
 	}
 
 	assetRecord, err := m.LoadAssetRecord(hash)
@@ -370,42 +500,28 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 	}
 
 	if assetRecord != nil && assetRecord.State != "" && assetRecord.State != Remove.String() && assetRecord.State != UploadFailed.String() {
-		err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration, req.Password, req.GroupID)
-		if err != nil {
-			return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
-		}
-
 		info := &types.UploadInfo{AlreadyExists: true}
 		m.UpdateAssetRecordExpiration(hash, expiration)
 
 		return info, nil
 	}
 
-	var cNode *node.Node
+	var cNodes []*node.Node
 	if req.NodeID != "" {
-		cNode = m.nodeMgr.GetCandidateNode(req.NodeID)
+		cNodes = append(cNodes, m.nodeMgr.GetCandidateNode(req.NodeID))
 	} else {
 		_, nodes := m.nodeMgr.GetAllCandidateNodes()
-		// sort.Slice(nodes, func(i, j int) bool {
-		// 	return nodes[i].TitanDiskUsage < nodes[j].TitanDiskUsage
-		// })
+		// mixup nodes
+		rand.Shuffle(len(nodes), func(i, j int) { nodes[i], nodes[j] = nodes[j], nodes[i] })
 
-		cNodes := make([]*node.Node, 0)
 		for _, node := range nodes {
-			if node.IsStorageOnly {
+			if node.IsStorageNode && len(cNodes) <= maxCandidateForSelect {
 				cNodes = append(cNodes, node)
 			}
 		}
-
-		if len(cNodes) == 0 {
-			return nil, &api.ErrWeb{Code: terrors.NodeOffline.Int(), Message: fmt.Sprintf("storage's nodes not found")}
-		}
-
-		index := rand.Intn(len(cNodes))
-		cNode = cNodes[index]
 	}
 
-	if cNode == nil {
+	if len(cNodes) == 0 {
 		return nil, &api.ErrWeb{Code: terrors.NodeOffline.Int(), Message: fmt.Sprintf("storage's nodes not found")}
 	}
 
@@ -416,14 +532,26 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 		Expiration: time.Now().Add(time.Hour),
 	}
 
-	token, err := cNode.API.CreateAsset(context.Background(), payload)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.RequestNodeErr.Int(), Message: err.Error()}
+	ret := &types.UploadInfo{
+		List:          make([]*types.NodeUploadInfo, 0),
+		AlreadyExists: false,
 	}
 
-	err = m.SaveAssetUser(hash, req.UserID, req.AssetName, req.AssetType, req.AssetSize, expiration, req.Password, req.GroupID)
-	if err != nil {
-		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
+	seedIDs := make([]string, 0)
+	for _, cNode := range cNodes {
+		token, err := cNode.API.CreateAsset(context.Background(), payload)
+		if err != nil {
+			return nil, &api.ErrWeb{Code: terrors.RequestNodeErr.Int(), Message: err.Error()}
+		}
+
+		uploadURL := fmt.Sprintf("http://%s/upload", cNode.RemoteAddr)
+		if len(cNode.ExternalURL) > 0 {
+			uploadURL = fmt.Sprintf("%s/upload", cNode.ExternalURL)
+		}
+
+		ret.List = append(ret.List, &types.NodeUploadInfo{UploadURL: uploadURL, Token: token, NodeID: cNode.NodeID})
+
+		seedIDs = append(seedIDs, cNode.NodeID)
 	}
 
 	record := &types.AssetRecord{
@@ -431,7 +559,7 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 		CID:                   req.AssetCID,
 		ServerID:              m.nodeMgr.ServerID,
 		NeedEdgeReplica:       replicaCount,
-		NeedCandidateReplicas: 2,
+		NeedCandidateReplicas: int64(m.candidateReplicaCount),
 		Expiration:            expiration,
 		NeedBandwidth:         bandwidth,
 		State:                 UploadInit.String(),
@@ -445,24 +573,16 @@ func (m *Manager) CreateAssetUploadTask(hash string, req *types.CreateAssetReq) 
 		return nil, &api.ErrWeb{Code: terrors.DatabaseErr.Int(), Message: err.Error()}
 	}
 
-	rInfo := AssetForceState{
-		State: UploadInit,
-		// Requester:  req.UserID,
-		SeedNodeID: cNode.NodeID,
-	}
-
 	// create asset task
-	err = m.assetStateMachines.Send(AssetHash(hash), rInfo)
-	if err != nil {
+	rInfo := AssetForceState{
+		State:       UploadInit,
+		SeedNodeIDs: seedIDs,
+	}
+	if err := m.assetStateMachines.Send(AssetHash(hash), rInfo); err != nil {
 		return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
 	}
 
-	uploadURL := fmt.Sprintf("http://%s/upload", cNode.RemoteAddr)
-	if len(cNode.ExternalURL) > 0 {
-		uploadURL = fmt.Sprintf("%s/upload", cNode.ExternalURL)
-	}
-
-	return &types.UploadInfo{UploadURL: uploadURL, Token: token, NodeID: cNode.NodeID}, nil
+	return ret, nil
 }
 
 // CreateAssetPullTask create a new asset pull task
@@ -523,7 +643,7 @@ func (m *Manager) CreateAssetPullTask(info *types.PullAssetReq) error {
 		rInfo := AssetForceState{
 			State: SeedSelect,
 			// Requester:  info.UserID,
-			SeedNodeID: info.SeedNodeID,
+			SeedNodeIDs: []string{info.SeedNodeID},
 		}
 
 		// create asset task
@@ -583,8 +703,8 @@ func (m *Manager) replenishAssetReplicas(assetRecord *types.AssetRecord, repleni
 	rInfo := AssetForceState{
 		State: state,
 		// Requester:  note,
-		Details:    details,
-		SeedNodeID: seedNodeID,
+		Details:     details,
+		SeedNodeIDs: []string{seedNodeID},
 	}
 
 	return m.assetStateMachines.Send(AssetHash(assetRecord.Hash), rInfo)
@@ -670,7 +790,8 @@ func (m *Manager) AssetRemoveDone(key string) {
 // RemoveAsset removes an asset
 func (m *Manager) RemoveAsset(hash string, isWait bool) error {
 	if exist, _ := m.assetStateMachines.Has(AssetHash(hash)); !exist {
-		return xerrors.Errorf("not found asset %s", hash)
+		// return xerrors.Errorf("not found asset %s", hash)
+		return &api.ErrWeb{Code: terrors.HashNotFound.Int(), Message: fmt.Sprintf("not found asset %s", hash)}
 	}
 
 	wg := m.WaitAssetRemove(hash)
@@ -872,6 +993,31 @@ func (m *Manager) UpdateAssetExpiration(cid string, t time.Time) error {
 	return m.UpdateAssetRecordExpiration(hash, t)
 }
 
+// cleanUploadFailedAssetReplicas clean upload failed assets
+func (m *Manager) cleanUploadFailedAssetReplicas() {
+	aRows, err := m.LoadAllAssetRecords(m.nodeMgr.ServerID, checkAssetReplicaLimit, 0, []string{UploadFailed.String(), SyncFailed.String()})
+	if err != nil {
+		log.Errorf("LoadAllAssetRecords err:%s", err.Error())
+		return
+	}
+	defer aRows.Close()
+
+	// loading asset records
+	for aRows.Next() {
+		cInfo := &types.AssetRecord{}
+		err = aRows.StructScan(cInfo)
+		if err != nil {
+			log.Errorf("asset StructScan err: %s", err.Error())
+			continue
+		}
+
+		err = m.RemoveAsset(cInfo.Hash, false)
+		if err != nil {
+			log.Errorf("RemoveAsset %s err:%s", cInfo.Hash, err.Error())
+		}
+	}
+}
+
 // processMissingAssetReplicas checks for missing replicas of assets and adds missing replicas
 func (m *Manager) processMissingAssetReplicas(offset int) int {
 	aRows, err := m.LoadAllAssetRecords(m.nodeMgr.ServerID, checkAssetReplicaLimit, offset, []string{Servicing.String()})
@@ -897,15 +1043,23 @@ func (m *Manager) processMissingAssetReplicas(offset int) int {
 			continue
 		}
 
-		effectiveEdges, err := m.checkAssetReliability(cInfo.Hash)
+		effectiveEdges, candidateReplica, deleteNodes, err := m.checkAssetReliability(cInfo.Hash)
 		if err != nil {
 			log.Errorf("checkAssetReliability err: %s", err.Error())
 			continue
 		}
 
-		missingEdges := cInfo.NeedEdgeReplica - int64(effectiveEdges)
+		for _, nodeID := range deleteNodes {
+			err = m.RemoveReplica(cInfo.CID, cInfo.Hash, nodeID)
+			if err != nil {
+				log.Errorf("RemoveReplica %s err: %s", nodeID, err.Error())
+			}
+		}
 
-		if missingEdges <= 0 && cInfo.State == Servicing.String() {
+		missingEdges := cInfo.NeedEdgeReplica - int64(effectiveEdges)
+		missingCandidates := cInfo.NeedCandidateReplicas - int64(candidateReplica)
+
+		if missingCandidates <= 0 && missingEdges <= 0 && cInfo.State == Servicing.String() && len(deleteNodes) == 0 {
 			// Asset are healthy and do not need to be replenish replicas
 			continue
 		}
@@ -928,7 +1082,7 @@ func (m *Manager) processMissingAssetReplicas(offset int) int {
 }
 
 // Check the reliability of assets
-func (m *Manager) checkAssetReliability(hash string) (effectiveEdges int, outErr error) {
+func (m *Manager) checkAssetReliability(hash string) (effectiveEdges, candidateReplica int, deleteNodes []string, outErr error) {
 	// loading asset replicas
 	replicas, outErr := m.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
 	if outErr != nil {
@@ -936,21 +1090,31 @@ func (m *Manager) checkAssetReliability(hash string) (effectiveEdges int, outErr
 		return
 	}
 
+	deleteNodes = make([]string, 0)
+
 	for _, rInfo := range replicas {
-		if rInfo.IsCandidate {
-			continue
-		}
 		// Are the nodes unreliable
 		nodeID := rInfo.NodeID
 		lastSeen, err := m.LoadNodeLastSeenTime(nodeID)
 		if err != nil {
-			log.Errorf("checkAssetReliability LoadLastSeenOfNode err: %s", err.Error())
+			log.Errorf("checkAssetReliability %s LoadLastSeenOfNode err: %s", nodeID, err.Error())
+			deleteNodes = append(deleteNodes, nodeID)
 			continue
 		}
 
-		if lastSeen.Add(maxNodeOfflineTime).After(time.Now()) {
-			effectiveEdges++
+		if lastSeen.Add(maxNodeOfflineTime * 5).Before(time.Now()) {
+			deleteNodes = append(deleteNodes, nodeID)
+			continue
 		}
+
+		if rInfo.IsCandidate {
+			candidateReplica++
+		} else {
+			if lastSeen.Add(maxNodeOfflineTime).After(time.Now()) {
+				effectiveEdges++
+			}
+		}
+
 	}
 
 	return
@@ -1032,17 +1196,7 @@ func (m *Manager) getDownloadSources(hash string) []*types.SourceDownloadInfo {
 			continue
 		}
 
-		if cNode.Type == types.NodeCandidate {
-			source := &types.SourceDownloadInfo{
-				NodeID:  nodeID,
-				Address: cNode.DownloadAddr(),
-			}
-
-			sources = append(sources, source)
-			continue
-		}
-
-		if (cNode.NATType != types.NatTypeNo.String() && cNode.NATType != types.NatTypeFullCone.String()) && cNode.ExternalIP == "" {
+		if cNode.Type == types.NodeEdge && (cNode.NATType != types.NatTypeNo.String() && cNode.NATType != types.NatTypeFullCone.String()) && cNode.ExternalIP == "" {
 			continue
 		}
 
@@ -1059,10 +1213,10 @@ func (m *Manager) getDownloadSources(hash string) []*types.SourceDownloadInfo {
 
 // chooseCandidateNodes selects candidate nodes to pull asset replicas
 func (m *Manager) chooseCandidateNodes(count int, filterNodes []string, size float64) (map[string]*node.Node, string) {
-	_, nodes := m.nodeMgr.GetAllCandidateNodes()
-	curNode := len(nodes)
+	// _, nodes := m.nodeMgr.GetAllCandidateNodes()
+	// curNode := len(nodes)
 
-	str := fmt.Sprintf("need node:%d , filter node:%d , cur node:%d , randNum : ", count, len(filterNodes), curNode)
+	str := fmt.Sprintf("need node:%d , filter node:%d , randNum : ", count, len(filterNodes))
 
 	selectMap := make(map[string]*node.Node)
 	if count <= 0 {
@@ -1074,26 +1228,14 @@ func (m *Manager) chooseCandidateNodes(count int, filterNodes []string, size flo
 		filterMap[nodeID] = struct{}{}
 	}
 
-	sort.Slice(nodes, func(i, j int) bool {
-		if nodes[i].Type == nodes[j].Type {
-			return nodes[i].TitanDiskUsage < nodes[j].TitanDiskUsage
-		}
-
-		return nodes[i].Type == types.NodeCandidate
-	})
-
-	// num := count * selectNodeRetryLimit
-	// nodes := m.nodeMgr.GetRandomCandidates(num)
-	for _, node := range nodes {
-		// node := m.nodeMgr.GetCandidateNode(nodeID)
+	num := count * selectNodeRetryLimit
+	nodes := m.nodeMgr.GetRandomCandidates(num)
+	for nodeID := range nodes {
+		node := m.nodeMgr.GetCandidateNode(nodeID)
 		if node == nil {
 			continue
 		}
 
-		// Merge L1 nodes
-		// if node.Type == types.NodeValidator {
-		// 	continue
-		// }
 		nodeID := node.NodeID
 
 		if !node.DiskEnough(size) {
@@ -1231,26 +1373,23 @@ func (m *Manager) chooseEdgeNodes(count int, bandwidthDown int64, filterNodes []
 	return selectMap, str
 }
 
+// GetAssetCount get asset count
 func (m *Manager) GetAssetCount() (int, error) {
 	return m.LoadAssetCount(m.nodeMgr.ServerID, Remove.String())
 }
 
 func (m *Manager) generateTokenForDownloadSources(sources []*types.SourceDownloadInfo, titanRsa *titanrsa.Rsa, assetCID string, clientID string, size int64) ([]*types.SourceDownloadInfo, *types.WorkloadRecord, error) {
-	ws := make([]*types.Workload, 0)
-
+	workloadList := make([]*types.Workload, 0)
 	downloadSources := make([]*types.SourceDownloadInfo, 0, len(sources))
 
 	for _, source := range sources {
-		ws = append(ws, &types.Workload{SourceID: source.NodeID})
-		if source.NodeID == types.DownloadSourceIPFS.String() {
-			continue
-		}
+		workloadList = append(workloadList, &types.Workload{SourceID: source.NodeID})
 
 		node := m.nodeMgr.GetNode(source.NodeID)
 		downloadSource := *source
 
 		if node != nil {
-			tk, _, err := node.Token(assetCID, clientID, titanRsa, m.nodeMgr.PrivateKey)
+			tk, err := node.EncryptToken(assetCID, clientID, titanRsa, m.nodeMgr.PrivateKey)
 			if err != nil {
 				continue
 			}
@@ -1260,46 +1399,43 @@ func (m *Manager) generateTokenForDownloadSources(sources []*types.SourceDownloa
 		downloadSources = append(downloadSources, &downloadSource)
 	}
 
-	var record *types.WorkloadRecord
+	record := &types.WorkloadRecord{
+		WorkloadID: uuid.NewString(),
+		AssetCID:   assetCID,
+		ClientID:   clientID,
+		AssetSize:  size,
+		Event:      types.WorkloadEventPull,
+		Status:     types.WorkloadStatusCreate,
+	}
 
-	if len(ws) > 0 {
+	if len(workloadList) > 0 {
 		buffer := &bytes.Buffer{}
 		enc := gob.NewEncoder(buffer)
-		err := enc.Encode(ws)
+		err := enc.Encode(workloadList)
 		if err != nil {
 			log.Errorf("encode error:%s", err.Error())
 			return downloadSources, record, nil
 		}
 
-		record = &types.WorkloadRecord{
-			WorkloadID: uuid.NewString(),
-			AssetCID:   assetCID,
-			ClientID:   clientID,
-			AssetSize:  size,
-			Workloads:  buffer.Bytes(),
-			Event:      types.WorkloadEventPull,
-			Status:     types.WorkloadStatusCreate,
-		}
+		record.Workloads = buffer.Bytes()
 	}
 
 	return downloadSources, record, nil
 }
 
-func (m *Manager) GenerateToken(assetCID string, sources []*types.SourceDownloadInfo, node *node.Node, size int64, titanRsa *titanrsa.Rsa) ([]*types.SourceDownloadInfo, *types.WorkloadRecord, error) {
+func (m *Manager) generateToken(assetCID string, sources []*types.SourceDownloadInfo, node *node.Node, size int64, titanRsa *titanrsa.Rsa) ([]*types.SourceDownloadInfo, *types.WorkloadRecord, error) {
 	ts := make([]*types.SourceDownloadInfo, 0)
-	if len(sources) > 2 {
+	if len(sources) > 1 {
 		firstIndex := rand.Intn(len(sources))
-		secondIndex := rand.Intn(len(sources))
-		ts = append(ts, sources[firstIndex], sources[secondIndex])
+		ts = append(ts, sources[firstIndex])
 	} else {
 		ts = sources
 	}
-	// ss := sources[index]
 
 	return m.generateTokenForDownloadSources(ts, titanRsa, assetCID, node.NodeID, size)
 }
 
-func (m *Manager) SaveTokenPayload(payloads []*types.WorkloadRecord) error {
+func (m *Manager) saveTokenPayload(payloads []*types.WorkloadRecord) error {
 	if len(payloads) == 0 {
 		return nil
 	}

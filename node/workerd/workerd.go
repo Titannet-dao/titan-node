@@ -19,7 +19,7 @@ import (
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/Filecoin-Titan/titan/node/tunnel"
+	tunclient "github.com/Filecoin-Titan/titan/node/tunnel/client"
 	"github.com/Filecoin-Titan/titan/node/workerd/cgo"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
@@ -44,14 +44,14 @@ type Workerd struct {
 	api      api.Scheduler
 	nodeId   string
 	basePath string
-	ts       *tunnel.Services
+	ts       *tunclient.Services
 	startCh  chan string
 
 	projects map[string]*types.Project
 	mu       sync.Mutex
 }
 
-func NewWorkerd(ctx context.Context, api api.Scheduler, ts *tunnel.Services, nodeId, path string) (*Workerd, error) {
+func NewWorkerd(ctx context.Context, api api.Scheduler, ts *tunclient.Services, nodeId, path string) (*Workerd, error) {
 	err := os.MkdirAll(path, 0o755)
 	if err != nil {
 		return nil, err
@@ -259,7 +259,7 @@ func (w *Workerd) setupAndStartProject(ctx context.Context, project *types.Proje
 
 	project.Status = types.ProjectReplicaStatusStarted
 	project.Port = port
-	service := &tunnel.Service{ID: project.ID, Address: "127.0.0.1", Port: port}
+	service := &tunclient.Service{ID: project.ID, Address: "127.0.0.1", Port: port}
 	defer w.ts.Regiseter(service)
 
 	socketAddr := fmt.Sprintf("%s:%d", service.Address, service.Port)
@@ -268,9 +268,9 @@ func (w *Workerd) setupAndStartProject(ctx context.Context, project *types.Proje
 		return err
 	}
 
-	if err = testWebSocketConnection(service.Port); err != nil {
-		return err
-	}
+	// if err = testWebSocketConnection(service.Port); err != nil {
+	// 	return err
+	// }
 
 	w.reportProjectStatus(ctx, project)
 	log.Infof("Project %s created successfully. Service is now listening on: %s", project.ID, socketAddr)
@@ -336,7 +336,7 @@ func (w *Workerd) createProject(ctx context.Context, project *types.Project) err
 }
 
 func (w *Workerd) destroyProject(ctx context.Context, projectId string) error {
-	defer w.ts.Remove(&tunnel.Service{ID: projectId})
+	defer w.ts.Remove(&tunclient.Service{ID: projectId})
 
 	if err := cgo.DestroyWorkerd(projectId); err != nil {
 		if !strings.Contains(err.Error(), "not exists") {

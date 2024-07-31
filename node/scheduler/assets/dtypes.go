@@ -25,15 +25,68 @@ type NodePulledResult struct {
 type AssetSource int64
 
 const (
-	// AssetSourceIPFS
+	// AssetSourceIPFS from ipfs
 	AssetSourceIPFS AssetSource = iota
-	// AssetSourceAWS status
+	// AssetSourceAWS from aws
 	AssetSourceAWS
-	// AssetSourceStorage status
+	// AssetSourceStorage from user
 	AssetSourceStorage
-	// AssetSourceMinio status
+	// AssetSourceMinio minio
 	AssetSourceMinio
 )
+
+// SourceDownloadInfo download source
+type SourceDownloadInfo struct {
+	NodeID  string
+	Address string
+	Tk      *Token
+}
+
+// Token access download asset
+type Token struct {
+	ID string
+	// CipherText encrypted TokenPayload by public key
+	CipherText string
+	// Sign signs CipherText by scheduler private key
+	Sign string
+}
+
+// ToSourceDownloadInfo converts SourceDownloadInfo to types.SourceDownloadInfo
+func (state *SourceDownloadInfo) ToSourceDownloadInfo() *types.SourceDownloadInfo {
+	var tk *types.Token
+	if state.Tk != nil {
+		tk = &types.Token{
+			ID:         state.Tk.ID,
+			CipherText: state.Tk.CipherText,
+			Sign:       state.Tk.Sign,
+		}
+	}
+	return &types.SourceDownloadInfo{
+		NodeID:  state.NodeID,
+		Address: state.Address,
+		Tk:      tk,
+	}
+}
+
+// sourceDownloadInfoFrom converts types.SourceDownloadInfo to SourceDownloadInfo
+func sourceDownloadInfoFrom(info *types.SourceDownloadInfo) *SourceDownloadInfo {
+	var tk *Token
+	if info.Tk != nil {
+		tk = &Token{
+			ID:         info.Tk.ID,
+			CipherText: info.Tk.CipherText,
+			Sign:       info.Tk.Sign,
+		}
+	}
+
+	cInfo := &SourceDownloadInfo{
+		NodeID:  info.NodeID,
+		Address: info.Address,
+		Tk:      tk,
+	}
+
+	return cInfo
+}
 
 // AssetPullingInfo represents asset pull information
 type AssetPullingInfo struct {
@@ -54,10 +107,11 @@ type AssetPullingInfo struct {
 	RetryCount        int64
 	ReplenishReplicas int64
 
-	Details    string
-	SeedNodeID string
+	Details     string
+	SeedNodeIDs []string
 
-	Source AssetSource
+	Source         AssetSource
+	DownloadSource *SourceDownloadInfo
 
 	Note string
 }

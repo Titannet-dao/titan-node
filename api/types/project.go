@@ -95,6 +95,8 @@ type ProjectReplicas struct {
 
 	WsURL     string
 	BundleURL string
+	IP        string
+	GeoID     string
 }
 
 // ProjectStateInfo represents information about an project state

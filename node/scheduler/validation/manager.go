@@ -7,13 +7,11 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api"
-	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/lotuscli"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
-	"github.com/docker/go-units"
 	"github.com/filecoin-project/pubsub"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
@@ -29,45 +27,11 @@ const (
 	oneDay            = 24 * time.Hour
 )
 
-// VWindow represents a validation window that contains a validator id and validatable node list.
-type VWindow struct {
-	NodeID           string // Node ID of the validation window.
-	ValidatableNodes map[string]int64
-}
-
-func newVWindow(nID string) *VWindow {
-	return &VWindow{
-		NodeID:           nID,
-		ValidatableNodes: make(map[string]int64),
-	}
-}
-
-// ValidatableGroup Each ValidatableGroup will be paired with a VWindow
-type ValidatableGroup struct {
-	sumBwUp int64
-	nodes   map[string]int64
-	lock    sync.RWMutex
-}
-
-func newValidatableGroup() *ValidatableGroup {
-	return &ValidatableGroup{
-		nodes: make(map[string]int64),
-	}
-}
-
 // Manager validation manager
 type Manager struct {
 	nodeMgr  *node.Manager
 	assetMgr *assets.Manager
 	notify   *pubsub.PubSub
-
-	// Each validator provides n window(VWindow) for titan according to the bandwidth down, and each window corresponds to a group(ValidatableGroup).
-	// All nodes will randomly fall into a group(ValidatableGroup).
-	// When the validation starts, the window is paired with the group.
-	validationPairLock sync.RWMutex
-	vWindows           []*VWindow          // The validator allocates n window according to the size of the bandwidth down
-	validatableGroups  []*ValidatableGroup // Each VWindow has a ValidatableGroup
-	unpairedGroup      *ValidatableGroup   // Save unpaired Validatable nodes
 
 	seed       int64
 	curRoundID string
@@ -75,8 +39,6 @@ type Manager struct {
 	config     dtypes.GetSchedulerConfigFunc
 
 	updateCh chan struct{}
-
-	nextElectionTime time.Time
 
 	// validation result worker
 	resultQueue chan *api.ValidationResult
@@ -88,35 +50,22 @@ type Manager struct {
 	cachedEpoch     uint64
 	cachedTimestamp time.Time
 
-	validatorBaseBwDn float64
-	lotusRPCAddress   string
+	lotusRPCAddress string
 
 	enableValidation bool
-
-	validationProfits     map[string]float64
-	validationProfitsLock sync.Mutex
-
-	l2ValidatorCount int
-	electionCycle    time.Duration
-	validatorRatio   float64
-
-	nodeBandwidthDowns map[string]float64
 }
 
 // NewManager return new node manager instance
 func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *Manager {
 	manager := &Manager{
-		nodeMgr:            nodeMgr,
-		assetMgr:           assetMgr,
-		config:             configFunc,
-		close:              make(chan struct{}),
-		unpairedGroup:      newValidatableGroup(),
-		updateCh:           make(chan struct{}, 1),
-		notify:             p,
-		resultQueue:        make(chan *api.ValidationResult),
-		leadershipMgr:      lmgr,
-		validationProfits:  make(map[string]float64),
-		nodeBandwidthDowns: make(map[string]float64),
+		nodeMgr:       nodeMgr,
+		assetMgr:      assetMgr,
+		config:        configFunc,
+		close:         make(chan struct{}),
+		updateCh:      make(chan struct{}, 1),
+		notify:        p,
+		resultQueue:   make(chan *api.ValidationResult),
+		leadershipMgr: lmgr,
 	}
 
 	manager.initCfg()
@@ -128,101 +77,23 @@ func (m *Manager) initCfg() {
 	cfg, err := m.config()
 	if err != nil {
 		log.Errorf("get schedulerConfig err:%s", err.Error())
-
-		m.electionCycle = electionCycle
-		m.validatorRatio = 1
 		return
 	}
 
-	m.validatorBaseBwDn = float64(cfg.ValidatorBaseBwDn * units.MiB)
 	m.lotusRPCAddress = cfg.LotusRPCAddress
 	m.enableValidation = cfg.EnableValidation
-	m.l2ValidatorCount = cfg.L2ValidatorCount
-	m.electionCycle = time.Duration(cfg.ElectionCycle) * time.Hour * 24
-	m.validatorRatio = cfg.ValidatorRatio
 }
 
 // Start start validate and elect task
 func (m *Manager) Start(ctx context.Context) {
-	// nextTick := time.Now().Truncate(validationInterval).Add(validationInterval)
-	nextTick := getNextExecutionTime()
-	duration := nextTick.Sub(time.Now())
+	go m.startValidationTicker()
 
-	go m.startValidationTicker(duration)
-	go m.startElectionTicker()
-	go m.handleValidatorProfits(duration + (time.Minute * 2))
-
-	m.subscribeNodeEvents()
 	m.handleResults()
-}
-
-// getNextExecutionTime
-func getNextExecutionTime() time.Time {
-	hours := []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23}
-
-	now := time.Now()
-	for _, hour := range hours {
-		next := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location())
-		if next.After(now) {
-			return next
-		}
-	}
-
-	next := time.Date(now.Year(), now.Month(), now.Day()+1, hours[0], 0, 0, 0, now.Location())
-	return next
 }
 
 // Stop stop
 func (m *Manager) Stop(ctx context.Context) error {
 	return m.stopValidation()
-}
-
-func (m *Manager) subscribeNodeEvents() {
-	subOnline := m.notify.Sub(types.EventNodeOnline.String())
-	subOffline := m.notify.Sub(types.EventNodeOffline.String())
-
-	go func() {
-		defer m.notify.Unsub(subOnline)
-		defer m.notify.Unsub(subOffline)
-
-		for {
-			select {
-			case u := <-subOnline:
-				node := u.(*node.Node)
-				m.onNodeStateChange(node, true)
-			case u := <-subOffline:
-				node := u.(*node.Node)
-				m.onNodeStateChange(node, false)
-			}
-		}
-	}()
-}
-
-// onNodeStateChange  changes in the state of a node (i.e. whether it comes online or goes offline)
-func (m *Manager) onNodeStateChange(node *node.Node, isOnline bool) {
-	if node == nil {
-		return
-	}
-
-	nodeID := node.NodeID
-
-	isValidator := node.Type == types.NodeValidator
-	if isOnline {
-		if isValidator {
-			// m.addValidator(nodeID, node.BandwidthDown)
-
-			// update validator owner
-			err := m.nodeMgr.UpdateValidatorInfo(m.nodeMgr.ServerID, nodeID)
-			if err != nil {
-				log.Errorf("UpdateValidatorInfo err:%s", err.Error())
-			}
-		}
-	}
-}
-
-// GetNextElectionTime Get the time of the next election
-func (m *Manager) GetNextElectionTime() time.Time {
-	return m.nextElectionTime
 }
 
 func (m *Manager) getGameEpoch() (uint64, error) {

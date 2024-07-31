@@ -133,6 +133,8 @@ func (c *Client) ServerRegister(t context.Context, serverID, nodeType, value str
 
 	serverKey := fmt.Sprintf("/%s/%s", nodeType, serverID)
 
+	fmt.Println("ServerRegister : ", serverKey)
+
 	// get a lease
 	leaseRsp, err := c.cli.Grant(ctx, serverKeepAliveDuration)
 	if err != nil {

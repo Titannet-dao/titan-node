@@ -40,6 +40,8 @@ const (
 
 	SetApiEndpointKey
 
+	ConfigWsHandler
+
 	_nInvokes // keep this last
 )
 

@@ -10,3 +10,8 @@
 *.so
 *.dll
 *.dylib
+city.mmdb
+titan-edge
+titan-candidate
+titan-scheduler
+titan-locator

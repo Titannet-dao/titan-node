@@ -12,6 +12,8 @@ func main() {
 	err := gen.WriteMapEncodersToFile("../cbor_gen.go", "assets",
 		assets.AssetPullingInfo{},
 		assets.NodePulledResult{},
+		assets.SourceDownloadInfo{},
+		assets.Token{},
 	)
 	if err != nil {
 		fmt.Println(err)

@@ -220,7 +220,7 @@ func (m *Manager) handleRemove(ctx statemachine.Context, info ProjectInfo) error
 	// log.Infof("handle remove: %s", info.Hash)
 	m.stopProjectTimeoutCounting(info.UUID.String())
 
-	list, err := m.LoadProjectReplicasInfos(info.UUID.String())
+	list, err := m.LoadProjectReplicaInfos(info.UUID.String())
 	if err != nil {
 		return err
 	}

@@ -20,12 +20,13 @@ var SchedulerCMDs = []*cli.Command{
 	WithCategory("config", sConfigCmds),
 	WithCategory("user", userCmds),
 	WithCategory("project", projectCmds),
+	WithCategory("codes", codesCmds),
+	WithCategory("provider", providerCmds),
+	WithCategory("deployment", deploymentCmds),
 	startElectionCmd,
 	// other
 	edgeUpdaterCmd,
-	electValidatorsCmd,
 	loadWorkloadCmd,
-	loadCandidateCodeCmd,
 	reNatCmd,
 }
 
@@ -138,41 +139,6 @@ var loadWorkloadCmd = &cli.Command{
 	},
 }
 
-var loadCandidateCodeCmd = &cli.Command{
-	Name:  "codes",
-	Usage: "load candidate code info",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-		&cli.StringFlag{
-			Name:  "code",
-			Usage: "code id",
-			Value: "",
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		nodeID := cctx.String("node-id")
-		code := cctx.String("code")
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		infos, err := schedulerAPI.GetCandidateCodeInfos(ctx, nodeID, code)
-		if err != nil {
-			return err
-		}
-
-		for _, info := range infos {
-			fmt.Printf("code:%s node:%s type:%s\n", info.Code, info.NodeID, info.NodeType.String())
-		}
-
-		return nil
-	},
-}
-
 var setNodePortCmd = &cli.Command{
 	Name:  "set-node-port",
 	Usage: "set the node port",
@@ -243,43 +209,6 @@ var startElectionCmd = &cli.Command{
 		defer closer()
 
 		return schedulerAPI.TriggerElection(ctx)
-	},
-}
-
-var electValidatorsCmd = &cli.Command{
-	Name:  "elect",
-	Usage: "elect validators",
-	Flags: []cli.Flag{
-		&cli.StringSliceFlag{
-			Name:  "nodes",
-			Usage: "node id list",
-			Value: &cli.StringSlice{},
-		},
-		&cli.BoolFlag{
-			Name:  "clean",
-			Usage: "Whether to clean up old validators",
-			Value: false,
-		},
-	},
-	Before: func(cctx *cli.Context) error {
-		return nil
-	},
-	Action: func(cctx *cli.Context) error {
-		nodeIDs := cctx.StringSlice("nodes")
-		if len(nodeIDs) == 0 {
-			return nil
-		}
-
-		clean := cctx.Bool("clean")
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		return schedulerAPI.ElectValidators(ctx, nodeIDs, clean)
 	},
 }
 

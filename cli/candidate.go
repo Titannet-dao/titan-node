@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -20,6 +24,7 @@ var CandidateCmds = []*cli.Command{
 	keyCmds,
 	configCmds,
 	bindCmd,
+	exitCmds,
 }
 
 func allocateSchedulerForCandidate(locatorURL, code string) (string, error) {
@@ -68,4 +73,91 @@ func RegisterCandidateNode(lr repo.LockedRepo, locatorURL string, code string) e
 	}
 
 	return saveConfigAfterRegister(lr, info, locatorURL)
+}
+
+var exitCmds = &cli.Command{
+	Name: "exit",
+	// Usage: "EXIT YOUR L1-NODE, be careful and thoughtful",
+	Usage: "Exit your L1-Node",
+	Subcommands: []*cli.Command{
+		exitExecCmd,
+		exitCalCmd,
+	},
+}
+
+var exitExecCmd = &cli.Command{
+	Name:  "exec",
+	Usage: "exec exit your L1-Node, be careful and thoughtful",
+	Action: func(cctx *cli.Context) error {
+		candidateAPI, close, err := GetCandidateAPI(cctx)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+		defer close()
+
+		ctx := ReqContext(cctx)
+
+		reader := bufio.NewReader(os.Stdin)
+
+		fmt.Println("Important: this action will quit your l1-node from titan-network!\n" +
+			"It means node will be wasted and will not be able to connect to titan-network.\n" +
+			"If you are aware of this, please type \"CONFIRM\" to continue, any words besides it are not accepted:")
+
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input != "CONFIRM" {
+			return fmt.Errorf("exit action cancelled")
+		}
+
+		calResp, err := candidateAPI.CalculateExitProfit(ctx)
+		if err != nil {
+			fmt.Println(err)
+			return fmt.Errorf("failed to calculate exit profit: %w, exit failed", err)
+		}
+		fmt.Println()
+		fmt.Printf("Penalty info: \n Current Rewards: %f\n Penalty Rate: %f\n Rewards After Penalty: %f\n", calResp.CurrentPoint, calResp.PenaltyRate*100, calResp.RemainingPoint)
+		fmt.Println()
+		fmt.Println("Type \"Accept\" to accept penalty, any words aside are not accepted:")
+
+		input, _ = reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input != "Accept" {
+			fmt.Println("Operation cancelled.")
+			return nil
+		}
+
+		fmt.Println("Exiting, please wait...")
+		time.Sleep(3 * time.Second)
+		if err := candidateAPI.DeactivateNode(ctx); err != nil {
+			fmt.Println(err)
+			return fmt.Errorf("failed to exit node: %w", err)
+		}
+		fmt.Println("Exit successfully.")
+
+		return nil
+	},
+}
+
+var exitCalCmd = &cli.Command{
+	Name:  "cal",
+	Usage: "calculate exit profit",
+	Action: func(cctx *cli.Context) error {
+		candidateAPI, close, err := GetCandidateAPI(cctx)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+		defer close()
+
+		ctx := ReqContext(cctx)
+
+		calResp, err := candidateAPI.CalculateExitProfit(ctx)
+		if err != nil {
+			fmt.Println(err)
+			return fmt.Errorf("failed to calculate exit profit: %w, exit failed", err)
+		}
+		fmt.Printf("Penalty info: \n Current Rewards: %f\n Penalty Rate: %f\n Rewards After Penalty: %f\n", calResp.CurrentPoint, calResp.PenaltyRate*100, calResp.RemainingPoint)
+		return nil
+	},
 }

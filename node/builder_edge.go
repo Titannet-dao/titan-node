@@ -58,5 +58,6 @@ func ConfigEdge(c interface{}) Option {
 		Override(new(*datasync.DataSync), modules.NewDataSync),
 		Override(new(dtypes.WorkerdPath), modules.WorkerdPath),
 		Override(new(*workerd.Workerd), modules.NewWorkerd),
+		Override(new(*edge.TunManager), edge.NewTunManager()),
 	)
 }

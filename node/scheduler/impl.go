@@ -9,8 +9,10 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"github.com/Filecoin-Titan/titan/node/scheduler/container"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/scheduler/workload"
 	"github.com/Filecoin-Titan/titan/region"
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 
 	"go.uber.org/fx"
@@ -46,11 +49,12 @@ const (
 	cpuLimit           = 140
 	memoryLimit        = 2250 * units.GiB
 	diskSpaceLimit     = 500 * units.TiB
-	bandwidthUpLimit   = 200 * units.MiB
+	bandwidthUpLimit   = 1500 * units.MiB
 	availableDiskLimit = 2 * units.TiB
 
-	validatorCpuLimit    = 8
-	validatorMemoryLimit = 8 * units.GB
+	l1CpuLimit       = 8
+	l1MemoryLimit    = 16 * units.GB
+	l1DiskSpaceLimit = 4 * units.TB
 )
 
 // Scheduler represents a scheduler node in a distributed system.
@@ -72,6 +76,7 @@ type Scheduler struct {
 	GetSchedulerConfigFunc dtypes.GetSchedulerConfigFunc
 	WorkloadManager        *workload.Manager
 	ProjectManager         *projects.Manager
+	ContainerManager       *container.Manager
 
 	PrivateKey *rsa.PrivateKey
 	Transport  *quic.Transport
@@ -88,18 +93,16 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 
 	cNode := s.NodeManager.GetNode(nodeID)
 	if cNode == nil {
-		if err := s.NodeManager.NodeExists(nodeID, nodeType); err != nil {
+		if err := s.NodeManager.NodeExists(nodeID); err != nil {
 			return xerrors.Errorf("node: %s, type: %d, error: %w", nodeID, nodeType, err)
 		}
 		cNode = node.New()
 		alreadyConnect = false
 	}
 
-	if cNode.NodeInfo != nil {
-		// clean old info
-		if cNode.ExternalIP != "" {
-			s.NodeManager.RemoveNodeIP(nodeID, cNode.ExternalIP)
-		}
+	// clean old info
+	if cNode.ExternalIP != "" {
+		s.NodeManager.IPMgr.RemoveNodeIP(nodeID, cNode.ExternalIP)
 	}
 
 	externalIP, _, err := net.SplitHostPort(remoteAddr)
@@ -107,32 +110,23 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		return xerrors.Errorf("SplitHostPort err:%s", err.Error())
 	}
 
-	if !s.NodeManager.StoreNodeIP(nodeID, externalIP) {
+	if !s.NodeManager.IPMgr.StoreNodeIP(nodeID, externalIP) {
 		return xerrors.Errorf("%s The number of IPs exceeds the limit", externalIP)
 	}
 
 	defer func() {
 		if err != nil {
-			s.NodeManager.RemoveNodeIP(nodeID, externalIP)
-			s.NodeManager.RemoveNodeGeo(nodeID, cNode.GeoInfo)
+			s.NodeManager.IPMgr.RemoveNodeIP(nodeID, externalIP)
+			s.NodeManager.GeoMgr.RemoveNodeGeo(nodeID, nodeType, cNode.AreaID)
 		}
 	}()
 
-	cNode.SetToken(opts.Token)
+	cNode.Token = opts.Token
 	cNode.ExternalURL = opts.ExternalURL
 	cNode.TCPPort = opts.TcpServerPort
 	cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
 
-	if len(s.SchedulerCfg.StorageCandidates) > 0 {
-		for _, nID := range s.SchedulerCfg.StorageCandidates {
-			if nID == nodeID {
-				cNode.IsStorageOnly = true
-				break
-			}
-		}
-	}
-
-	log.Infof("node connected %s, address[%s] , %v, IsPrivateMinioOnly:%v", nodeID, remoteAddr, alreadyConnect, cNode.IsPrivateMinioOnly)
+	log.Infof("node connected %s, address[%s] , %v, IsPrivateMinioOnly:%v , opts.ExternalURL:%s", nodeID, remoteAddr, alreadyConnect, cNode.IsPrivateMinioOnly, cNode.ExternalURL)
 
 	err = cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
 	if err != nil {
@@ -142,38 +136,49 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 	// init node info
 	nInfo, err := cNode.API.GetNodeInfo(context.Background())
 	if err != nil {
-		log.Errorf("%s nodeConnect NodeInfo err:%s", nodeID, err.Error())
-		return err
+		return xerrors.Errorf("%s nodeConnect NodeInfo err:%s", nodeID, err.Error())
 	}
 
 	if nodeID != nInfo.NodeID {
 		return xerrors.Errorf("nodeID mismatch %s, %s", nodeID, nInfo.NodeID)
 	}
 
-	info, err := s.db.GetCandidateCodeInfoForNodeID(nodeID)
+	// for container
+	{
+		if nodeType == types.NodeCandidate {
+			err = s.ContainerManager.AddNewProvider(ctx, &types.Provider{
+				ID:         nodeID,
+				IP:         externalIP,
+				RemoteAddr: opts.ExternalURL,
+				State:      types.ProviderStateOnline,
+				CreatedAt:  time.Now(),
+			})
+			if err != nil {
+				return xerrors.Errorf("add new container provider: %s %v", nodeID, err)
+			}
+		}
+	}
+
+	nodeInfo, err := s.checkNodeParameters(nInfo, nodeType)
 	if err != nil {
-		return xerrors.Errorf("nodeID GetCandidateCodeInfoForNodeID %s, %s", nodeID, err.Error())
-	}
-	nInfo.IsTestNode = info.IsTest
-
-	nodeInfo, meetCandidateStandard, err := s.checkNodeParameters(nInfo, nodeType)
-	if err != nil {
-		return err
+		return xerrors.Errorf("Node %s does not meet the standard %s", nodeID, err.Error())
 	}
 
-	if !meetCandidateStandard {
-		return xerrors.Errorf("Node %s does not meet the standard", nodeID)
-	}
-
+	nodeInfo.NodeID = nodeID
 	nodeInfo.RemoteAddr = remoteAddr
 	nodeInfo.SchedulerID = s.ServerID
 	nodeInfo.ExternalIP = externalIP
 	nodeInfo.BandwidthUp = units.KiB
 	nodeInfo.NATType = types.NatTypeUnknown.String()
 
-	nodeInfo.GeoInfo, err = s.GetGeoInfo(externalIP)
-	if err != nil {
-		log.Warnf("%s getAreaID error %s", nodeID, err.Error())
+	if opts.GeoInfo != nil {
+		nodeInfo.AreaID = opts.GeoInfo.Geo
+	} else {
+		geoInfo, err := s.GetGeoInfo(externalIP)
+		if err != nil {
+			log.Warnf("%s getAreaID error %s", nodeID, err.Error())
+		}
+		nodeInfo.AreaID = geoInfo.Geo
 	}
 
 	oldInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
@@ -181,6 +186,7 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		return xerrors.Errorf("load node online duration %s err : %s", nodeID, err.Error())
 	}
 
+	nodeInfo.FirstTime = time.Now()
 	if oldInfo != nil {
 		// init node info
 		nodeInfo.PortMapping = oldInfo.PortMapping
@@ -200,16 +206,15 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 		}
 	}
 
-	cNode.NodeInfo = nodeInfo
+	cNode.InitInfo(nodeInfo)
 
 	if !alreadyConnect {
 		if nodeType == types.NodeEdge {
-			incr, _ := s.NodeManager.GetEdgeBaseProfitDetails(cNode)
+			incr, _ := s.NodeManager.GetEdgeBaseProfitDetails(cNode, 0)
 			cNode.IncomeIncr = incr
-
-			s.NodeManager.AddNodeGeo(cNode.NodeInfo, cNode.GeoInfo)
 		}
-		cNode.OnlineRate = s.NodeManager.ComputeNodeOnlineRate(nodeID, cNode.FirstTime)
+		s.NodeManager.GeoMgr.AddNodeGeo(nodeInfo, cNode.AreaID)
+		cNode.OnlineRate = s.NodeManager.ComputeNodeOnlineRate(nodeID, nodeInfo.FirstTime)
 
 		pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
 		if err != nil && err != sql.ErrNoRows {
@@ -235,12 +240,27 @@ func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions,
 
 	if nodeType == types.NodeEdge {
 		go s.NatManager.DetermineEdgeNATType(context.Background(), nodeID)
-	} else {
+	} else if nodeType == types.NodeCandidate {
+		err := checkDomain(cNode.ExternalURL)
+		log.Infof("%s checkDomain [%s] %v", nodeID, cNode.ExternalURL, err)
+		cNode.IsStorageNode = err == nil
+
 		go s.NatManager.DetermineCandidateNATType(context.Background(), nodeID)
 	}
 
 	s.DataSync.AddNodeToList(nodeID)
 	return nil
+}
+
+func checkDomain(domain string) error {
+	if domain == "" {
+		return xerrors.New("domain is nil")
+	}
+
+	url := fmt.Sprintf("%s/abc", domain)
+	_, err := http.Get(url)
+
+	return err
 }
 
 func (s *Scheduler) getNodeLastValidateTime(nodeID string) int64 {
@@ -281,9 +301,7 @@ func roundUpToNextGB(bytes int64) int64 {
 	return ((bytes / GB) + 1) * GB
 }
 
-func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.NodeType) (*types.NodeInfo, bool, error) {
-	meetCandidateStandard := false
-
+func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.NodeType) (*types.NodeInfo, error) {
 	if nodeInfo.AvailableDiskSpace <= 0 {
 		nodeInfo.AvailableDiskSpace = 2 * units.GiB
 	}
@@ -296,12 +314,10 @@ func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.
 
 	useSize, err := s.db.LoadReplicaSizeByNodeID(nodeInfo.NodeID)
 	if err != nil {
-		return nil, false, xerrors.Errorf("LoadReplicaSizeByNodeID %s err:%s", nodeInfo.NodeID, err.Error())
+		return nil, xerrors.Errorf("LoadReplicaSizeByNodeID %s err:%s", nodeInfo.NodeID, err.Error())
 	}
 
 	if nodeType == types.NodeEdge {
-		meetCandidateStandard = true
-
 		if nodeInfo.AvailableDiskSpace > availableDiskLimit {
 			nodeInfo.AvailableDiskSpace = availableDiskLimit
 		}
@@ -319,36 +335,53 @@ func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.
 		}
 
 		if nodeInfo.DiskSpace > diskSpaceLimit || nodeInfo.DiskSpace < 0 {
-			return nil, false, xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%.2f]", nodeInfo.NodeID, nodeInfo.DiskSpace)
+			return nil, xerrors.Errorf("checkNodeParameters [%s] DiskSpace [%s]", nodeInfo.NodeID, units.BytesSize(nodeInfo.DiskSpace))
 		}
 
 		if nodeInfo.BandwidthDown < 0 {
-			return nil, false, xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%d]", nodeInfo.NodeID, nodeInfo.BandwidthDown)
+			return nil, xerrors.Errorf("checkNodeParameters [%s] BandwidthDown [%s]", nodeInfo.NodeID, units.BytesSize(float64(nodeInfo.BandwidthDown)))
 		}
 
 		if nodeInfo.BandwidthUp > bandwidthUpLimit || nodeInfo.BandwidthUp < 0 {
-			return nil, false, xerrors.Errorf("checkNodeParameters [%s] BandwidthUp [%d]", nodeInfo.NodeID, nodeInfo.BandwidthUp)
+			return nil, xerrors.Errorf("checkNodeParameters [%s] BandwidthUp [%s]", nodeInfo.NodeID, units.BytesSize(float64(nodeInfo.BandwidthUp)))
 		}
 
 		if nodeInfo.Memory > memoryLimit || nodeInfo.Memory < 0 {
-			return nil, false, xerrors.Errorf("checkNodeParameters [%s] Memory [%.2f]", nodeInfo.NodeID, nodeInfo.Memory)
+			return nil, xerrors.Errorf("checkNodeParameters [%s] Memory [%s]", nodeInfo.NodeID, units.BytesSize(nodeInfo.Memory))
 		}
 
 		if nodeInfo.CPUCores > cpuLimit || nodeInfo.CPUCores < 0 {
-			return nil, false, xerrors.Errorf("checkNodeParameters [%s] CPUCores [%d]", nodeInfo.NodeID, nodeInfo.CPUCores)
+			return nil, xerrors.Errorf("checkNodeParameters [%s] CPUCores [%d]", nodeInfo.NodeID, nodeInfo.CPUCores)
 		}
-
 	} else if nodeType == types.NodeCandidate {
-		meetCandidateStandard = nodeInfo.IsTestNode || (nodeInfo.Memory >= validatorMemoryLimit && nodeInfo.CPUCores >= validatorCpuLimit)
-
-		isValidator, err := s.db.IsValidator(nodeInfo.NodeID)
+		info, err := s.db.GetCandidateCodeInfoForNodeID(nodeInfo.NodeID)
 		if err != nil {
-			return nil, false, xerrors.Errorf("checkNodeParameters %s IsValidator err:%s", nodeInfo.NodeID, err.Error())
+			return nil, xerrors.Errorf("nodeID GetCandidateCodeInfoForNodeID %s, %s", nodeInfo.NodeID, err.Error())
+		}
+		nodeInfo.IsTestNode = info.IsTest
+
+		if !nodeInfo.IsTestNode {
+			if nodeInfo.Memory < l1MemoryLimit {
+				return nil, xerrors.Errorf("Memory [%s]<[%s]", units.BytesSize(nodeInfo.Memory), units.BytesSize(l1MemoryLimit))
+			}
+
+			if nodeInfo.CPUCores < l1CpuLimit {
+				return nil, xerrors.Errorf("CPUCores [%d]<[%d]", nodeInfo.CPUCores, l1CpuLimit)
+			}
+
+			if nodeInfo.DiskSpace < l1DiskSpaceLimit {
+				return nil, xerrors.Errorf("DiskSpace [%s]<[%s]", units.BytesSize(nodeInfo.DiskSpace), units.BytesSize(l1DiskSpaceLimit))
+			}
 		}
 
-		if isValidator {
-			nodeInfo.Type = types.NodeValidator
-		}
+		// isValidator, err := s.db.IsValidator(nodeInfo.NodeID)
+		// if err != nil {
+		// 	return nil, false, xerrors.Errorf("checkNodeParameters %s IsValidator err:%s", nodeInfo.NodeID, err.Error())
+		// }
+
+		// if isValidator {
+		// nodeInfo.Type = types.NodeValidator
+		// }
 		nodeInfo.AvailableDiskSpace = nodeInfo.DiskSpace * 0.9
 	}
 
@@ -357,7 +390,7 @@ func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.
 	// 	nodeInfo.AvailableDiskSpace = float64(roundUpToNextGB(useSize))
 	// }
 
-	return &nodeInfo, meetCandidateStandard, nil
+	return &nodeInfo, nil
 }
 
 // NodeValidationResult processes the validation result for a node
@@ -365,7 +398,7 @@ func (s *Scheduler) NodeValidationResult(ctx context.Context, r io.Reader, sign 
 	validator := handler.GetNodeID(ctx)
 	node := s.NodeManager.GetNode(validator)
 	if node == nil {
-		return fmt.Errorf("node %s not online", validator)
+		return xerrors.Errorf("node %s not online", validator)
 	}
 
 	signBuf, err := hex.DecodeString(sign)
@@ -400,7 +433,7 @@ func (s *Scheduler) NodeValidationResult(ctx context.Context, r io.Reader, sign 
 
 // TriggerElection triggers a single election for validators.
 func (s *Scheduler) TriggerElection(ctx context.Context) error {
-	s.ValidationMgr.StartElection()
+	// s.ValidationMgr.StartElection()
 	return nil
 }
 
@@ -417,7 +450,7 @@ func (s *Scheduler) GetValidationResults(ctx context.Context, nodeID string, lim
 // GetSchedulerPublicKey get server publicKey
 func (s *Scheduler) GetSchedulerPublicKey(ctx context.Context) (string, error) {
 	if s.PrivateKey == nil {
-		return "", fmt.Errorf("scheduler private key not exist")
+		return "", xerrors.Errorf("scheduler private key not exist")
 	}
 
 	publicKey := s.PrivateKey.PublicKey
@@ -435,13 +468,66 @@ func (s *Scheduler) GetNodePublicKey(ctx context.Context, nodeID string) (string
 	return string(pem), nil
 }
 
-// GetValidationInfo  get information related to validation and election
-func (s *Scheduler) GetValidationInfo(ctx context.Context) (*types.ValidationInfo, error) {
-	eTime := s.ValidationMgr.GetNextElectionTime()
+func (s *Scheduler) SubmitProjectReport(ctx context.Context, req *types.ProjectRecordReq) error {
+	candidateID := handler.GetNodeID(ctx)
+	if len(candidateID) == 0 {
+		return xerrors.New("SubmitProjectReport invalid request")
+	}
 
-	return &types.ValidationInfo{
-		NextElectionTime: eTime,
-	}, nil
+	if req.NodeID == "" {
+		return xerrors.New("SubmitProjectReport node id is nil")
+	}
+
+	if req.ProjectID == "" {
+		return xerrors.New("SubmitProjectReport project id is nil")
+	}
+
+	rInfo, err := s.db.LoadProjectReplicaInfo(req.ProjectID, req.NodeID)
+	if err != nil {
+		return xerrors.Errorf("SubmitProjectReport LoadProjectReplicaInfo err:%s", err.Error())
+	}
+
+	if rInfo.Status != types.ProjectReplicaStatusStarted {
+		return xerrors.Errorf("SubmitProjectReport project status is %s", rInfo.Status.String())
+	}
+
+	wID, err := s.db.LoadWSServerID(req.NodeID)
+	if err != nil {
+		return xerrors.Errorf("SubmitProjectReport LoadWSServerID err:%s", err.Error())
+	}
+
+	if wID != candidateID {
+		return xerrors.Errorf("SubmitProjectReport candidate id %s != %s", candidateID, wID)
+	}
+
+	node := s.NodeManager.GetEdgeNode(req.NodeID)
+	if node == nil {
+		return xerrors.Errorf("SubmitProjectReport node %s offline", req.NodeID)
+	}
+
+	if req.BandwidthDownSize > 0 {
+		pInfo := s.NodeManager.GetDownloadProfitDetails(node, req.BandwidthDownSize, req.ProjectID)
+		if pInfo != nil {
+			pInfo.Profit = 0 // TODO test
+			err := s.db.AddNodeProfit(pInfo)
+			if err != nil {
+				log.Errorf("SubmitProjectReport AddNodeProfit %s,%d, %.4f err:%s", pInfo.NodeID, pInfo.PType, pInfo.Profit, err.Error())
+			}
+		}
+	}
+
+	if req.BandwidthUpSize > 0 {
+		pInfo := s.NodeManager.GetUploadProfitDetails(node, req.BandwidthUpSize, req.ProjectID)
+		if pInfo != nil {
+			pInfo.Profit = 0 // TODO test
+			err := s.db.AddNodeProfit(pInfo)
+			if err != nil {
+				log.Errorf("SubmitProjectReport AddNodeProfit %s,%d, %.4f err:%s", pInfo.NodeID, pInfo.PType, pInfo.Profit, err.Error())
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *Scheduler) SubmitWorkloadReportV2(ctx context.Context, workload *types.WorkloadRecordReq) error {
@@ -477,20 +563,6 @@ func (s *Scheduler) GetRetrieveEventRecords(ctx context.Context, nodeID string, 
 	return s.NodeManager.LoadRetrieveEventRecords(nodeID, limit, offset)
 }
 
-// // GetWorkloadRecord retrieves workload result.
-// func (s *Scheduler) GetWorkloadRecord(ctx context.Context, tokenID string) (*types.WorkloadRecord, error) {
-// 	return s.NodeManager.LoadWorkloadRecord(tokenID)
-// }
-
-// ElectValidators elect validators
-func (s *Scheduler) ElectValidators(ctx context.Context, nodeIDs []string, cleanOld bool) error {
-	if len(nodeIDs) == 0 {
-		return nil
-	}
-
-	return s.ValidationMgr.CompulsoryElection(nodeIDs, cleanOld)
-}
-
 // UpdateNetFlows update node net flow total,up,down usage
 func (s *Scheduler) UpdateNetFlows(ctx context.Context, total, up, down int64) error {
 	return nil
@@ -510,4 +582,53 @@ func (s *Scheduler) ReDetermineNodeNATType(ctx context.Context, nodeID string) e
 	}
 
 	return nil
+}
+
+func (s *Scheduler) GenerateCandidateCodes(ctx context.Context, count int, nodeType types.NodeType, isTest bool) ([]string, error) {
+	infos := make([]*types.CandidateCodeInfo, 0)
+	out := make([]string, 0)
+	for i := 0; i < count; i++ {
+		code := uuid.NewString()
+		code = strings.Replace(code, "-", "", -1)
+
+		infos = append(infos, &types.CandidateCodeInfo{
+			Code:       code,
+			NodeType:   nodeType,
+			Expiration: time.Now().Add(time.Hour * 24),
+			IsTest:     isTest,
+		})
+		out = append(out, code)
+	}
+
+	return out, s.db.SaveCandidateCodeInfo(infos)
+}
+
+func (s *Scheduler) GetCandidateCodeInfos(ctx context.Context, nodeID, code string) ([]*types.CandidateCodeInfo, error) {
+	if nodeID != "" {
+		info, err := s.db.GetCandidateCodeInfoForNodeID(nodeID)
+		if err != nil {
+			return nil, err
+		}
+
+		return []*types.CandidateCodeInfo{info}, nil
+	}
+
+	if code != "" {
+		info, err := s.db.GetCandidateCodeInfo(code)
+		if err != nil {
+			return nil, err
+		}
+
+		return []*types.CandidateCodeInfo{info}, nil
+	}
+
+	return s.db.GetCandidateCodeInfos()
+}
+
+func (s *Scheduler) ResetCandidateCode(ctx context.Context, nodeID, code string) error {
+	return s.db.ResetCandidateCodeInfo(code, nodeID)
+}
+
+func (s *Scheduler) RemoveCandidateCode(ctx context.Context, code string) error {
+	return s.db.DeleteCandidateCodeInfo(code)
 }
