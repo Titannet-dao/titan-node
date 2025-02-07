@@ -35,7 +35,7 @@ func showErrorToUser(err error) error {
 	// If the error has a complete message associated with it then show it
 	clientResponseError, ok := err.(ClientResponseError)
 	if ok && 0 != len(clientResponseError.Message) {
-		_, _ = fmt.Fprintf(os.Stderr, "provider error messsage:\n%v\n", clientResponseError.Message)
+		_, _ = fmt.Fprintf(os.Stderr, "provider error message:\n%v\n", clientResponseError.Message)
 		err = nil
 	}
 
