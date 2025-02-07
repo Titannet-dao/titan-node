@@ -251,7 +251,7 @@ var progressCmd = &cli.Command{
 		for _, progress := range ret.Progresses {
 			fmt.Printf("Cache asset %s %v\n", progress.CID, progress.Status)
 			fmt.Printf("Total block count %d, done block count %d  \n", progress.BlocksCount, progress.DoneBlocksCount)
-			fmt.Printf("Total block size %d, done block siez %d  \n", progress.Size, progress.DoneSize)
+			fmt.Printf("Total block size %d, done block size, seize %d  \n", progress.Size, progress.DoneSize)
 			fmt.Println()
 		}
 		return nil
@@ -810,14 +810,14 @@ var stateCmd = &cli.Command{
 		defer close()
 
 		type NodeState struct {
-			Runing bool `json:"running"`
+			Running, Ruining bool `json:"running"`
 			Online bool `json:"online"`
 		}
 
 		nodeState := NodeState{}
 		online, err := api.GetEdgeOnlineStateFromScheduler(cctx.Context)
 		if err == nil {
-			nodeState.Runing = true
+			nodeState.Running, Ruining = true
 			nodeState.Online = online
 		} else {
 			fmt.Println("err ", err.Error())
@@ -1052,7 +1052,7 @@ var deleteLocalAssetCmd = &cli.Command{
 
 var upgradeCmd = &cli.Command{
 	Name:  "upgrade",
-	Usage: "Upgrade titan egde",
+	Usage: "Upgrade titan edge",
 	Flags: []cli.Flag{},
 	Action: func(cctx *cli.Context) error {
 		client := github.NewClient(nil)
@@ -1204,7 +1204,7 @@ func unpackAndReplaceBinary(f []byte) error {
 			header.Name = header.Name[strings.LastIndex(header.Name, "/")+1:]
 			found = true
 
-			// check whether exsist same tmp file
+			// check whether exists, exist same tmp file
 			if _, err := os.Stat(header.Name + "_tmp"); err == nil {
 				if err := os.Remove(header.Name + "_tmp"); err != nil {
 					return err
@@ -1304,7 +1304,7 @@ var freeUpDiskCmd = &cli.Command{
 			Action: func(cctx *cli.Context) error {
 				api, edgeClose, err := getEdgeAPI(cctx)
 				if err != nil {
-					log.Errorf("get egde api failed: %s", err.Error())
+					log.Errorf("get edge api failed: %s", err.Error())
 					return err
 				}
 				defer edgeClose()
@@ -1330,7 +1330,7 @@ var freeUpDiskCmd = &cli.Command{
 			Action: func(cctx *cli.Context) error {
 				api, edgeClose, err := getEdgeAPI(cctx)
 				if err != nil {
-					log.Errorf("get egde api failed: %s", err.Error())
+					log.Errorf("get edge api failed: %s", err.Error())
 					return err
 				}
 				defer edgeClose()
@@ -1357,7 +1357,7 @@ var freeUpDiskCmd = &cli.Command{
 
 				api, edgeClose, err := getEdgeAPI(cctx)
 				if err != nil {
-					log.Errorf("get egde api failed: %s", err.Error())
+					log.Errorf("get edge api failed: %s", err.Error())
 					return err
 				}
 				defer edgeClose()
