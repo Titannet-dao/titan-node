@@ -767,7 +767,7 @@ var CopyFileCmd = &cli.Command{
 
 		err = doLeaseShell(ctx, endpoint.String(), header, reader, stdout, stderr, false, terminalResizes)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "provider error messsage:\n%v\n", err.Error())
+			fmt.Fprintf(os.Stderr, "provider error message:\n%v\n", err.Error())
 		}
 
 		return nil
