@@ -72,7 +72,7 @@ func (m *Manager) plan(events []statemachine.Event, state *ProjectInfo) (func(st
 		return nil, processed, xerrors.Errorf("running planner for state %s failed: %w", state.State, err)
 	}
 
-	log.Debugf("%s: %s", state.UUID, state.State)
+	log.Debugf("%s: %s , %s", state.UUID, state.State, state.Requirement.NodeIDs)
 
 	switch state.State {
 	// Happy path

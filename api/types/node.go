@@ -7,6 +7,7 @@ import (
 
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/region"
+	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 )
 
@@ -26,33 +27,78 @@ type NodeDynamicInfo struct {
 	BandwidthDown      int64     `json:"bandwidth_down" db:"bandwidth_down"`
 	DownloadTraffic    int64     `db:"download_traffic"`
 	UploadTraffic      int64     `db:"upload_traffic"`
+	NATType            string    `db:"nat_type"`
+
+	BandwidthUpScore   int64
+	BandwidthDownScore int64
+
+	TodayOnlineTimeWindow int // today online time window
+}
+
+type DeviceRunningStat struct {
+	CPUCores      int
+	CPUInfo       string
+	CPUUsage      []float64
+	CPUTotalUsage float64
+
+	Memory      uint64
+	MemoryUsed  uint64
+	MemoryUsage float64
+
+	// ProcessBandWidthUp   int64
+	// ProcessBandWidthDown int64
+	NicBandWidthUp    int64 // network interface card bandwidth
+	NicBandWidthUpMax int64
+	NicBandWidthUpAvg int64
+	NicBandWidthUpMin int64
+
+	NicBandWidthDown   int64
+	NicBandWidthDowMax int64
+	NicBandWidthDowAvg int64
+	NicBandWidthDowMin int64
+
+	LastSampleTime time.Time
+}
+
+// NodeStatisticsInfo holds statistics about node assets.
+type NodeStatisticsInfo struct {
+	AssetCount             int64 `db:"asset_count"`
+	AssetSucceededCount    int64 `db:"asset_succeeded_count"`
+	AssetFailedCount       int64 `db:"asset_failed_count"`
+	RetrieveCount          int64 `db:"retrieve_count"`
+	RetrieveSucceededCount int64 `db:"retrieve_succeeded_count"`
+	RetrieveFailedCount    int64 `db:"retrieve_failed_count"`
+	ProjectCount           int64 `db:"project_count"`
+	ProjectSucceededCount  int64 `db:"project_succeeded_count"`
+	ProjectFailedCount     int64 `db:"project_failed_count"`
+
+	ReplicaCount int64
 }
 
 // NodeInfo contains information about a node.
 type NodeInfo struct {
-	IsTestNode      bool
-	Type            NodeType
-	ExternalIP      string
-	InternalIP      string
-	CPUUsage        float64
-	MemoryUsage     float64
-	Status          NodeStatus
-	NATType         string
+	IsTestNode  bool
+	Type        NodeType
+	ExternalIP  string
+	InternalIP  string
+	CPUUsage    float64
+	MemoryUsage float64
+	Status      NodeStatus
+	// NATType         string
 	ClientType      NodeClientType
 	BackProjectTime int64
 	RemoteAddr      string
 	Level           int
 	IncomeIncr      float64 // Base points increase every half hour (30 minute)
 	AreaID          string
-	Mx              float64
-	AssetCount      int64 `db:"asset_count"`
-	RetrieveCount   int64 `db:"retrieve_count"`
+	Mx              float64 // Node online coefficient
 
 	FirstTime      time.Time       `db:"first_login_time"`
 	NetFlowUp      int64           `json:"netflow_up" db:"netflow_up" gorm:"column:netflow_up;"`
 	NetFlowDown    int64           `json:"netflow_down" db:"netflow_down" gorm:"column:netflow_down;"`
 	DiskSpace      float64         `json:"disk_space" form:"diskSpace" gorm:"column:disk_space;comment:;" db:"disk_space"`
 	SystemVersion  string          `json:"system_version" form:"systemVersion" gorm:"column:system_version;comment:;" db:"system_version"`
+	Version        int64           `db:"version"`
 	DiskType       string          `json:"disk_type" form:"diskType" gorm:"column:disk_type;comment:;" db:"disk_type"`
 	IoSystem       string          `json:"io_system" form:"ioSystem" gorm:"column:io_system;comment:;" db:"io_system"`
 	NodeName       string          `json:"node_name" form:"nodeName" gorm:"column:node_name;comment:;" db:"node_name"`
@@ -66,13 +112,27 @@ type NodeInfo struct {
 	GPUInfo        string          `json:"gpu_info" form:"gpuInfo" gorm:"column:gpu_info;comment:;" db:"gpu_info"`
 	FreeUpFiskTime time.Time       `db:"free_up_disk_time"`
 	WSServerID     string          `db:"ws_server_id"`
+	ForceOffline   bool            `db:"force_offline"`
 
 	NodeDynamicInfo
+	NodeStatisticsInfo
+}
+
+// NodeMigrateInfo holds information about node migration.
+type NodeMigrateInfo struct {
+	NodeInfo       *NodeInfo
+	ActivationInfo *ActivationDetail
+	CodeInfo       *CandidateCodeInfo
+	OnlineCounts   map[time.Time]int
+	ProfitList     []*ProfitDetails
+
+	Key string
 }
 
 // NodeClientType node client type
 type NodeClientType int
 
+// NodeOther represents a node type that is not specifically defined.
 const (
 	NodeOther NodeClientType = iota
 	NodeWindows
@@ -84,6 +144,7 @@ const (
 // NodeStatus node status
 type NodeStatus int
 
+// NodeOffline indicates that the node is not currently online.
 const (
 	NodeOffline NodeStatus = iota
 
@@ -104,6 +165,7 @@ func (n NodeStatus) String() string {
 // NodeType node type
 type NodeType int
 
+// NodeUnknown represents an unknown node type.
 const (
 	NodeUnknown NodeType = iota
 
@@ -114,6 +176,7 @@ const (
 	NodeLocator
 	NodeUpdater
 	NodeL5
+	NodeL3
 )
 
 func (n NodeType) String() string {
@@ -130,6 +193,8 @@ func (n NodeType) String() string {
 		return "locator"
 	case NodeL5:
 		return "l5"
+	case NodeL3:
+		return "l3"
 	}
 
 	return ""
@@ -162,6 +227,7 @@ type EdgeDownloadInfo struct {
 	NatType string
 }
 
+// ExitProfitRsp represents the response structure for exit profit calculations.
 type ExitProfitRsp struct {
 	CurrentPoint   float64
 	RemainingPoint float64
@@ -208,12 +274,14 @@ type CandidateDownloadInfo struct {
 	AWSKey string
 }
 
+// SourceDownloadInfo holds information about the source download.
 type SourceDownloadInfo struct {
 	NodeID  string
 	Address string
 	Tk      *Token
 }
 
+// AssetSourceDownloadInfoRsp contains information about the download source for an asset.
 type AssetSourceDownloadInfoRsp struct {
 	WorkloadID string
 
@@ -227,7 +295,7 @@ type AssetSourceDownloadInfoRsp struct {
 	SourceList []*SourceDownloadInfo
 }
 
-// NodeIPInfo
+// NodeIPInfo represents the IP information of a node.
 type NodeIPInfo struct {
 	NodeID      string
 	IP          string
@@ -281,6 +349,7 @@ func (n NatType) String() string {
 	return "UnknowNAT"
 }
 
+// FromString converts a string representation of a NAT type to a NatType.
 func (n NatType) FromString(natType string) NatType {
 	switch natType {
 	case "NoNat":
@@ -399,7 +468,7 @@ type Token struct {
 	Sign string
 }
 
-// ProjectRecordReq
+// ProjectRecordReq represents a request for a project record.
 type ProjectRecordReq struct {
 	NodeID            string
 	ProjectID         string
@@ -407,10 +476,15 @@ type ProjectRecordReq struct {
 	BandwidthDownSize float64
 	StartTime         time.Time
 	EndTime           time.Time
+	MaxDelay          int64
+	MinDelay          int64
+	AvgDelay          int64
 }
 
+// WorkloadEvent represents the different types of workload events.
 type WorkloadEvent int
 
+// WorkloadEventPull indicates a pull event for workloads.
 const (
 	WorkloadEventPull WorkloadEvent = iota
 	WorkloadEventSync
@@ -431,13 +505,25 @@ const (
 	WorkloadStatusInvalid
 )
 
+// WorkloadReqStatus Workload Status
+type WorkloadReqStatus int
+
+// WorkloadReqStatusSucceeded is the workload status.
+const (
+	WorkloadReqStatusSucceeded WorkloadReqStatus = iota
+	WorkloadReqStatusFailed
+)
+
+// Workload represents a unit of work with a source ID and download size.
 type Workload struct {
 	SourceID     string
 	DownloadSize int64
 	CostTime     int64 // Millisecond
+
+	Status WorkloadReqStatus
 }
 
-// WorkloadReportRecord use to store workloadReport
+// WorkloadRecord use to store workloadReport
 type WorkloadRecord struct {
 	WorkloadID    string         `db:"workload_id"`
 	AssetCID      string         `db:"asset_cid"`
@@ -457,6 +543,7 @@ type WorkloadRecordReq struct {
 	Workloads  []Workload
 }
 
+// NodeWorkloadReport represents a report of workloads for a node.
 type NodeWorkloadReport struct {
 	// CipherText encrypted []*WorkloadReport by scheduler public key
 	CipherText []byte
@@ -464,12 +551,14 @@ type NodeWorkloadReport struct {
 	Sign []byte
 }
 
+// NatPunchReq represents a request for NAT punching.
 type NatPunchReq struct {
 	Tk      *Token
 	NodeID  string
 	Timeout time.Duration
 }
 
+// ConnectOptions holds the configuration options for connecting to the server.
 type ConnectOptions struct {
 	Token         string
 	TcpServerPort int
@@ -477,9 +566,11 @@ type ConnectOptions struct {
 	IsPrivateMinioOnly bool
 	ExternalURL        string
 
-	GeoInfo *region.GeoInfo
+	GeoInfo             *region.GeoInfo
+	ResourcesStatistics *ResourcesStatistics
 }
 
+// GeneratedCarInfo holds information about a generated CAR (Content Addressable Resource).
 type GeneratedCarInfo struct {
 	DataCid   string
 	PieceCid  string
@@ -487,19 +578,34 @@ type GeneratedCarInfo struct {
 	Path      string
 }
 
+// NodeActivation represents the activation details for a node.
 type NodeActivation struct {
 	NodeID         string
 	ActivationCode string
 }
 
+// NodeRegister represents a registration for a node with its ID and code.
+type NodeRegister struct {
+	NodeID    string
+	Code      string
+	PublicKey string
+	AreaID    string
+	NodeType  NodeType
+}
+
+// ActivationDetail holds the details of an activation for a node.
 type ActivationDetail struct {
 	NodeID        string   `json:"node_id" db:"node_id"`
 	AreaID        string   `json:"area_id" `
 	ActivationKey string   `json:"activation_key" db:"activation_key"`
 	NodeType      NodeType `json:"node_type" db:"node_type"`
 	IP            string   `json:"ip" db:"ip"`
+	MigrateKey    string   `json:"migrate_key" db:"migrate_key"`
+	PublicKey     string   `json:"public_key" db:"public_key"`
+	CreatedTime   string   `db:"created_time"`
 }
 
+// Marshal converts ActivationDetail to a JSON string.
 func (d *ActivationDetail) Marshal() (string, error) {
 	b, err := json.Marshal(d)
 	if err != nil {
@@ -509,6 +615,7 @@ func (d *ActivationDetail) Marshal() (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// Unmarshal decodes a base64 encoded string into ActivationDetail.
 func (d *ActivationDetail) Unmarshal(code string) error {
 	sDec, err := base64.StdEncoding.DecodeString(code)
 	if err != nil {
@@ -523,29 +630,11 @@ func (d *ActivationDetail) Unmarshal(code string) error {
 	return nil
 }
 
-// RetrieveEvent retrieve event
-type RetrieveEvent struct {
-	TokenID     string  `db:"token_id"`
-	NodeID      string  `db:"node_id"`
-	ClientID    string  `db:"client_id"`
-	CID         string  `db:"cid"`
-	Size        int64   `db:"size"`
-	CreatedTime int64   `db:"created_time"`
-	EndTime     int64   `db:"end_time"`
-	Profit      float64 `db:"profit"`
-}
-
-// ListRetrieveEventRsp list retrieve event
-type ListRetrieveEventRsp struct {
-	Total              int              `json:"total"`
-	RetrieveEventInfos []*RetrieveEvent `json:"retrieve_event_infos"`
-}
-
 // ProfitType represents the type of profit
 type ProfitType int
 
+// ProfitTypeBase represents the base profit type.
 const (
-	// ProfitTypeBase
 	ProfitTypeBase ProfitType = iota
 	// ProfitTypePull
 	ProfitTypePull
@@ -561,10 +650,11 @@ const (
 	ProfitTypeUpload
 	// ProfitTypeOfflinePenalty
 	ProfitTypeOfflinePenalty
-	// ProfitTypeReimburse
-	ProfitTypeReimburse
+	// ProfitTypeRecompense
+	ProfitTypeRecompense
 )
 
+// ProfitDetails holds the profit information for a specific node.
 type ProfitDetails struct {
 	ID          int64      `db:"id"`
 	NodeID      string     `db:"node_id"`
@@ -584,11 +674,13 @@ type ListNodeProfitDetailsRsp struct {
 	Infos []*ProfitDetails `json:"infos"`
 }
 
+// RateLimiter controls the rate of bandwidth usage for uploading and downloading.
 type RateLimiter struct {
 	BandwidthUpLimiter   *rate.Limiter
 	BandwidthDownLimiter *rate.Limiter
 }
 
+// CandidateCodeInfo holds information about a candidate's code.
 type CandidateCodeInfo struct {
 	Code       string    `db:"code"`
 	NodeType   NodeType  `db:"node_type"`
@@ -597,16 +689,19 @@ type CandidateCodeInfo struct {
 	IsTest     bool      `db:"is_test"`
 }
 
+// TunserverRsp represents the response from the Tunserver.
 type TunserverRsp struct {
 	URL    string
 	NodeID string
 }
 
+// TunserverReq represents a request for a Tunserver with an IP and AreaID.
 type TunserverReq struct {
 	IP     string
 	AreaID string
 }
 
+// CreateTunnelReq represents a request to create a tunnel.
 type CreateTunnelReq struct {
 	NodeID    string
 	ProjectID string
@@ -614,7 +709,88 @@ type CreateTunnelReq struct {
 	TunnelID  string
 }
 
+// AccessPointRsp represents the response structure for access points.
 type AccessPointRsp struct {
 	Schedulers []string
 	GeoInfo    *region.GeoInfo
+}
+
+// KeepaliveRsp represents the response structure for keepalive requests.
+type KeepaliveRsp struct {
+	SessionUUID uuid.UUID
+	SessionID   string
+	ErrCode     int
+	ErrMsg      string
+}
+
+// KeepaliveReq keepalive requests.
+type KeepaliveReq struct {
+	Free      FlowUnit
+	Peak      FlowUnit
+	TaskCount int16
+}
+
+type FlowUnit struct {
+	U int64
+	D int64
+}
+
+type ServiceType int
+
+const (
+	ServiceTypeUpload ServiceType = iota
+	ServiceTypeDownload
+)
+
+type ServiceStatus int
+
+const (
+	ServiceTypeSucceed ServiceStatus = iota
+	ServiceTypeFailed
+)
+
+type ServiceEvent struct {
+	TraceID   string        `db:"trace_id"`
+	NodeID    string        `db:"node_id"`
+	Type      ServiceType   `db:"type"`
+	Size      int64         `db:"size"`
+	Status    ServiceStatus `db:"status"`
+	Peak      int64         `db:"peak"`
+	EndTime   time.Time     `db:"end_time"`
+	StartTime time.Time     `db:"start_time"`
+	Speed     int64         `db:"speed"`
+
+	Score int64 `db:"score"`
+}
+
+type ServiceStats struct {
+	NodeID               string
+	UploadSuccessCount   int64
+	UploadTotalCount     int64
+	UploadFailCount      int64
+	UploadAvgSpeed       int64
+	DownloadSuccessCount int64
+	DownloadTotalCount   int64
+	DownloadFailCount    int64
+	DownloadAvgSpeed     int64
+	AvgScore             int64
+
+	DownloadSpeeds []int64
+	UploadSpeeds   []int64
+	Scores         []int64
+}
+
+type BandwidthEvent struct {
+	NodeID            string    `db:"node_id"`
+	BandwidthUpPeak   int64     `db:"b_up_peak"`
+	BandwidthDownPeak int64     `db:"b_down_peak"`
+	BandwidthUpFree   int64     `db:"b_up_free"`
+	BandwidthDownFree int64     `db:"b_down_free"`
+	BandwidthUpLoad   int64     `db:"b_up_load"`
+	BandwidthDownLoad int64     `db:"b_down_load"`
+	TaskSuccess       int64     `db:"task_success"`
+	TaskTotal         int64     `db:"task_total"`
+	Size              int64     `db:"size"`
+	Score             int64     `db:"score"`
+	CreateTime        time.Time `db:"created_time"`
 }

@@ -27,4 +27,6 @@ type Asset interface {
 	GetUploadingAsset(ctx context.Context, root cid.Cid) (*types.UploadingAsset, error)
 	// AllocatePathWithSize allocate path for storage file
 	AllocatePathWithSize(size int64) (string, error)
+	// ListBlocks returns the sub-cids of a certain root-cid
+	ListBlocks(ctx context.Context, root cid.Cid) ([]cid.Cid, error)
 }

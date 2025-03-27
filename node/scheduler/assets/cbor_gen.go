@@ -331,20 +331,29 @@ func (t *AssetPullingInfo) MarshalCBOR(w io.Writer) error {
 		}
 	}
 
-	// t.DownloadSource (assets.SourceDownloadInfo) (struct)
-	if len("DownloadSource") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"DownloadSource\" was too long")
+	// t.DownloadSources ([]*assets.SourceDownloadInfo) (slice)
+	if len("DownloadSources") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"DownloadSources\" was too long")
 	}
 
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("DownloadSource"))); err != nil {
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("DownloadSources"))); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(w, string("DownloadSource")); err != nil {
+	if _, err := io.WriteString(w, string("DownloadSources")); err != nil {
 		return err
 	}
 
-	if err := t.DownloadSource.MarshalCBOR(cw); err != nil {
+	if len(t.DownloadSources) > cbg.MaxLength {
+		return xerrors.Errorf("Slice value in field t.DownloadSources was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajArray, uint64(len(t.DownloadSources))); err != nil {
 		return err
+	}
+	for _, v := range t.DownloadSources {
+		if err := v.MarshalCBOR(cw); err != nil {
+			return err
+		}
 	}
 
 	// t.CandidateReplicas (int64) (int64)
@@ -786,26 +795,36 @@ func (t *AssetPullingInfo) UnmarshalCBOR(r io.Reader) (err error) {
 
 				t.EdgeWaitings = int64(extraI)
 			}
-			// t.DownloadSource (assets.SourceDownloadInfo) (struct)
-		case "DownloadSource":
+			// t.DownloadSources ([]*assets.SourceDownloadInfo) (slice)
+		case "DownloadSources":
 
-			{
+			maj, extra, err = cr.ReadHeader()
+			if err != nil {
+				return err
+			}
 
-				b, err := cr.ReadByte()
-				if err != nil {
+			if extra > cbg.MaxLength {
+				return fmt.Errorf("t.DownloadSources: array too large (%d)", extra)
+			}
+
+			if maj != cbg.MajArray {
+				return fmt.Errorf("expected cbor array")
+			}
+
+			if extra > 0 {
+				t.DownloadSources = make([]*SourceDownloadInfo, extra)
+			}
+
+			for i := 0; i < int(extra); i++ {
+
+				var v SourceDownloadInfo
+				if err := v.UnmarshalCBOR(cr); err != nil {
 					return err
 				}
-				if b != cbg.CborNull[0] {
-					if err := cr.UnreadByte(); err != nil {
-						return err
-					}
-					t.DownloadSource = new(SourceDownloadInfo)
-					if err := t.DownloadSource.UnmarshalCBOR(cr); err != nil {
-						return xerrors.Errorf("unmarshaling t.DownloadSource pointer: %w", err)
-					}
-				}
 
+				t.DownloadSources[i] = &v
 			}
+
 			// t.CandidateReplicas (int64) (int64)
 		case "CandidateReplicas":
 			{

@@ -12,6 +12,11 @@
 *.dylib
 city.mmdb
 titan-edge
+!titan-edge/
 titan-candidate
+!titan-candidate/
 titan-scheduler
+!titan-scheduler/
 titan-locator
+!titan-locator/
+titan-l3/

@@ -19,8 +19,13 @@ var cReplicaInfoTable = `
 		is_candidate  BOOLEAN,
 		end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
 		start_time    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		total_size    BIGINT       DEFAULT 0,
+		client_id     VARCHAR(128) DEFAULT '',
+		speed         BIGINT       DEFAULT 0,
+		workload_id   VARCHAR(128) DEFAULT '',
 		PRIMARY KEY (hash,node_id),
 		KEY idx_node_id (node_id),
+		KEY idx_status (status),
 		KEY idx_hash (hash)
 	) ENGINE=InnoDB COMMENT='asset replica info';`
 
@@ -37,9 +42,10 @@ var cNodeInfoTable = `
 	    disk_type            VARCHAR(64)     DEFAULT '',
 	    io_system            VARCHAR(64)     DEFAULT '',
 	    system_version       VARCHAR(64)     DEFAULT '',
+		version              INT             DEFAULT 0,
 	    disk_space           FLOAT           DEFAULT 0,
 		available_disk_space FLOAT           DEFAULT 0,
-		titan_disk_usage     FLOAT           DEFAULT 0,
+		titan_disk_usage     DOUBLE          DEFAULT 0,
     	bandwidth_up         BIGINT          DEFAULT 0,
     	bandwidth_down       BIGINT          DEFAULT 0,
 		netflow_up           BIGINT          DEFAULT 0,
@@ -54,13 +60,47 @@ var cNodeInfoTable = `
 	    disk_usage           FLOAT           DEFAULT 0,
     	upload_traffic       BIGINT          DEFAULT 0,
     	download_traffic     BIGINT          DEFAULT 0,		
-    	retrieve_count       INT             DEFAULT 0,	
-    	asset_count          INT             DEFAULT 0,
 		deactivate_time      INT             DEFAULT 0,		
 		free_up_disk_time    DATETIME        DEFAULT '2024-04-20 12:10:15',
 		ws_server_id         VARCHAR(128)    DEFAULT '',
-	    PRIMARY KEY (node_id)
+		force_offline        BOOLEAN         DEFAULT false,
+	    nat_type             VARCHAR(32)     DEFAULT 'UnknowNAT',
+	    PRIMARY KEY (node_id),
+		KEY idx_last_seen (last_seen)
 	) ENGINE=InnoDB COMMENT='node info';`
+
+var cNodeStatisticsTable = `
+    CREATE TABLE if not exists %s (
+	    node_id                  VARCHAR(128)   NOT NULL UNIQUE,
+		retrieve_count           INT            DEFAULT 0,
+		retrieve_succeeded_count INT            DEFAULT 0,
+		retrieve_failed_count    INT            DEFAULT 0,
+		asset_count              INT            DEFAULT 0,
+		asset_succeeded_count    INT            DEFAULT 0,
+		asset_failed_count       INT            DEFAULT 0,
+    	project_count            INT            DEFAULT 0,	
+    	project_succeeded_count  INT            DEFAULT 0,	
+    	project_failed_count     INT            DEFAULT 0,
+		update_time              DATETIME       DEFAULT CURRENT_TIMESTAMP,
+	    PRIMARY KEY (node_id)
+	) ENGINE=InnoDB COMMENT='node statistics';`
+
+var cNodeRetrieveTable = `
+    CREATE TABLE if not exists %s (
+	    trace_id      VARCHAR(128)   DEFAULT '',
+ 	    node_id       VARCHAR(128)   NOT NULL,
+	    client_id     VARCHAR(128)   DEFAULT '',
+		hash          VARCHAR(128)   NOT NULL,
+		speed         BIGINT         DEFAULT 0,
+		size          BIGINT         DEFAULT 0,		
+	    status        TINYINT        DEFAULT 0,
+		created_time  DATETIME       DEFAULT CURRENT_TIMESTAMP,
+		KEY idx_trace_id  (trace_id),
+		KEY idx_node_id  (node_id),
+		KEY idx_hash_id  (hash),
+		KEY idx_client_id (client_id),
+		KEY idx_created_time (created_time)
+	) ENGINE=InnoDB COMMENT='node retrieve record';`
 
 var cValidationResultsTable = `
     CREATE TABLE if not exists %s (
@@ -96,7 +136,8 @@ var cNodeRegisterTable = `
 		created_time    VARCHAR(64)   DEFAULT '' ,
 		node_type       VARCHAR(64)   DEFAULT '' ,
 		activation_key  VARCHAR(128)  DEFAULT '' ,
-		ip 				VARCHAR(16)  DEFAULT '' ,
+		ip 				VARCHAR(16)   DEFAULT '' ,
+		migrate_key     VARCHAR(128)  DEFAULT '' ,		
 		PRIMARY KEY (node_id)
 	) ENGINE=InnoDB COMMENT='node register info';`
 
@@ -115,7 +156,9 @@ var cAssetRecordTable = `
 		bandwidth          BIGINT       DEFAULT 0,
 		note               VARCHAR(128) DEFAULT '',
 		source             TINYINT      DEFAULT 0,
-		PRIMARY KEY (hash)
+		owner              VARCHAR(128) DEFAULT '',
+		PRIMARY KEY (hash),
+		KEY idx_end_time (end_time)
 	) ENGINE=InnoDB COMMENT='asset record';`
 
 var cEdgeUpdateTable = `
@@ -170,33 +213,40 @@ var cWorkloadTable = `
 
 var cReplicaEventTable = `
     CREATE TABLE if not exists %s (
-		hash          VARCHAR(128) NOT NULL,
-		event         TINYINT      DEFAULT 0,
-		node_id       VARCHAR(128) NOT NULL,
-		cid           VARCHAR(128) DEFAULT '',
-		total_size    BIGINT       DEFAULT 0,
-	    end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
-		expiration    DATETIME     DEFAULT CURRENT_TIMESTAMP,
-		source        TINYINT      DEFAULT 0,
+		hash          VARCHAR(128)  NOT NULL,
+		event         TINYINT       DEFAULT 0,
+		node_id       VARCHAR(128)  NOT NULL,
+		cid           VARCHAR(128)  DEFAULT '',
+		total_size    BIGINT        DEFAULT 0,
+		done_size     BIGINT        DEFAULT 0,
+	    created_time  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+		source        TINYINT       DEFAULT 0,
+	    client_id     VARCHAR(128)  DEFAULT '',
+		speed         BIGINT        DEFAULT 0,
+		trace_id      VARCHAR(128)  DEFAULT '', 
+		msg           VARCHAR(1024) DEFAULT '', 
 		KEY idx_hash (hash),
 		KEY idx_node_id (node_id),
-		KEY idx_end_time (end_time)
+		KEY idx_client_id (client_id),
+		KEY idx_trace_id (trace_id),
+		KEY idx_event (event),
+		KEY idx_created_time (created_time)
 	) ENGINE=InnoDB COMMENT='asset replica event';`
 
-var cRetrieveEventTable = `
-    CREATE TABLE if not exists %s (
-		token_id        VARCHAR(128)   NOT NULL UNIQUE,
-		node_id         VARCHAR(128)   NOT NULL,
-		client_id       VARCHAR(128)   NOT NULL,
-		cid             VARCHAR(128)   NOT NULL,
-		size            INT            DEFAULT 0,
-		created_time    INT            DEFAULT 0,
-		end_time        INT            DEFAULT 0,
-	    profit          DECIMAL(14, 6) DEFAULT 0,
-		PRIMARY KEY (token_id),
-		KEY idx_node_id (node_id),
-		KEY idx_created_time (created_time)
-	) ENGINE=InnoDB COMMENT='asset retrieve event';`
+// var cRetrieveEventTable = `
+//     CREATE TABLE if not exists %s (
+// 		token_id        VARCHAR(128)   NOT NULL UNIQUE,
+// 		node_id         VARCHAR(128)   NOT NULL,
+// 		client_id       VARCHAR(128)   NOT NULL,
+// 		cid             VARCHAR(128)   NOT NULL,
+// 		size            INT            DEFAULT 0,
+// 		created_time    INT            DEFAULT 0,
+// 		end_time        INT            DEFAULT 0,
+// 	    profit          DECIMAL(14, 6) DEFAULT 0,
+// 		PRIMARY KEY (token_id),
+// 		KEY idx_node_id (node_id),
+// 		KEY idx_created_time (created_time)
+// 	) ENGINE=InnoDB COMMENT='asset retrieve event';`
 
 var cReplenishBackupTable = `
     CREATE TABLE if not exists %s (
@@ -214,6 +264,18 @@ var cAWSDataTable = `
 		size            FLOAT        DEFAULT 0,
 		PRIMARY KEY (bucket)
     ) ENGINE=InnoDB COMMENT='aws data';`
+
+var cAssetDataTable = `
+    CREATE TABLE if not exists %s (
+		cid             VARCHAR(128) NOT NULL,
+		hash            VARCHAR(128) NOT NULL,
+		replicas        INT          DEFAULT 0,
+		status          TINYINT      DEFAULT 0,
+		distribute_time DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		owner           VARCHAR(128) DEFAULT '',
+		expiration      DATETIME     NOT NULL,
+		PRIMARY KEY (cid)
+    ) ENGINE=InnoDB COMMENT='asset data';`
 
 var cProfitDetailsTable = `
     CREATE TABLE if not exists %s (
@@ -260,11 +322,10 @@ var cProjectInfosTable = `
 		name          VARCHAR(128)   DEFAULT '',	
 		created_time  DATETIME       DEFAULT CURRENT_TIMESTAMP,		
 		replicas      INT            DEFAULT 0,
+		type          TINYINT        DEFAULT 0,
 		scheduler_sid VARCHAR(128)   NOT NULL,   
 		expiration    DATETIME       DEFAULT CURRENT_TIMESTAMP,	
-	    cpu_cores     INT            DEFAULT 0,
-	    memory        FLOAT          DEFAULT 0,
-		area_id       VARCHAR(32)    DEFAULT '',   
+		requirement   BLOB ,
 		PRIMARY KEY (id),
 	    KEY idx_user_id (user_id),
 	    KEY idx_time (created_time),
@@ -273,14 +334,22 @@ var cProjectInfosTable = `
 
 var cProjectReplicasTable = `
     CREATE TABLE if not exists %s (
-		id            VARCHAR(128)  NOT NULL,
-		node_id       VARCHAR(128)  NOT NULL,	
-		status        TINYINT       DEFAULT 0,		
-		created_time  DATETIME      DEFAULT CURRENT_TIMESTAMP,
-		end_time      DATETIME      DEFAULT CURRENT_TIMESTAMP,
+		id                 VARCHAR(128)  NOT NULL,
+		node_id            VARCHAR(128)  NOT NULL,	
+		status             TINYINT       DEFAULT 0,		
+		created_time       DATETIME      DEFAULT CURRENT_TIMESTAMP,
+		end_time           DATETIME      DEFAULT CURRENT_TIMESTAMP,
+    	upload_traffic     BIGINT        DEFAULT 0,
+    	download_traffic   BIGINT        DEFAULT 0,	
+		type               TINYINT       DEFAULT 0,
+		time               INT           DEFAULT 0,
+		max_delay          INT           DEFAULT 0,
+		min_delay          INT           DEFAULT 0,
+		avg_delay          INT           DEFAULT 0,
 		PRIMARY KEY (id,node_id),
 	    KEY idx_time (created_time),
 		KEY idx_node_id (node_id),
+		KEY idx_type (type),
 		KEY idx_id (id)
     ) ENGINE=InnoDB COMMENT='project replicas';`
 
@@ -303,55 +372,17 @@ var cOnlineCountTable = `
 		PRIMARY KEY (node_id,created_time)
 	) ENGINE=InnoDB COMMENT='node and server online count';`
 
-// var cUserAssetTable = `
-//     CREATE TABLE if not exists %s (
-// 	    hash              VARCHAR(128) NOT NULL,
-// 	    user_id           VARCHAR(128) NOT NULL,
-// 	    asset_name        VARCHAR(128) DEFAULT '' ,
-// 		asset_type        VARCHAR(128) DEFAULT '' ,
-// 		share_status      TINYINT      DEFAULT 0,
-// 	    created_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
-// 		total_size        BIGINT       DEFAULT 0,
-// 		expiration        DATETIME     DEFAULT CURRENT_TIMESTAMP,
-// 		password          VARCHAR(128) DEFAULT '' ,
-// 		group_id          INT          DEFAULT 0,
-// 		PRIMARY KEY (hash,user_id),
-// 		KEY idx_user_id (user_id),
-// 		KEY idx_group_id (group_id)
-//     ) ENGINE=InnoDB COMMENT='user asset';`
-
-// var cUserInfoTable = `
-//     CREATE TABLE if not exists %s (
-// 	    user_id             VARCHAR(128) NOT NULL,
-// 		total_storage_size 	BIGINT      DEFAULT 0,
-// 		used_storage_size 	BIGINT      DEFAULT 0,
-// 		api_keys		    BLOB,
-// 		total_traffic       BIGINT      DEFAULT 0,
-// 		peak_bandwidth 	    INT         DEFAULT 0,
-// 		download_count 	    INT         DEFAULT 0,
-// 		enable_vip  	    BOOLEAN 	DEFAULT false,
-// 		update_peak_time    DATETIME    DEFAULT CURRENT_TIMESTAMP,
-// 		PRIMARY KEY (user_id)
-//     ) ENGINE=InnoDB COMMENT='user infos';`
-
-// var cAssetVisitCountTable = `
-//     CREATE TABLE if not exists %s (
-// 	    hash        VARCHAR(128) NOT NULL,
-// 		count       INT 		 DEFAULT 0,
-// 		PRIMARY KEY (hash)
-//     ) ENGINE=InnoDB COMMENT='user asset visit count';`
-
-// var cUserAssetGroupTable = `
-//     CREATE TABLE if not exists %s (
-// 		id            INT UNSIGNED AUTO_INCREMENT,
-// 	    user_id       VARCHAR(128) NOT NULL,
-// 		name          VARCHAR(32)  DEFAULT '',
-// 		parent        INT          DEFAULT 0,
-// 	    created_time  DATETIME     DEFAULT CURRENT_TIMESTAMP,
-// 		PRIMARY KEY (id),
-// 	    KEY idx_user_id (user_id),
-// 	    KEY idx_parent (parent)
-//     ) ENGINE=InnoDB COMMENT='user asset group';`
+var cAssetDownloadTable = `
+	CREATE TABLE if not exists %s (
+		node_id         VARCHAR(128)  NOT NULL,
+		hash            VARCHAR(128)  NOT NULL,
+		created_time    DATETIME      DEFAULT CURRENT_TIMESTAMP,
+ 		total_traffic   BIGINT        DEFAULT 0,
+		peak_bandwidth 	BIGINT        DEFAULT 0,
+		user_id         VARCHAR(128)  DEFAULT '',
+ 		KEY idx_hash_id (hash),
+ 		KEY idx_node_id (node_id)
+	) ENGINE=InnoDB COMMENT='node and server online count';`
 
 var cUserAssetGroupTable = `
     CREATE TABLE if not exists %s (
@@ -365,78 +396,138 @@ var cUserAssetGroupTable = `
 	    KEY idx_parent (parent)
     ) ENGINE=InnoDB COMMENT='user asset group';`
 
-var cDeploymentTable = `
-CREATE TABLE IF NOT EXISTS %s (
-    id VARCHAR(128) NOT NULL UNIQUE,
-    owner VARCHAR(128) NOT NULL,
-    name VARCHAR(128) NOT NULL DEFAULT '',
-    state INT DEFAULT 0,
-    type INT DEFAULT 0,
-    authority TINYINT(1) DEFAULT 0,
-    version VARCHAR(128) DEFAULT '',
-    balance FLOAT        DEFAULT 0,
-    cost FLOAT        DEFAULT 0,
-    provider_id VARCHAR(128) NOT NULL,
-    expiration DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP
-    )ENGINE=InnoDB COMMENT='deployments';`
+// var cBandwidthScoreEventTable = `
+//     CREATE TABLE if not exists %s (
+// 	    node_id                     VARCHAR(128) NOT NULL,
+// 		bandwidth_up                BIGINT       DEFAULT 0,
+// 		bandwidth_down              BIGINT       DEFAULT 0,
+// 		bandwidth_up_node           BIGINT       DEFAULT 0,
+// 		bandwidth_down_node         BIGINT       DEFAULT 0,
+// 		bandwidth_up_server         BIGINT       DEFAULT 0,
+// 		bandwidth_down_server       BIGINT       DEFAULT 0,
+// 		bandwidth_up_score          INT          DEFAULT 0,
+// 		bandwidth_down_score        INT          DEFAULT 0,
+// 		bandwidth_up_succeed        INT          DEFAULT 0,
+// 		bandwidth_down_succeed      INT          DEFAULT 0,
+// 		bandwidth_up_total          INT          DEFAULT 0,
+// 		bandwidth_down_total        INT          DEFAULT 0,
+// 		bandwidth_up_final_score    INT          DEFAULT 0,
+// 		bandwidth_down_final_score  INT          DEFAULT 0,
+// 	    created_time                DATETIME     DEFAULT CURRENT_TIMESTAMP,
+// 	    KEY idx_node_id (node_id),
+// 	    KEY idx_created_time (created_time)
+//     ) ENGINE=InnoDB COMMENT='node bandwidth score event';`
 
-var cProviderTable = `
-CREATE TABLE IF NOT EXISTS %s(
-    id VARCHAR(128) NOT NULL UNIQUE,
-    owner VARCHAR(128) NOT NULL,
-    remote_addr VARCHAR(128) NOT NULL,
-    ip VARCHAR(128) NOT NULL,
-    state INT DEFAULT 0,
-    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id)
-    )ENGINE=InnoDB COMMENT='providers';`
+var cBandwidthEventTable = `
+    CREATE TABLE if not exists %s (
+	    node_id             VARCHAR(128) NOT NULL,
+		b_up_peak           BIGINT       DEFAULT 0,
+		b_down_peak         BIGINT       DEFAULT 0,
+		b_up_free           BIGINT       DEFAULT 0,
+		b_down_free         BIGINT       DEFAULT 0,
+		b_up_load           BIGINT       DEFAULT 0,
+		b_down_load         BIGINT       DEFAULT 0,
+		size                BIGINT       DEFAULT 0,
+		task_success        INT          DEFAULT 0,
+		task_total          INT          DEFAULT 0,
+		score               INT          DEFAULT 0,
+	    created_time        DATETIME     DEFAULT CURRENT_TIMESTAMP,
+	    KEY idx_node_id (node_id),
+	    KEY idx_created_time (created_time)
+    ) ENGINE=InnoDB COMMENT='node bandwidth event';`
 
-var cPropertiesTable = `
-CREATE TABLE IF NOT EXISTS %s(
-    id INT UNSIGNED AUTO_INCREMENT,
-    provider_id VARCHAR(128) NOT NULL UNIQUE,
-    app_id VARCHAR(128) NOT NULL,
-    app_type INT DEFAULT 0,
-    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    KEY idx_provider_id (provider_id)
-    )ENGINE=InnoDB COMMENT='properties';`
+var cServiceEventTable = `
+    CREATE TABLE if not exists %s (
+	    trace_id      VARCHAR(128) DEFAULT '',
+	    node_id       VARCHAR(128) NOT NULL,
+		type          TINYINT      DEFAULT 0,
+		size          BIGINT       DEFAULT 0,
+		status        TINYINT      DEFAULT 0,
+		peak          BIGINT       DEFAULT 0,
+		speed         BIGINT       DEFAULT 0,
+		score         INT          DEFAULT 0,
+		end_time      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+		start_time    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+	    KEY idx_node_id (node_id),
+	    KEY idx_type (type),
+	    KEY idx_status (status),
+	    KEY idx_start_time (start_time),
+	    KEY idx_end_time (end_time),
+	    KEY idx_trace_id (trace_id)
+    ) ENGINE=InnoDB COMMENT='node service event';`
 
-var cServicesTable = `
-CREATE TABLE IF NOT EXISTS %s(
-    id INT UNSIGNED AUTO_INCREMENT,
-    name VARCHAR(128) NOT NULL DEFAULT '',
-    image VARCHAR(128) NOT NULL DEFAULT '',
-    ports VARCHAR(256) NOT NULL DEFAULT '',
-    state INT DEFAULT 0,
-    cpu FLOAT        DEFAULT 0,
-    gpu FLOAT        DEFAULT 0,
-    memory FLOAT        DEFAULT 0,
-    storage VARCHAR(128),
-    env VARCHAR(128) DEFAULT NULL,
-    arguments VARCHAR(128) DEFAULT NULL,
-    deployment_id VARCHAR(128) NOT NULL,
-    error_message VARCHAR(128) DEFAULT NULL,
-    replicas INT NOT NULL DEFAULT 0,
-    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uniq_deployment_id_image (deployment_id, image)
-    )ENGINE=InnoDB COMMENT='services';`
+// var cDeploymentTable = `
+// CREATE TABLE IF NOT EXISTS %s (
+//     id VARCHAR(128) NOT NULL UNIQUE,
+//     owner VARCHAR(128) NOT NULL,
+//     name VARCHAR(128) NOT NULL DEFAULT '',
+//     state INT DEFAULT 0,
+//     type INT DEFAULT 0,
+//     authority TINYINT(1) DEFAULT 0,
+//     version VARCHAR(128) DEFAULT '',
+//     balance FLOAT        DEFAULT 0,
+//     cost FLOAT        DEFAULT 0,
+//     provider_id VARCHAR(128) NOT NULL,
+//     expiration DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+//     )ENGINE=InnoDB COMMENT='deployments';`
 
-var cDomainTable = `
-CREATE TABLE IF NOT EXISTS %s(
-    id INT UNSIGNED AUTO_INCREMENT,
-    name VARCHAR(128) NOT NULL DEFAULT '',
-    deployment_id VARCHAR(128) NOT NULL DEFAULT '',
-    provider_id VARCHAR(128) NOT NULL DEFAULT '',
-    state VARCHAR(128) NOT NULL DEFAULT '',
-    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY idx_name (name)
-    )ENGINE=InnoDB COMMENT='domains'`
+// var cProviderTable = `
+// CREATE TABLE IF NOT EXISTS %s(
+//     id VARCHAR(128) NOT NULL UNIQUE,
+//     owner VARCHAR(128) NOT NULL,
+//     remote_addr VARCHAR(128) NOT NULL,
+//     ip VARCHAR(128) NOT NULL,
+//     state INT DEFAULT 0,
+//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     PRIMARY KEY (id)
+//     )ENGINE=InnoDB COMMENT='providers';`
+
+// var cPropertiesTable = `
+// CREATE TABLE IF NOT EXISTS %s(
+//     id INT UNSIGNED AUTO_INCREMENT,
+//     provider_id VARCHAR(128) NOT NULL UNIQUE,
+//     app_id VARCHAR(128) NOT NULL,
+//     app_type INT DEFAULT 0,
+//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     PRIMARY KEY (id),
+//     KEY idx_provider_id (provider_id)
+//     )ENGINE=InnoDB COMMENT='properties';`
+
+// var cServicesTable = `
+// CREATE TABLE IF NOT EXISTS %s(
+//     id INT UNSIGNED AUTO_INCREMENT,
+//     name VARCHAR(128) NOT NULL DEFAULT '',
+//     image VARCHAR(128) NOT NULL DEFAULT '',
+//     ports VARCHAR(256) NOT NULL DEFAULT '',
+//     state INT DEFAULT 0,
+//     cpu FLOAT        DEFAULT 0,
+//     gpu FLOAT        DEFAULT 0,
+//     memory FLOAT        DEFAULT 0,
+//     storage VARCHAR(128),
+//     env TEXT ,
+//     arguments TEXT,
+//     deployment_id VARCHAR(128) NOT NULL,
+//     error_message VARCHAR(128) DEFAULT NULL,
+//     replicas INT NOT NULL DEFAULT 0,
+//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     PRIMARY KEY (id),
+//     UNIQUE KEY uniq_deployment_id_image (deployment_id, image)
+//     )ENGINE=InnoDB COMMENT='services';`
+
+// var cDomainTable = `
+// CREATE TABLE IF NOT EXISTS %s(
+//     id INT UNSIGNED AUTO_INCREMENT,
+//     name VARCHAR(128) NOT NULL DEFAULT '',
+//     deployment_id VARCHAR(128) NOT NULL DEFAULT '',
+//     provider_id VARCHAR(128) NOT NULL DEFAULT '',
+//     state VARCHAR(128) NOT NULL DEFAULT '',
+//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+//     PRIMARY KEY (id),
+//     UNIQUE KEY idx_name (name)
+//     )ENGINE=InnoDB COMMENT='domains'`

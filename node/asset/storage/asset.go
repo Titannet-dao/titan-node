@@ -233,6 +233,8 @@ func (a *asset) saveUserAsset(ctx context.Context, userID string, root cid.Cid, 
 		return err
 	}
 
+	log.Debugw("car file version", "isV1", isV1, "tempPath", tempAssetPath, "filePath", assetPath, "size", assetSize)
+
 	if isV1 {
 		if err := carv2.WrapV1File(tempAssetPath, assetPath); err != nil {
 			return err
@@ -386,4 +388,63 @@ func (a *asset) getAssetHashesForSyncData() ([]string, error) {
 
 func (a *asset) allocatePathWithSize(size int64) (string, error) {
 	return a.assetsPaths.allocatePathWithSize(size)
+}
+
+// listBlocks returns the sub-cids of a certain root-cid
+func (a *asset) listBlocks(ctx context.Context, root cid.Cid) ([]cid.Cid, error) {
+	filePath, err := a.assetsPaths.findPath(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find path for root CID %s: %w", root.String(), err)
+	}
+
+	f, err := os.Open(filepath.Join(filePath, a.generateAssetName(root)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to open CAR file: %w", err)
+	}
+	defer f.Close()
+
+	bs, err := blockstore.NewReadOnly(f, nil, carv2.ZeroLengthSectionAsEOF(true))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blockstore: %w", err)
+	}
+	defer bs.Close()
+
+	cidList := []cid.Cid{}
+	visited := map[cid.Cid]bool{}
+
+	var traverse func(cid.Cid) error
+	traverse = func(c cid.Cid) error {
+		if visited[c] {
+			return nil
+		}
+		visited[c] = true
+
+		block, err := bs.Get(ctx, c)
+		if err != nil {
+			return fmt.Errorf("failed to get block for CID %s: %w", c.String(), err)
+		}
+
+		node, err := ipld.DecodeNode(ctx, block)
+		if err != nil {
+			return fmt.Errorf("failed to decode node for CID %s: %w", c.String(), err)
+		}
+
+		for _, link := range node.Links() {
+			subCID := link.Cid
+			cidList = append(cidList, subCID)
+
+			if err := traverse(subCID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	if err := traverse(root); err != nil {
+		return nil, err
+	}
+
+	return cidList, nil
+
 }

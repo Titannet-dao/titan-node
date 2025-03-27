@@ -1,22 +1,24 @@
 package clib
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
-	"time"
+
+	"github.com/filecoin-project/go-jsonrpc"
 
 	"github.com/Filecoin-Titan/titan/api/client"
 	"github.com/Filecoin-Titan/titan/api/types"
-	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/google/uuid"
+	sdkclient "github.com/utopiosphe/titan-storage-sdk/client"
+	byterange "github.com/utopiosphe/titan-storage-sdk/range"
 )
 
 const (
@@ -28,7 +30,7 @@ const (
 
 type Progress struct {
 	TotalSize int64
-	DoneSize  int64
+	DoneSize  func() int64
 }
 
 type Downloader struct {
@@ -46,7 +48,7 @@ func newDownloader() *Downloader {
 }
 
 func (d *Downloader) downloadFile(req *DownloadFileReq) error {
-	task := &downloadingTask{id: uuid.NewString(), req: req, progress: &Progress{}, httpClient: d.httpClient}
+	task := &downloadingTask{id: uuid.NewString(), req: req, progress: &Progress{DoneSize: func() int64 { return 0 }}, httpClient: d.httpClient}
 	if err := d.addTask(task); err != nil {
 		return err
 	}
@@ -156,6 +158,16 @@ func (d *Downloader) cancelDownloadTask(filePath string) error {
 	for _, task := range d.taskList {
 		if task.req.DownloadPath == filePath {
 			task.cancelFunc()
+
+			_, err := os.Stat(filePath)
+			if err == nil {
+				return fmt.Errorf("file path: %s, already downloaded", filePath)
+			}
+
+			// for {
+			// 	<- task.cancelDone
+			// }
+
 			return nil
 		}
 	}
@@ -182,7 +194,7 @@ func taskToDownloadProgress(task *downloadingTask) *DownloadProgressResult {
 	result := &DownloadProgressResult{FilePath: task.req.DownloadPath}
 	result.Status = downloadTaskStatusDownloading
 	result.TotalSize = task.progress.TotalSize
-	result.DoneSize = task.progress.DoneSize
+	result.DoneSize = task.progress.DoneSize()
 	return result
 }
 
@@ -244,69 +256,45 @@ func (dt *downloadingTask) doDownload(ctx context.Context) error {
 		return fmt.Errorf("can not get node for asset %s", dt.req.CID)
 	}
 
+	var (
+		chunkCancelTimeoutSeconds = 5
+		chunkSize                 = 1 << 19 // 1MB
+	)
+	r := byterange.New(int64(chunkSize), chunkCancelTimeoutSeconds)
+
+	req := &sdkclient.RangeGetFileReq{}
+
 	for _, downloadInfo := range downloadInfos {
 		for _, source := range downloadInfo.SourceList {
-			startTime := time.Now()
-
-			if err := dt.doDownloadFile(ctx, source); err != nil {
-				log.Warnf("download file from %s error %s", source.NodeID, err.Error())
-				continue
-			}
-
-			// submit workload
-			costTime := time.Since(startTime) / time.Millisecond
-			workload := types.Workload{SourceID: source.NodeID, DownloadSize: dt.progress.TotalSize, CostTime: int64(costTime)}
-			req := &types.WorkloadRecordReq{WorkloadID: downloadInfo.WorkloadID, AssetCID: dt.req.CID, Workloads: []types.Workload{workload}}
-			err = dt.submitWorkload(ctx, req, downloadInfo.SchedulerURL)
-			if err != nil {
-				return fmt.Errorf("sumbitWorkload failed: %s", err.Error())
-			}
-
-			return nil
+			url := fmt.Sprintf("https://%s/ipfs/%s?filename=%s&download=true", source.Address, dt.req.CID, source.Tk)
+			req.Urls = append(req.Urls, sdkclient.UrlOrWithBodyToken{
+				Url:    url,
+				Token:  &sdkclient.BodyToken{ID: source.Tk.ID, CipherText: source.Tk.CipherText, Sign: source.Tk.Sign},
+				NodeID: source.NodeID,
+			})
 		}
 	}
 
-	return nil
-}
+	rand.Shuffle(len(req.Urls), func(i, j int) { req.Urls[i], req.Urls[j] = req.Urls[j], req.Urls[i] })
 
-func (dt *downloadingTask) doDownloadFile(ctx context.Context, downloadInfo *types.SourceDownloadInfo) error {
-	if dt.httpClient == nil {
-		dt.httpClient = client.NewHTTP3Client()
-	}
-	buf, err := encode(downloadInfo.Tk)
-	if err != nil {
-		return fmt.Errorf("encode %s", err.Error())
-	}
+	// if len(req.Urls) > 10 {
+	// 	req.Urls = req.Urls[:20]
+	// }
 
-	log.Infof("doDownloadFile %s %s", dt.req.CID, dt.req.DownloadPath)
+	// workloadReq := &types.WorkloadRecordReq{WorkloadID: downloadInfo.WorkloadID, AssetCID: dt.req.CID, Workloads: []types.Workload{workload}}
+	// path.Parse(dt.req.DownloadPath)
 
-	filename := filepath.Base(dt.req.DownloadPath)
-	url := fmt.Sprintf("https://%s/ipfs/%s?filename=%s&download=true", downloadInfo.Address, dt.req.CID, filename)
-
-	req, err := http.NewRequest(http.MethodGet, url, buf)
-	if err != nil {
-		return fmt.Errorf("newRequest %s", err.Error())
-	}
-	req = req.WithContext(ctx)
-
-	resp, err := dt.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("doRequest %s", err.Error())
-	}
-	defer resp.Body.Close() //nolint:errcheck // ignore error
-
-	if resp.StatusCode != http.StatusOK {
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("http status code: %d, read body error %s", resp.StatusCode, err.Error())
+	if runtime.GOOS == "android" {
+		tempFileDir := filepath.Dir(dt.req.DownloadPath)
+		if err := os.Setenv("TITAN_PIPE_DIR", tempFileDir); err != nil {
+			return fmt.Errorf("set pipe dir error %s", err.Error())
 		}
-		return fmt.Errorf("http status code: %d, error msg: %s", resp.StatusCode, string(data))
 	}
 
-	dt.progress.TotalSize = resp.ContentLength
-	progressReader := newProgressReader(resp.Body, func(doneSize int64) {
-		dt.progress.DoneSize = doneSize
-	})
+	reader, progressFunc, err := r.GetFile(ctx, req)
+	if err != nil {
+		return fmt.Errorf("get file error %s", err.Error())
+	}
 
 	templateFile := filepath.Join(filepath.Dir(dt.req.DownloadPath), dt.req.CID)
 	defer removeTemplateFileIfExist(templateFile)
@@ -317,18 +305,127 @@ func (dt *downloadingTask) doDownloadFile(ctx context.Context, downloadInfo *typ
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, progressReader)
+	dt.progress.TotalSize = progressFunc().Total
+	dt.progress.DoneSize = progressFunc().Written
+
+	_, err = io.Copy(file, reader)
 	if err != nil {
 		return err
 	}
 
-	file.Close()
-	if err = os.Rename(templateFile, dt.req.DownloadPath); err != nil {
-		return err
+	// defer func() {
+	// 	// make sure workloadMap wirte-read done
+	// 	time.Sleep(time.Duration(chunkCancelTimeoutSeconds) * time.Second)
+	// 	for workloadID, wds := range workloadMap {
+	// 		req := &types.WorkloadRecordReq{WorkloadID: workloadID, AssetCID: dt.req.CID, Workloads: wds}
+	// 		if err := dt.submitWorkload(context.Background(), req, workloadScheduler[workloadID]); err != nil {
+	// 			log.Errorf("sumbitWorkload failed: %s", err.Error())
+	// 		}
+	// 	}
+	// }()
+
+	select {
+	case <-ctx.Done():
+		removeTemplateFileIfExist(templateFile)
+		if ctx.Err() == context.Canceled {
+			log.Infof("download context canceled")
+		}
+		return ctx.Err()
+	case <-progressFunc().Done:
+		file.Close()
+		if err = os.Rename(templateFile, dt.req.DownloadPath); err != nil {
+			return err
+		}
+	default:
+		removeTemplateFileIfExist(templateFile)
+		log.Infof("download failed")
 	}
+
+	// for _, downloadInfo := range downloadInfos {
+	// 	for _, source := range downloadInfo.SourceList {
+	// 		startTime := time.Now()
+
+	// 		if err := dt.doDownloadFile(ctx, source); err != nil {
+	// 			log.Warnf("download file from %s error %s", source.NodeID, err.Error())
+	// 			continue
+	// 		}
+
+	// 		// submit workload
+	// 		costTime := time.Since(startTime) / time.Millisecond
+	// 		workload := types.Workload{SourceID: source.NodeID, DownloadSize: dt.progress.TotalSize, CostTime: int64(costTime)}
+	// 		req := &types.WorkloadRecordReq{WorkloadID: downloadInfo.WorkloadID, AssetCID: dt.req.CID, Workloads: []types.Workload{workload}}
+	// 		err = dt.submitWorkload(ctx, req, downloadInfo.SchedulerURL)
+	// 		if err != nil {
+	// 			return fmt.Errorf("sumbitWorkload failed: %s", err.Error())
+	// 		}
+
+	// 		return nil
+	// 	}
+	// }
 
 	return nil
 }
+
+// func (dt *downloadingTask) doDownloadFile(ctx context.Context, downloadInfo *types.SourceDownloadInfo) error {
+// 	if dt.httpClient == nil {
+// 		dt.httpClient = client.NewHTTP3Client()
+// 	}
+// 	buf, err := encode(downloadInfo.Tk)
+// 	if err != nil {
+// 		return fmt.Errorf("encode %s", err.Error())
+// 	}
+
+// 	log.Infof("doDownloadFile %s %s", dt.req.CID, dt.req.DownloadPath)
+
+// 	filename := filepath.Base(dt.req.DownloadPath)
+// 	url := fmt.Sprintf("https://%s/ipfs/%s?filename=%s&download=true", downloadInfo.Address, dt.req.CID, filename)
+
+// 	req, err := http.NewRequest(http.MethodGet, url, buf)
+// 	if err != nil {
+// 		return fmt.Errorf("newRequest %s", err.Error())
+// 	}
+// 	req = req.WithContext(ctx)
+
+// 	resp, err := dt.httpClient.Do(req)
+// 	if err != nil {
+// 		return fmt.Errorf("doRequest %s", err.Error())
+// 	}
+// 	defer resp.Body.Close() //nolint:errcheck // ignore error
+
+// 	if resp.StatusCode != http.StatusOK {
+// 		data, err := io.ReadAll(resp.Body)
+// 		if err != nil {
+// 			return fmt.Errorf("http status code: %d, read body error %s", resp.StatusCode, err.Error())
+// 		}
+// 		return fmt.Errorf("http status code: %d, error msg: %s", resp.StatusCode, string(data))
+// 	}
+
+// 	dt.progress.TotalSize = resp.ContentLength
+// 	progressReader := newProgressReader(resp.Body, func(doneSize int64) {
+// 		dt.progress.DoneSize = doneSize
+// 	})
+
+// 	templateFile := filepath.Join(filepath.Dir(dt.req.DownloadPath), dt.req.CID)
+// 	defer removeTemplateFileIfExist(templateFile)
+
+// 	file, err := os.Create(templateFile)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	defer file.Close()
+
+// 	_, err = io.Copy(file, progressReader)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	file.Close()
+// 	if err = os.Rename(templateFile, dt.req.DownloadPath); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 func removeTemplateFileIfExist(filePath string) {
 	if _, err := os.Stat(filePath); err == nil {
@@ -348,16 +445,16 @@ func (dt *downloadingTask) submitWorkload(ctx context.Context, workload *types.W
 	return schedulerAPI.SubmitWorkloadReportV2(ctx, workload)
 }
 
-func encode(esc *types.Token) (*bytes.Buffer, error) {
-	var buffer bytes.Buffer
-	enc := gob.NewEncoder(&buffer)
-	err := enc.Encode(esc)
-	if err != nil {
-		return nil, err
-	}
+// func encode(esc *types.Token) (*bytes.Buffer, error) {
+// 	var buffer bytes.Buffer
+// 	enc := gob.NewEncoder(&buffer)
+// 	err := enc.Encode(esc)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return &buffer, nil
-}
+// 	return &buffer, nil
+// }
 
 type ProgressReader struct {
 	r        io.Reader
@@ -374,11 +471,10 @@ func newProgressReader(r io.Reader, callback func(doneSize int64)) *ProgressRead
 
 func (pr *ProgressReader) Read(p []byte) (n int, err error) {
 	n, err = pr.r.Read(p)
+	pr.doneSize += int64(n)
+	pr.callback(pr.doneSize)
 	if err != nil {
 		return
 	}
-
-	pr.doneSize += int64(n)
-	pr.callback(pr.doneSize)
 	return
 }

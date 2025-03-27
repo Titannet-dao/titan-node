@@ -25,6 +25,7 @@ const (
 	assetsDir     = "assets"
 	assetSuffix   = ".car"
 	assetsViewDir = "assets-view"
+	tusTempDir    = "tus-temp"
 	sizeOfBucket  = 128
 )
 
@@ -165,6 +166,11 @@ func (m *Manager) AssetCount() (int, error) {
 	return m.asset.count()
 }
 
+// ListBlocks returns the sub-cids of a certain root-cid
+func (m *Manager) ListBlocks(ctx context.Context, root cid.Cid) ([]cid.Cid, error) {
+	return m.asset.listBlocks(ctx, root)
+}
+
 // AssetsView API
 // GetTopHash retrieves the top hash of assets
 func (m *Manager) GetTopHash(ctx context.Context) (string, error) {
@@ -289,7 +295,7 @@ func getPartitions(assetsPaths []string) (map[string]*partition, error) {
 			}
 
 			if path, ok := mountPoints[info.Mountpoint]; ok {
-				return nil, fmt.Errorf("assetsPath %s and %s is in same mount piont %s", path, assetsPath, info.Mountpoint)
+				return nil, fmt.Errorf("assetsPath %+v and %s is in same mount piont %s", path, assetsPath, info.Mountpoint)
 			}
 
 			mountPoints[info.Mountpoint] = &partition{assetsPath: assetsPath, diskPartition: info}

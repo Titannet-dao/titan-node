@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>L1 Network Monitoring Dashboard</title>
+    <style>
+        /* Basic Styling */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f9f9f9;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+        h2 {
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+            color: #333;
+        }
+        .stats-section {
+            margin-bottom: 40px;
+        }
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        .stats-table th, .stats-table td {
+            border: 1px solid #ccc;
+            padding: 12px;
+            text-align: center;
+        }
+        .stats-table th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .chart-container {
+            position: relative;
+            height: 500px;
+            width: 100%;
+            background-color: white;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .stats-table th, .stats-table td {
+                padding: 8px;
+            }
+            .chart-container {
+                height: 300px;
+                padding: 10px;
+            }
+        }
+    </style>
+    <!-- Include Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>Network Monitoring Dashboard</h1>
+
+    <div class="stats-section">
+        <h2>Real-Time Statistics</h2>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Upstream Rate (B/s)</th>
+                    <th>Downstream Rate (B/s)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Peak0 (1 Minute)</td>
+                    <td id="peak0-up">-</td>
+                    <td id="peak0-down">-</td>
+                </tr>
+                <tr>
+                    <td>Peak1 (10 Minutes)</td>
+                    <td id="peak1-up">-</td>
+                    <td id="peak1-down">-</td>
+                </tr>
+                <tr>
+                    <td>Peak2 (Max Since Last Run)</td>
+                    <td id="peak2-up">-</td>
+                    <td id="peak2-down">-</td>
+                </tr>
+                <tr>
+                    <td>Peak (Degraded)</td>
+                    <td id="peak-up">-</td>
+                    <td id="peak-down">-</td>
+                </tr>
+                <tr>
+                    <td>Free Bandwidth</td>
+                    <td id="free-up">-</td>
+                    <td id="free-down">-</td>
+                </tr>
+                <tr>
+                    <td>Current Load</td>
+                    <td id="current-up">-</td>
+                    <td id="current-down">-</td>
+                </tr>
+                <tr>
+                    <td>Running Tasks</td>
+                    <td colspan="2" id="task-running-count">-</td>
+                </tr>
+                <tr>
+                    <td>Total Tasks (10 Minutes)</td>
+                    <td colspan="2" id="task-count">-</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Line Chart Section -->
+        <div class="chart-container">
+            <canvas id="statsChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Initialize Chart.js Line Chart
+    const ctx = document.getElementById('statsChart').getContext('2d');
+    const statsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [], // Time labels
+            datasets: [
+                {
+                    label: 'Peak0 Upstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak0 Downstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 0.6)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak1 Upstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 159, 64, 1)',
+                    backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak1 Downstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 159, 64, 0.6)',
+                    backgroundColor: 'rgba(255, 159, 64, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak2 Upstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(153, 102, 255, 1)',
+                    backgroundColor: 'rgba(153, 102, 255, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak2 Downstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(153, 102, 255, 0.6)',
+                    backgroundColor: 'rgba(153, 102, 255, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak Upstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak Downstream Rate (B/s)',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 0.6)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Free Upstream Bandwidth (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 206, 86, 1)',
+                    backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Free Downstream Bandwidth (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 206, 86, 0.6)',
+                    backgroundColor: 'rgba(255, 206, 86, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Current Load Upstream (B/s)',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Current Load Downstream (B/s)',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 0.6)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            stacked: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                title: {
+                    display: true,
+                    text: 'Real-Time Network Statistics'
+                }
+            },
+            scales: {
+                x: {
+                    type: 'category', // Use category scale
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Rate (B/s)'
+                    }
+                }
+            }
+        }
+    });
+
+    // Maximum number of data points to display
+    const maxDataPoints = 60; // 60 data points (1 minute)
+
+    // Function to add data to the chart
+    function addData(label, datasetsData) {
+        if (statsChart.data.labels.length >= maxDataPoints) {
+            statsChart.data.labels.shift();
+            statsChart.data.datasets.forEach(dataset => {
+                dataset.data.shift();
+            });
+        }
+        statsChart.data.labels.push(label);
+        statsChart.data.datasets.forEach((dataset, index) => {
+            dataset.data.push(Number(datasetsData[index]) || 0);
+        });
+        statsChart.update();
+    }
+
+    // Function to fetch and display statistics
+    function fetchStats() {
+        fetch('/stats')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Received stats:', data); // Debug log
+
+                // Validate data structure
+                if (!data.Peak || !data.Free || !data.Raw ||
+                    !data.Raw.Peak0 || !data.Raw.Peak1 || !data.Raw.Peak2 || !data.Raw.Current ||
+                    typeof data.TaskRunningCount !== 'number' ||
+                    typeof data.TaskCount !== 'number') {
+                    console.error('Incomplete statistics data:', data);
+                    return;
+                }
+
+                // Update table
+                document.getElementById('peak0-up').innerText = data.Raw.Peak0.U.toLocaleString();
+                document.getElementById('peak0-down').innerText = data.Raw.Peak0.D.toLocaleString();
+
+                document.getElementById('peak1-up').innerText = data.Raw.Peak1.U.toLocaleString();
+                document.getElementById('peak1-down').innerText = data.Raw.Peak1.D.toLocaleString();
+
+                document.getElementById('peak2-up').innerText = data.Raw.Peak2.U.toLocaleString();
+                document.getElementById('peak2-down').innerText = data.Raw.Peak2.D.toLocaleString();
+
+                document.getElementById('peak-up').innerText = data.Peak.U.toLocaleString();
+                document.getElementById('peak-down').innerText = data.Peak.D.toLocaleString();
+
+                document.getElementById('free-up').innerText = data.Free.U.toLocaleString();
+                document.getElementById('free-down').innerText = data.Free.D.toLocaleString();
+
+                document.getElementById('current-up').innerText = data.Raw.Current.U.toLocaleString();
+                document.getElementById('current-down').innerText = data.Raw.Current.D.toLocaleString();
+
+                document.getElementById('task-running-count').innerText = data.TaskRunningCount;
+                document.getElementById('task-count').innerText = data.TaskCount;
+
+                // Get current time
+                const now = new Date();
+                const timeLabel = now.toLocaleTimeString();
+
+                // Prepare datasets data
+                const datasetsData = [
+                    data.Raw.Peak0.U, data.Raw.Peak0.D,        // Peak0 U, D
+                    data.Raw.Peak1.U, data.Raw.Peak1.D,        // Peak1 U, D
+                    data.Raw.Peak2.U, data.Raw.Peak2.D,        // Peak2 U, D
+                    data.Peak.U, data.Peak.D,                  // Peak U, D
+                    data.Free.U, data.Free.D,                   // Free U, D
+                    data.Raw.Current.U, data.Raw.Current.D     // Current Load U, D
+                ];
+
+                // Add data to the chart
+                addData(timeLabel, datasetsData);
+            })
+            .catch(error => {
+                console.error('Failed to fetch statistics:', error);
+            });
+    }
+
+    // Fetch statistics every second
+    setInterval(fetchStats, 1000);
+
+    // Initial fetch
+    fetchStats();
+</script>
+</body>
+</html>

@@ -9,7 +9,6 @@ import (
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/lotuscli"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
-	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
 	"github.com/filecoin-project/pubsub"
@@ -20,8 +19,8 @@ import (
 var log = logging.Logger("validation")
 
 const (
-	FILECOIN_EPOCH_DURATION   = 30
-	GAME_CHAIN_EPOCH_LOOKBACK = 10
+	filecoinEpochDuration  = 30
+	gameChainEpochLookback = 10
 
 	validationWorkers = 50
 	oneDay            = 24 * time.Hour
@@ -29,9 +28,8 @@ const (
 
 // Manager validation manager
 type Manager struct {
-	nodeMgr  *node.Manager
-	assetMgr *assets.Manager
-	notify   *pubsub.PubSub
+	nodeMgr *node.Manager
+	notify  *pubsub.PubSub
 
 	seed       int64
 	curRoundID string
@@ -53,13 +51,52 @@ type Manager struct {
 	lotusRPCAddress string
 
 	enableValidation bool
+
+	validators []string
+	vLock      sync.Mutex
+}
+
+func (m *Manager) addValidator(nodeID string) {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	m.validators = append(m.validators, nodeID)
+}
+
+// IsValidator checks if the given nodeID is a validator.
+func (m *Manager) IsValidator(nodeID string) bool {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	if len(m.validators) == 0 {
+		return false
+	}
+
+	for _, nID := range m.validators {
+		if nID == nodeID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetValidators returns a list of validators.
+func (m *Manager) GetValidators() []string {
+	return m.validators
+}
+
+func (m *Manager) cleanValidator() {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	m.validators = []string{}
 }
 
 // NewManager return new node manager instance
-func NewManager(nodeMgr *node.Manager, assetMgr *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *Manager {
+func NewManager(nodeMgr *node.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *Manager {
 	manager := &Manager{
 		nodeMgr:       nodeMgr,
-		assetMgr:      assetMgr,
 		config:        configFunc,
 		close:         make(chan struct{}),
 		updateCh:      make(chan struct{}, 1),
@@ -116,7 +153,7 @@ func (m *Manager) getGameEpoch() (uint64, error) {
 		return 0, xerrors.Errorf("current time is not correct with negative duration: %s", duration)
 	}
 
-	elapseEpoch := int64(duration.Seconds()) / FILECOIN_EPOCH_DURATION
+	elapseEpoch := int64(duration.Seconds()) / filecoinEpochDuration
 
 	return m.cachedEpoch + uint64(elapseEpoch), nil
 }
@@ -129,11 +166,11 @@ func (m *Manager) getSeedFromFilecoin() (int64, error) {
 		return seed, xerrors.Errorf("getGameEpoch failed: %w", err)
 	}
 
-	if height <= GAME_CHAIN_EPOCH_LOOKBACK {
+	if height <= gameChainEpochLookback {
 		return seed, xerrors.Errorf("getGameEpoch return invalid height: %d", height)
 	}
 
-	lookback := height - GAME_CHAIN_EPOCH_LOOKBACK
+	lookback := height - gameChainEpochLookback
 	tps, err := m.getTipsetByHeight(lookback)
 	if err != nil {
 		return seed, xerrors.Errorf("getTipsetByHeight failed: %w", err)
@@ -151,7 +188,7 @@ func (m *Manager) getSeedFromFilecoin() (int64, error) {
 
 func (m *Manager) getTipsetByHeight(height uint64) (*lotuscli.TipSet, error) {
 	iheight := int64(height)
-	for i := 0; i < GAME_CHAIN_EPOCH_LOOKBACK && iheight > 0; i++ {
+	for i := 0; i < gameChainEpochLookback && iheight > 0; i++ {
 		tps, err := lotuscli.ChainGetTipSetByHeight(m.lotusRPCAddress, iheight)
 		if err != nil {
 			return nil, err

@@ -1,12 +1,15 @@
 package projects
 
 import (
+	"bytes"
+	"encoding/gob"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	xerrors "golang.org/x/xerrors"
 )
 
+// UpdateStatus updates the status of projects for a given node ID.
 func (m *Manager) UpdateStatus(nodeID string, list []*types.Project) error {
 	for _, info := range list {
 		exist, _ := m.projectStateMachines.Has(ProjectID(info.ID))
@@ -36,6 +39,7 @@ func (m *Manager) UpdateStatus(nodeID string, list []*types.Project) error {
 	return nil
 }
 
+// Deploy deploys a project based on the provided request.
 func (m *Manager) Deploy(req *types.DeployProjectReq) error {
 	exist := m.isProjectTaskExist(req.UUID)
 	if exist {
@@ -46,39 +50,50 @@ func (m *Manager) Deploy(req *types.DeployProjectReq) error {
 		return xerrors.Errorf("The number of replicas %d exceeds the limit %d", req.Replicas, edgeReplicasLimit)
 	}
 
-	// Waiting for state machine initialization
-	m.stateMachineWait.Wait()
-	log.Infof("project event: %s, add project ", req.Name)
-
-	info := &types.ProjectInfo{
-		UUID:        req.UUID,
-		ServerID:    m.nodeMgr.ServerID,
-		Expiration:  req.Expiration,
-		State:       NodeSelect.String(),
-		CreatedTime: time.Now(),
-		Name:        req.Name,
-		BundleURL:   req.BundleURL,
-		UserID:      req.UserID,
-		Replicas:    req.Replicas,
-		CPUCores:    req.CPUCores,
-		Memory:      req.Memory,
-		AreaID:      req.AreaID,
+	if len(req.Requirement.NodeIDs) > 20 {
+		return xerrors.Errorf("The number of nodes %d exceeds the limit %d", req.Replicas, 20)
 	}
 
-	err := m.SaveProjectInfo(info)
+	// Waiting for state machine initialization
+	m.stateMachineWait.Wait()
+	log.Infof("%s project event: %s, add project area:[%s], ver:[%d] node:[%s] ", req.UUID, req.Name, req.Requirement.AreaID, req.Requirement.Version, req.Requirement.NodeIDs)
+
+	buffer := &bytes.Buffer{}
+	enc := gob.NewEncoder(buffer)
+	err := enc.Encode(req.Requirement)
+	if err != nil {
+		return xerrors.Errorf("Deploy encode error:%s", err.Error())
+	}
+
+	info := &types.ProjectInfo{
+		UUID:            req.UUID,
+		ServerID:        m.nodeMgr.ServerID,
+		Expiration:      req.Expiration,
+		State:           NodeSelect.String(),
+		CreatedTime:     time.Now(),
+		Name:            req.Name,
+		BundleURL:       req.BundleURL,
+		UserID:          req.UserID,
+		Replicas:        req.Replicas,
+		RequirementByte: buffer.Bytes(),
+		Type:            req.Type,
+	}
+
+	err = m.SaveProjectInfo(info)
 	if err != nil {
 		return err
 	}
 
 	rInfo := ProjectForceState{
-		State:   NodeSelect,
-		NodeIDs: req.NodeIDs,
+		State: NodeSelect,
+		// NodeIDs: req.Requirement.NodeIDs,
 	}
 
 	// create project task
 	return m.projectStateMachines.Send(ProjectID(info.UUID), rInfo)
 }
 
+// Update updates the project with the given request.
 func (m *Manager) Update(req *types.ProjectReq) error {
 	if req.Replicas > edgeReplicasLimit {
 		return xerrors.Errorf("The number of replicas %d exceeds the limit %d", req.Replicas, edgeReplicasLimit)
@@ -120,6 +135,7 @@ func (m *Manager) Update(req *types.ProjectReq) error {
 	return m.projectStateMachines.Send(ProjectID(req.UUID), rInfo)
 }
 
+// Delete removes a project based on the provided request.
 func (m *Manager) Delete(req *types.ProjectReq) error {
 	if req.UUID == "" {
 		return xerrors.New("UUID is nil")
@@ -136,6 +152,7 @@ func (m *Manager) Delete(req *types.ProjectReq) error {
 	return m.projectStateMachines.Send(ProjectID(req.UUID), ProjectForceState{State: Remove, Event: int64(types.ProjectEventRemove)})
 }
 
+// GetProjectInfo retrieves the project information for the given UUID.
 func (m *Manager) GetProjectInfo(uuid string) (*types.ProjectInfo, error) {
 	info, err := m.LoadProjectInfo(uuid)
 	if err != nil {

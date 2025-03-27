@@ -2,7 +2,7 @@ package node
 
 import (
 	"fmt"
-	"time"
+	"math"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 )
@@ -17,7 +17,8 @@ const (
 
 	phoneWeighting = 5.0
 
-	l1RBase     = 200000.0 / 288.0 // every 5 minutes
+	l1RBase = 200000.0 / 1440.0 // every 1 minutes
+	// l1RBase     = 200000.0 / 288.0 // every 5 minutes
 	penaltyRate = 0.0001
 
 	exitRate = 0.6
@@ -64,11 +65,7 @@ var (
 // }
 
 func (m *Manager) isExceededLimit(nodeID string) bool {
-	start := time.Now()
-	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
-	end := start.Add(24 * time.Hour)
-
-	todayProfit, err := m.LoadTodayProfitsForNode(nodeID, start, end)
+	todayProfit, err := m.LoadTodayProfitsForNode(nodeID)
 	if err != nil {
 		log.Errorf("%s LoadTodayProfitsForNode err:%s", nodeID, err.Error())
 		return true
@@ -162,12 +159,13 @@ func (m *Manager) GetEdgeBaseProfitDetails(node *Node, minute int) (float64, *ty
 
 // GetCandidateBaseProfitDetails Basic Rewards
 func (m *Manager) GetCandidateBaseProfitDetails(node *Node, minute int) *types.ProfitDetails {
-	// Every 5 minutes
+	// Every 1 minutes
 	arR := rateOfAR(node.OnlineRate)
-	mcx := l1RBase * node.OnlineRate * arR
+	arO := rateOfOnline(node.OnlineDuration)
+	mcx := l1RBase * node.OnlineRate * arR * arO
 
-	count := roundDivision(minute, 5)
-	mcx = mcx * float64(count)
+	// count := roundDivision(minute, 1)
+	mcx = mcx * float64(minute)
 
 	if mcx < 0.000001 {
 		return nil
@@ -177,7 +175,7 @@ func (m *Manager) GetCandidateBaseProfitDetails(node *Node, minute int) *types.P
 		NodeID: node.NodeID,
 		Profit: mcx,
 		PType:  types.ProfitTypeBase,
-		Note:   fmt.Sprintf("rbase:[%.4f],node rate:[%.4f] ar rate:[%.4f] , count[%d]", l1RBase, node.OnlineRate, arR, count),
+		Note:   fmt.Sprintf("rbase:[%.4f],node rate:[%.4f] ar rate:[%.4f] arO:[%.2f], count[%d], online[%d]", l1RBase, node.OnlineRate, arR, arO, minute, node.OnlineDuration),
 	}
 }
 
@@ -237,7 +235,12 @@ func (m *Manager) GetUploadProfitDetails(node *Node, size float64, pid string) *
 }
 
 // CalculatePenalty Penalty
-func (m *Manager) CalculatePenalty(nodeID string, profit float64, offlineDuration int) *types.ProfitDetails {
+func (m *Manager) CalculatePenalty(nodeID string, profit float64, offlineDuration int, onlineDuration int) *types.ProfitDetails {
+	onlineDay := (float64(onlineDuration) / 1440)
+	if onlineDay > 30 {
+		profit = profit / onlineDay * 30
+	}
+
 	od := float64(offlineDuration / 200)
 	pr := (penaltyRate + penaltyRate*od)
 	pn := profit * pr
@@ -256,8 +259,8 @@ func (m *Manager) CalculatePenalty(nodeID string, profit float64, offlineDuratio
 	}
 }
 
-// GetReimburseProfitDetails Reimburse
-func (m *Manager) GetReimburseProfitDetails(nodeID string, profit float64, note string) *types.ProfitDetails {
+// GetRecompenseProfitDetails recompense
+func (m *Manager) GetRecompenseProfitDetails(nodeID string, profit float64, note string) *types.ProfitDetails {
 	if profit < 0.000001 {
 		return nil
 	}
@@ -265,13 +268,13 @@ func (m *Manager) GetReimburseProfitDetails(nodeID string, profit float64, note 
 	return &types.ProfitDetails{
 		NodeID: nodeID,
 		Profit: profit,
-		PType:  types.ProfitTypeReimburse,
+		PType:  types.ProfitTypeRecompense,
 		Note:   note,
 	}
 }
 
-// CalculateExitProfit Exit penalty calculation
-func (m *Manager) CalculateExitProfit(profit float64) (float64, float64) {
+// CalculateDowntimePenalty Exit penalty calculation
+func (m *Manager) CalculateDowntimePenalty(profit float64) (float64, float64) {
 	rExit := profit * (1 - exitRate)
 
 	return rExit, exitRate
@@ -323,6 +326,21 @@ func rateOfAR(ar float64) float64 {
 	return 0
 }
 
+func rateOfOnline(onlineDuration int) float64 {
+	onlineDay := onlineDuration / 1440
+	if onlineDay >= 120 {
+		return 1.3
+	} else if onlineDay >= 90 {
+		return 1.2
+	} else if onlineDay >= 60 {
+		return 1.1
+	} else if onlineDay >= 30 {
+		return 1.05
+	}
+
+	return 1
+}
+
 func rateOfL2Base(nct types.NodeClientType) float64 {
 	switch nct {
 	case types.NodeAndroid, types.NodeIOS:
@@ -345,7 +363,8 @@ func RateOfL2Mx(onlineDuration int) float64 {
 	onlineDay := onlineHour / 24
 	count := onlineDay - 7
 
-	return 1.0 + (float64(count) * 0.03)
+	rate := 1.0 + (float64(count) * 0.03)
+	return math.Min(6, rate)
 }
 
 func bToGB(b float64) float64 {

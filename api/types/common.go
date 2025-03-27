@@ -6,6 +6,7 @@ import (
 	"github.com/filecoin-project/go-jsonrpc/auth"
 )
 
+// OpenRPCDocument represents a document in the OpenRPC format.
 type OpenRPCDocument map[string]interface{}
 
 // EventTopics represents topics for pub/sub events
@@ -27,6 +28,7 @@ type ValidationInfo struct {
 	NextElectionTime time.Time
 }
 
+// JWTPayload represents the payload for JWT authentication.
 type JWTPayload struct {
 	// role base access controller permission
 	Allow []auth.Permission
@@ -37,6 +39,10 @@ type JWTPayload struct {
 	Extend string
 	// The sub permission of user
 	AccessControlList []UserAccessControl
+	// Password for encrypt and decrypt the upload file
+	FilePassNonce string
+
+	TraceID string
 }
 
 // StorageStats storage stats of user
@@ -52,33 +58,4 @@ type StorageStats struct {
 type ListStorageStatsRsp struct {
 	Total    int             `json:"total"`
 	Storages []*StorageStats `json:"infos"`
-}
-
-// AssetGroup user asset group
-type AssetGroup struct {
-	ID          int       `db:"id"`
-	UserID      string    `db:"user_id"`
-	Name        string    `db:"name"`
-	Parent      int       `db:"parent"`
-	AssetCount  int       `db:"asset_count"`
-	AssetSize   int64     `db:"asset_size"`
-	CreatedTime time.Time `db:"created_time"`
-}
-
-// ListAssetGroupRsp list  asset group records
-type ListAssetGroupRsp struct {
-	Total       int           `json:"total"`
-	AssetGroups []*AssetGroup `json:"infos"`
-}
-
-// UserAssetSummary user asset and group
-type UserAssetSummary struct {
-	AssetOverview *AssetOverview
-	AssetGroup    *AssetGroup
-}
-
-// ListAssetSummaryRsp list asset and group
-type ListAssetSummaryRsp struct {
-	Total int                 `json:"total"`
-	List  []*UserAssetSummary `json:"list"`
 }

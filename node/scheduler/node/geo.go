@@ -33,7 +33,7 @@ func (m *GeoMgr) AddNodeGeo(nodeInfo *types.NodeInfo, areaID string) {
 	continent, country, province, city := region.DecodeAreaID(areaID)
 	if nodeInfo.Type == types.NodeEdge {
 		m.AddEdgeNode(continent, country, province, city, nodeInfo)
-	} else {
+	} else if nodeInfo.Type == types.NodeCandidate {
 		m.AddCandidateNode(continent, country, province, city, nodeInfo)
 	}
 }
@@ -43,7 +43,7 @@ func (m *GeoMgr) RemoveNodeGeo(nodeID string, nodeType types.NodeType, areaID st
 	continent, country, province, city := region.DecodeAreaID(areaID)
 	if nodeType == types.NodeEdge {
 		m.RemoveEdgeNode(continent, country, province, city, nodeID)
-	} else {
+	} else if nodeType == types.NodeCandidate {
 		m.RemoveCandidateNode(continent, country, province, city, nodeID)
 	}
 }
@@ -52,9 +52,11 @@ func (m *GeoMgr) RemoveNodeGeo(nodeID string, nodeType types.NodeType, areaID st
 func (m *GeoMgr) FindNodesFromGeo(continent, country, province, city string, nodeType types.NodeType) []*types.NodeInfo {
 	if nodeType == types.NodeEdge {
 		return m.FindEdgeNodes(continent, country, province, city)
+	} else if nodeType == types.NodeCandidate {
+		return m.FindCandidateNodes(continent, country, province, city)
 	}
 
-	return m.FindCandidateNodes(continent, country, province, city)
+	return nil
 }
 
 // GetGeoKey get node geo key

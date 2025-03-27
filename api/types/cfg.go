@@ -8,6 +8,7 @@ type SchedulerCfg struct {
 	AccessToken  string `db:"access_token"`
 }
 
+// MinioConfig holds the configuration for connecting to MinIO.
 type MinioConfig struct {
 	Endpoint        string
 	AccessKeyID     string

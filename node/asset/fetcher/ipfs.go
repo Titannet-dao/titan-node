@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-cid"
-	httpapi "github.com/ipfs/go-ipfs-http-client"
 	"github.com/ipfs/go-libipfs/blocks"
 	logging "github.com/ipfs/go-log/v2"
-	"github.com/ipfs/interface-go-ipfs-core/path"
+	httpapi "github.com/ipfs/kubo/client/rpc"
 )
 
 var log = logging.Logger("asset/fetcher")
@@ -50,7 +50,11 @@ func (ipfs *IPFSClient) FetchBlocks(ctx context.Context, cids []string, sdis []*
 
 // retrieveBlock gets a block from IPFSClient with the specified CID
 func (ipfs *IPFSClient) retrieveBlock(ctx context.Context, cidStr string) (blocks.Block, error) {
-	reader, err := ipfs.httpAPI.Block().Get(ctx, path.New(cidStr))
+	cidPath, err := path.NewPath(cidStr)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := ipfs.httpAPI.Block().Get(ctx, cidPath)
 	if err != nil {
 		return nil, err
 	}

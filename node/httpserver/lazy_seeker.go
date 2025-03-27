@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"io"
 )
@@ -13,6 +14,7 @@ type lazySeeker struct {
 	size       int64
 	offset     int64
 	realOffset int64
+	ctr        cipher.Stream
 }
 
 // Seek implements io.Seeker interface
@@ -49,6 +51,11 @@ func (s *lazySeeker) Read(b []byte) (int, error) {
 		s.realOffset = off
 	}
 	off, err := s.reader.Read(b)
+	// using aes-ctr to decrypt
+	if s.ctr != nil {
+		s.ctr.XORKeyStream(b[:off], b[:off])
+	}
+
 	s.realOffset += int64(off)
 	s.offset += int64(off)
 	return off, err

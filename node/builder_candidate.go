@@ -2,7 +2,6 @@ package node
 
 import (
 	"errors"
-	"github.com/Filecoin-Titan/titan/node/container"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -58,9 +57,8 @@ func ConfigCandidate(c interface{}) Option {
 		Override(new(*types.RateLimiter), modules.NewRateLimiter),
 		Override(new(*asset.Asset), asset.NewAsset),
 		Override(new(*datasync.DataSync), modules.NewDataSync),
-		Override(new(*candidate.TCPServer), modules.NewTCPServer),
+		// Override(new(*candidate.TCPServer), modules.NewTCPServer),
 		Override(new(dtypes.WorkerdPath), modules.WorkerdPath),
 		Override(new(*workerd.Workerd), modules.NewWorkerd),
-		Override(new(*container.Client), container.NewClient),
 	)
 }

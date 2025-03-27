@@ -108,9 +108,9 @@ func (hs *HttpServer) listFile(r *http.Request, assetCID string, dir files.Direc
 
 	}
 
-	if err != nil {
-		log.Errorf("directory foreach error %s", err.Error())
-	}
+	// if err != nil {
+	// 	log.Errorf("directory foreach error %s", err.Error())
+	// }
 
 	size, err := dir.Size()
 	if err != nil {

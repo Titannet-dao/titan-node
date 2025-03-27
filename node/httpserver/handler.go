@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Filecoin-Titan/titan/lib/limiter"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipfs/interface-go-ipfs-core/path"
@@ -18,10 +17,17 @@ import (
 var log = logging.Logger("httpserver")
 
 const (
-	reqIpfs   = "/ipfs"
-	reqUpload = "/upload"
-	// upload files
-	reqUploadv2           = "/uploadv2"
+	reqIpfs = "/ipfs"
+
+	reqUpload         = "/upload"   // upload car file
+	reqUploadv2       = "/uploadv2" // upload raw file
+	reqUploadv3       = "/uploadv3" // upload with url
+	reqUploadv3Status = "/statusv3" // status of active or inactive uploadv3 request
+	reqUploadv4       = "/uploadv4" // multi-part upload
+
+	reqMonitor = "/monitor"
+	reqStats   = "/stats"
+
 	reqRpc                = "/rpc"
 	reqLease              = "/lease"
 	immutableCacheControl = "public, max-age=29030400, immutable"
@@ -71,22 +77,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(r.URL.Path, reqIpfs) &&
 		!strings.Contains(r.URL.Path, reqUpload) &&
 		!strings.Contains(r.URL.Path, reqRpc) &&
-		!strings.Contains(r.URL.Path, reqLease) &&
-		!strings.Contains(r.URL.Path, reqUploadv2) {
+		!strings.Contains(r.URL.Path, reqUploadv2) &&
+		!strings.Contains(r.URL.Path, reqUploadv3) &&
+		!strings.Contains(r.URL.Path, reqUploadv3Status) &&
+		!strings.Contains(r.URL.Path, reqUploadv4) &&
+		!strings.Contains(r.URL.Path, reqMonitor) &&
+		!strings.Contains(r.URL.Path, reqStats) {
 		resetPath(r)
 	}
 
 	reqPath := getFirstPathSegment(r.URL.Path)
+	monitor := h.hs.monitor
+
+	if strings.Contains(r.URL.Path, reqStats) || strings.Contains(r.URL.Path, reqMonitor) {
+		monitor.ServeHTTP(w, r)
+		return
+	}
 
 	switch reqPath {
 	case reqIpfs:
-		h.hs.handler(w, r)
+		monitor.Middleware(h.hs.handler).ServeHTTP(w, r)
 	case reqUpload:
-		h.hs.uploadHandler(w, r)
+		monitor.Middleware(h.hs.uploadHandler).ServeHTTP(w, r)
 	case reqUploadv2:
-		h.hs.uploadv2Handler(w, r)
-	case reqLease:
-		h.hs.LeaseShellHandler(w, r)
+		monitor.Middleware(h.hs.uploadv2Handler).ServeHTTP(w, r)
+	case reqUploadv3:
+		monitor.Middleware(h.hs.uploadv3Handler).ServeHTTP(w, r)
+	case reqUploadv3Status:
+		h.hs.uploadv3StatusHandler(w, r)
 	default:
 		h.handler.ServeHTTP(w, r)
 	}
@@ -109,8 +127,8 @@ func (hs *HttpServer) handler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodHead:
 		hs.headHandler(w, r)
 	case http.MethodGet:
-		limiter := limiter.NewWriter(w, hs.rateLimiter.BandwidthUpLimiter)
-		hs.getHandler(limiter, r)
+		// limiter := limiter.NewWriter(w, hs.rateLimiter.BandwidthUpLimiter)
+		hs.getHandler(w, r)
 	default:
 		http.Error(w, fmt.Sprintf("method %s not allowed", r.Method), http.StatusBadRequest)
 	}

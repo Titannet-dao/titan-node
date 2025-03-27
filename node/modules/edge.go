@@ -12,6 +12,7 @@ import (
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	datasync "github.com/Filecoin-Titan/titan/node/sync"
 	"github.com/Filecoin-Titan/titan/node/validation"
+	"go.uber.org/fx"
 	"golang.org/x/time/rate"
 )
 
@@ -51,8 +52,8 @@ func NewNodeStorageManager(metadataPaths dtypes.NodeMetadataPath, assetsPaths dt
 }
 
 // NewAssetsManager creates a function that generates new instances of asset.Manager.
-func NewAssetsManager(ctx context.Context, pullerConfig *config.Puller, ipfsAPIURL string) func(storageMgr *storage.Manager, schedulerAPI api.Scheduler, rateLimiter *types.RateLimiter) (*asset.Manager, error) {
-	return func(storageMgr *storage.Manager, schedulerAPI api.Scheduler, rateLimiter *types.RateLimiter) (*asset.Manager, error) {
+func NewAssetsManager(ctx context.Context, pullerConfig *config.Puller, ipfsAPIURL string) func(l fx.Lifecycle, storageMgr *storage.Manager, schedulerAPI api.Scheduler, rateLimiter *types.RateLimiter) (*asset.Manager, error) {
+	return func(l fx.Lifecycle, storageMgr *storage.Manager, schedulerAPI api.Scheduler, rateLimiter *types.RateLimiter) (*asset.Manager, error) {
 		opts := &asset.ManagerOptions{
 			Storage:      storageMgr,
 			IPFSAPIURL:   ipfsAPIURL,
@@ -60,7 +61,18 @@ func NewAssetsManager(ctx context.Context, pullerConfig *config.Puller, ipfsAPIU
 			PullerConfig: pullerConfig,
 			RateLimiter:  rateLimiter,
 		}
-		return asset.NewManager(ctx, opts)
+		m, err := asset.NewManager(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		l.Append(fx.Hook{
+			OnStop: func(_ context.Context) error {
+				return m.Stop()
+			},
+		})
+
+		return m, nil
 	}
 }
 

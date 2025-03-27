@@ -111,12 +111,16 @@ func (c *CandidateFetcher) retrieveBlocks(ctx context.Context, cids []string, sd
 			startTime := time.Now()
 			b, err := c.fetchSingleBlock(ctx, ds, cidStr)
 			if err != nil {
+				lock.Lock()
 				errMsgs = append(errMsgs, &ErrMsg{Cid: cidStr, Source: ds.NodeID, Msg: err.Error()})
+				workload := &types.Workload{SourceID: ds.NodeID, Status: types.WorkloadReqStatusFailed}
+				workloads = append(workloads, workload)
+				lock.Unlock()
 				return
 			}
 
 			costTime := time.Since(startTime) / time.Millisecond
-			workload := &types.Workload{SourceID: ds.NodeID, DownloadSize: int64(len(b.RawData())), CostTime: int64(costTime)}
+			workload := &types.Workload{SourceID: ds.NodeID, DownloadSize: int64(len(b.RawData())), CostTime: int64(costTime), Status: types.WorkloadReqStatusSucceeded}
 
 			lock.Lock()
 			blks = append(blks, b)

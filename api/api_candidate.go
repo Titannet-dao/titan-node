@@ -13,7 +13,7 @@ type Candidate interface {
 	Validation
 	DataSync
 	Asset
-	ProviderAPI
+	// ProviderAPI
 
 	WaitQuiet(ctx context.Context) error                                                                             //perm:admin
 	GetBlocksWithAssetCID(ctx context.Context, assetCID string, randomSeed int64, randomCount int) ([]string, error) //perm:admin

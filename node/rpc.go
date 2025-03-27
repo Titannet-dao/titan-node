@@ -79,8 +79,10 @@ func SchedulerHandler(a api.Scheduler, permission bool, opts ...jsonrpc.ServerOp
 	}
 
 	serveRPC("/rpc/v0", fnapi)
+	// promHandler := promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})
 
 	// debugging
+	// m.Handle("/prom/metrics", promHandler)
 	m.Handle("/debug/metrics", metrics.Exporter())
 	m.Handle("/debug/pprof-set/mutex", handleFractionOpt("MutexProfileFraction", func(x int) {
 		runtime.SetMutexProfileFraction(x)

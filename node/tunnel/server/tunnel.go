@@ -14,19 +14,9 @@ import (
 
 type CMD int
 
-const (
-	cMDPing = 1
-	cMDPong = 2
-)
-
 type DataCount struct {
 	FromReq int64
 	FromTun int64
-}
-
-type waitConn struct {
-	create   chan bool
-	complete chan bool
 }
 
 type TunnelOptions struct {
@@ -35,7 +25,7 @@ type TunnelOptions struct {
 	targetNodeID string
 	nodeID       string
 	tunID        string
-	req          Req
+	// req          Req
 }
 
 type Tunnel struct {
@@ -75,10 +65,6 @@ func checkOptions(opts *TunnelOptions) error {
 		return fmt.Errorf("opts.tunID is emtpy")
 	}
 
-	if opts.req == nil {
-		return fmt.Errorf("opts.req == nil")
-	}
-
 	return nil
 }
 
@@ -88,9 +74,9 @@ func newTunnel(ctx context.Context, ts *Tunserver, relays []string, opts *Tunnel
 	}
 
 	if len(relays) > 0 {
-		return newTunnelWithRelays(context.Background(), relays, opts)
+		return newTunnelWithRelays(ctx, relays, opts)
 	}
-	return newTunnelWithTargetNode(context.Background(), ts, opts)
+	return newTunnelWithTargetNode(ctx, ts, opts)
 }
 
 func newTunnelWithRelays(ctx context.Context, relays []string, opts *TunnelOptions) (*Tunnel, error) {
@@ -111,6 +97,7 @@ func newTunnelWithRelays(ctx context.Context, relays []string, opts *TunnelOptio
 	}
 
 	log.Debugf("newTunnelWithRelays %s, projectID %s", wsURL, opts.tunID)
+
 	t := &Tunnel{
 		ctx:          ctx,
 		scheduler:    opts.scheduler,
@@ -118,8 +105,8 @@ func newTunnelWithRelays(ctx context.Context, relays []string, opts *TunnelOptio
 		targetNodeID: opts.targetNodeID,
 		nodeID:       opts.nodeID,
 		id:           opts.tunID,
-		req:          opts.req,
-		conn:         conn,
+		// req:          opts.req,
+		conn: conn,
 
 		writeLock:   sync.Mutex{},
 		dataCount:   DataCount{},
@@ -127,7 +114,7 @@ func newTunnelWithRelays(ctx context.Context, relays []string, opts *TunnelOptio
 		trafficStat: &TrafficStat{lock: sync.Mutex{}, startTime: time.Now()},
 	}
 
-	go t.handleTrafficStat()
+	// go t.handleTrafficStat()
 	go t.startService()
 
 	return t, nil
@@ -141,7 +128,7 @@ func newTunnelWithTargetNode(ctx context.Context, ts *Tunserver, opts *TunnelOpt
 		targetNodeID: opts.targetNodeID,
 		nodeID:       opts.nodeID,
 		id:           opts.tunID,
-		req:          opts.req,
+		// req:          opts.req,
 
 		writeLock:   sync.Mutex{},
 		dataCount:   DataCount{},
@@ -159,7 +146,7 @@ func newTunnelWithTargetNode(ctx context.Context, ts *Tunserver, opts *TunnelOpt
 	err := ts.scheduler.CreateTunnel(ctx, createTunnelReq)
 	if err != nil {
 		ts.tunMgr.removeTunnel(t)
-		return nil, err
+		return nil, fmt.Errorf("create tunnel from edge %s failed: %s", t.targetNodeID, err.Error())
 	}
 
 	// wait connect

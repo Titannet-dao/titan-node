@@ -20,6 +20,7 @@ type Storage interface {
 	AllocatePathWithSize(size int64) (string, error)
 	StoreBlocksToCar(ctx context.Context, root cid.Cid) error
 	StoreUserAsset(ctx context.Context, userID string, root cid.Cid, assetSize int64, r io.Reader) error
+	ListBlocks(ctx context.Context, root cid.Cid) ([]cid.Cid, error)
 	GetAsset(root cid.Cid) (io.ReadSeekCloser, error)
 	GetAssetHashesForSyncData(ctx context.Context) ([]string, error)
 	AssetExists(root cid.Cid) (bool, error)

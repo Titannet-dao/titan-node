@@ -150,9 +150,6 @@ func (m *Manager) triggerPuller() {
 func (m *Manager) start() {
 	defer log.Debugf("Manager finish")
 
-	// close the assetView db
-	defer m.CloseAssetView()
-
 	go m.startTick()
 
 	// delay 15 second to pull asset if exist waitList
@@ -166,6 +163,12 @@ func (m *Manager) start() {
 			return
 		}
 	}
+}
+
+// The assetView needs to be closed before app exiting
+func (m *Manager) Stop() error {
+	log.Infof("Asset manager stop")
+	return m.CloseAssetView()
 }
 
 // pullAssets pulls all assets that are waiting to be pulled
@@ -481,6 +484,7 @@ func (m *Manager) progressForPulling(root cid.Cid) (*types.AssetPullProgress, er
 	if m.puller().root.Hash().String() == root.Hash().String() {
 		return m.puller().getAssetProgress(), nil
 	}
+
 	if v, ok := m.uploadingAssets.Load(root.Hash().String()); ok {
 		asset := v.(*types.UploadingAsset)
 		return &types.AssetPullProgress{
@@ -488,6 +492,7 @@ func (m *Manager) progressForPulling(root cid.Cid) (*types.AssetPullProgress, er
 			Status:   types.ReplicaStatusPulling,
 			Size:     asset.Progress.TotalSize,
 			DoneSize: asset.Progress.DoneSize,
+			ClientID: asset.UserID,
 		}, nil
 	}
 

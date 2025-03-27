@@ -11,3 +11,14 @@ type AWSDataInfo struct {
 	DistributeTime time.Time `db:"distribute_time"`
 	Size           float64   `db:"size"`
 }
+
+// AssetDataInfo ipfs data
+type AssetDataInfo struct {
+	Cid            string    `db:"cid"`
+	Hash           string    `db:"hash"`
+	Replicas       int64     `db:"replicas"`
+	Status         int       `db:"status"`
+	DistributeTime time.Time `db:"distribute_time"`
+	Owner          string    `db:"owner"`
+	Expiration     time.Time `db:"expiration"`
+}

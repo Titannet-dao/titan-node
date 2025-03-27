@@ -26,52 +26,47 @@ func NewSQLDB(db *sqlx.DB) (*SQLDB, error) {
 }
 
 const (
-	// userAssetTable       = "user_asset"
-	// userInfoTable        = "user_info"
-	// userAssetGroupTable  = "user_asset_group"
-	// assetVisitCountTable = "asset_visit_count"
+	// remove table
+	retrieveEventTable = "retrieve_event"
+	validatorsTable    = "validators"
 
 	// Database table names.
-	nodeRegisterTable  = "node_register_info"
-	nodeInfoTable      = "node_info"
-	onlineCountTable   = "online_count"
-	candidateCodeTable = "candidate_code"
-
-	assetRecordTable = "asset_record"
-	replicaInfoTable = "replica_info"
-	assetsViewTable  = "asset_view"
-	bucketTable      = "bucket"
-
-	projectEventTable     = "project_event"
-	validationResultTable = "validation_result"
-	replicaEventTable     = "replica_event"
-	retrieveEventTable    = "retrieve_event"
-
-	edgeUpdateTable      = "edge_update_info"
-	validatorsTable      = "validators"
-	workloadRecordTable  = "workload_record"
-	replenishBackupTable = "replenish_backup"
-	awsDataTable         = "aws_data"
+	nodeRegisterTable    = "node_register_info"
+	nodeInfoTable        = "node_info"
+	onlineCountTable     = "online_count"
+	candidateCodeTable   = "candidate_code"
+	assetRecordTable     = "asset_record"
+	replicaInfoTable     = "replica_info"
+	assetsViewTable      = "asset_view"
+	bucketTable          = "bucket"
+	assetDataTable       = "asset_data"
 	profitDetailsTable   = "profit_details"
 	projectInfoTable     = "project_info"
 	projectReplicasTable = "project_replicas"
 
-	deploymentTable = "deployments"
-	providersTable  = "providers"
-	propertiesTable = "properties"
-	servicesTable   = "services"
-	domainsTable    = "domains"
+	assetDownloadTable    = "asset_download"
+	projectEventTable     = "project_event"
+	validationResultTable = "validation_result"
+	replicaEventTable     = "replica_event"
+	edgeUpdateTable       = "edge_update_info"
+	workloadRecordTable   = "workload_record"
+	replenishBackupTable  = "replenish_backup"
+	awsDataTable          = "aws_data"
+	nodeStatisticsTable   = "node_statistics"
+	nodeRetrieveTable     = "node_retrieve"
+	serviceEventTable     = "service_event"
+	bandwidthEventTable   = "bandwidth_event"
 
 	// Default limits for loading table entries.
 	loadNodeInfosDefaultLimit           = 1000
 	loadValidationResultsDefaultLimit   = 100
-	loadAssetRecordsDefaultLimit        = 100
+	loadAssetRecordsDefaultLimit        = 1000
 	loadExpiredAssetRecordsDefaultLimit = 100
 	loadWorkloadDefaultLimit            = 100
 	loadReplicaEventDefaultLimit        = 500
 	loadRetrieveDefaultLimit            = 100
 	loadReplicaDefaultLimit             = 100
-	loadUserDefaultLimit                = 100
+	loadAssetDownloadLimit              = 500
 )
 
 // assetStateTable returns the asset state table name for the given serverID.
@@ -116,7 +111,7 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cBucketTable, bucketTable))
 	tx.MustExec(fmt.Sprintf(cWorkloadTable, workloadRecordTable))
 	tx.MustExec(fmt.Sprintf(cReplicaEventTable, replicaEventTable))
-	tx.MustExec(fmt.Sprintf(cRetrieveEventTable, retrieveEventTable))
+	// tx.MustExec(fmt.Sprintf(cRetrieveEventTable, retrieveEventTable))
 	tx.MustExec(fmt.Sprintf(cReplenishBackupTable, replenishBackupTable))
 	tx.MustExec(fmt.Sprintf(cAWSDataTable, awsDataTable))
 	tx.MustExec(fmt.Sprintf(cProfitDetailsTable, profitDetailsTable))
@@ -126,30 +121,48 @@ func InitTables(d *SQLDB, serverID dtypes.ServerID) error {
 	tx.MustExec(fmt.Sprintf(cProjectReplicasTable, projectReplicasTable))
 	tx.MustExec(fmt.Sprintf(cProjectEventTable, projectEventTable))
 	tx.MustExec(fmt.Sprintf(cOnlineCountTable, onlineCountTable))
-	tx.MustExec(fmt.Sprintf(cDeploymentTable, deploymentTable))
-	tx.MustExec(fmt.Sprintf(cProviderTable, providersTable))
-	tx.MustExec(fmt.Sprintf(cPropertiesTable, propertiesTable))
-	tx.MustExec(fmt.Sprintf(cServicesTable, servicesTable))
-	tx.MustExec(fmt.Sprintf(cDomainTable, domainsTable))
+	// tx.MustExec(fmt.Sprintf(cDeploymentTable, deploymentTable))
+	// tx.MustExec(fmt.Sprintf(cProviderTable, providersTable))
+	// tx.MustExec(fmt.Sprintf(cPropertiesTable, propertiesTable))
+	// tx.MustExec(fmt.Sprintf(cServicesTable, servicesTable))
+	// tx.MustExec(fmt.Sprintf(cDomainTable, domainsTable))
+	tx.MustExec(fmt.Sprintf(cAssetDownloadTable, assetDownloadTable))
+	tx.MustExec(fmt.Sprintf(cNodeStatisticsTable, nodeStatisticsTable))
+	tx.MustExec(fmt.Sprintf(cNodeRetrieveTable, nodeRetrieveTable))
+	tx.MustExec(fmt.Sprintf(cAssetDataTable, assetDataTable))
+	tx.MustExec(fmt.Sprintf(cServiceEventTable, serviceEventTable))
+	tx.MustExec(fmt.Sprintf(cBandwidthEventTable, bandwidthEventTable))
 
 	return tx.Commit()
 }
 
 func doExec(d *SQLDB, serverID dtypes.ServerID) {
-	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s CHANGE create_time created_time    DATETIME      NOT NULL", onlineCountTable))
+	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s CHANGE speed speed         BIGINT       DEFAULT 0", replicaEventTable))
 	// if err != nil {
 	// 	log.Errorf("InitTables doExec err:%s", err.Error())
 	// }
-	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD penalty_profit       DECIMAL(20, 6)  DEFAULT 0;", nodeInfoTable))
+	// _, err = d.db.Exec(fmt.Sprintf("ALTER TABLE %s CHANGE speed speed         BIGINT       DEFAULT 0", nodeRetrieveTable))
 	// if err != nil {
 	// 	log.Errorf("InitTables doExec err:%s", err.Error())
 	// }
-	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN nat_type ;", nodeInfoTable))
+
+	// _, err = d.db.Exec(fmt.Sprintf("ALTER TABLE %s CHANGE speed speed         BIGINT       DEFAULT 0", replicaInfoTable))
 	// if err != nil {
 	// 	log.Errorf("InitTables doExec err:%s", err.Error())
 	// }
-	// _, err = d.db.Exec(fmt.Sprintf("UPDATE  %s AS ni SET ni.penalty_profit = (SELECT ABS(COALESCE(SUM(pd.profit), 0)) FROM profit_details AS pd  WHERE pd.node_id = ni.node_id AND pd.profit_type = 7);", nodeInfoTable))
+	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN cpu_cores ;", projectInfoTable))
 	// if err != nil {
 	// 	log.Errorf("InitTables doExec err:%s", err.Error())
 	// }
+	// _, err = d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD workload_id   VARCHAR(128) DEFAULT ''", replicaInfoTable))
+	// if err != nil {
+	// 	log.Errorf("InitTables doExec err:%s", err.Error())
+	// }
+	// _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD nat_type             VARCHAR(32)     DEFAULT 'UnknowNAT'", nodeInfoTable))
+	// if err != nil {
+	// 	log.Errorf("InitTables doExec err:%s", err.Error())
+	// }
+
+	// ALTER TABLE node_info ADD nat_type             VARCHAR(32)     DEFAULT 'UnknowNAT';
+	// Drop table service_event;
 }

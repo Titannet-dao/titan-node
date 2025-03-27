@@ -1,7 +1,9 @@
 package terrors
 
+// TError represents an error type in the application.
 type TError int
 
+// NotFound indicates that a resource was not found.
 const (
 	NotFound                 TError = iota + 10000
 	DatabaseErr                     // database error
@@ -36,10 +38,14 @@ const (
 	HashNotFound        // asset hash not found
 	AssetNotFound       // asset not found
 
+	ForceOffline // node force offline
+	InvalidAsset
+
 	Success = 0
 	Unknown = -1
 )
 
+// Int returns the integer representation of the TError.
 func (e TError) Int() int {
 	return int(e)
 }

@@ -3,12 +3,10 @@ package assets
 import (
 	"bytes"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
-	"math/rand"
 	"sort"
 
 	"github.com/ipfs/go-cid"
@@ -229,59 +227,4 @@ func encode(in interface{}) ([]byte, error) {
 		return nil, err
 	}
 	return buffer.Bytes(), nil
-}
-
-// RandomAsset get node asset with random seed
-func (m *Manager) RandomAsset(nodeID string, seed int64) (*cid.Cid, error) {
-	r := rand.New(rand.NewSource(seed))
-	bytes, err := m.LoadBucketHashes(nodeID)
-	if err != nil {
-		return nil, err
-	}
-
-	hashes := make(map[uint32]string)
-	if err := decode(bytes, &hashes); err != nil {
-		return nil, err
-	}
-
-	if len(hashes) == 0 {
-		return nil, sql.ErrNoRows
-	}
-
-	// TODO　save bucket hashes as array
-	bucketIDs := make([]int, 0, len(hashes))
-	for k := range hashes {
-		bucketIDs = append(bucketIDs, int(k))
-	}
-
-	sort.Ints(bucketIDs)
-
-	index := r.Intn(len(bucketIDs))
-	bucketID := bucketIDs[index]
-
-	id := fmt.Sprintf("%s:%d", nodeID, bucketID)
-	bytes, err = m.LoadBucket(id)
-	if err != nil {
-		return nil, err
-	}
-
-	assetHashes := make([]string, 0)
-	if err = decode(bytes, &assetHashes); err != nil {
-		return nil, err
-	}
-
-	if len(assetHashes) == 0 {
-		return nil, sql.ErrNoRows
-	}
-
-	index = r.Intn(len(assetHashes))
-	hash := assetHashes[index]
-
-	bytes, err = hex.DecodeString(hash)
-	if err != nil {
-		return nil, err
-	}
-
-	c := cid.NewCidV0(bytes)
-	return &c, nil
 }

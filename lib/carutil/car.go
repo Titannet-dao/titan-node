@@ -8,8 +8,8 @@ import (
 	"io"
 	"path"
 
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	blocks "github.com/ipfs/go-libipfs/blocks"
 	"github.com/ipfs/go-unixfsnode/data/builder"
 	carv1 "github.com/ipld/go-car"
 	"github.com/ipld/go-car/v2"

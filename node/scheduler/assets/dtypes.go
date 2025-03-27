@@ -110,8 +110,8 @@ type AssetPullingInfo struct {
 	Details     string
 	SeedNodeIDs []string
 
-	Source         AssetSource
-	DownloadSource *SourceDownloadInfo
+	Source          AssetSource
+	DownloadSources []*SourceDownloadInfo
 
 	Note string
 }

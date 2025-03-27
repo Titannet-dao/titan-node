@@ -170,7 +170,7 @@ func NewHTTP3Client() *http.Client {
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
-			QuicConfig: &quic.Config{
+			QUICConfig: &quic.Config{
 				MaxIncomingStreams:    100,
 				MaxIncomingUniStreams: 100,
 			},
@@ -193,7 +193,7 @@ func NewHTTP3ClientWithPacketConn(tansport *quic.Transport) (*http.Client, error
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
-		QuicConfig: &quic.Config{
+		QUICConfig: &quic.Config{
 			MaxIncomingStreams:    3,
 			MaxIncomingUniStreams: 3,
 		},

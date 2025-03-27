@@ -1277,7 +1277,7 @@ var udpTestCmd = &cli.Command{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
 				},
-				QuicConfig: &quic.Config{
+				QUICConfig: &quic.Config{
 					MaxIncomingStreams:    100,
 					MaxIncomingUniStreams: 100,
 				},
@@ -1310,7 +1310,6 @@ var freeUpDiskCmd = &cli.Command{
 				defer edgeClose()
 
 				ret, err := api.StateFreeUpDisk(cctx.Context)
-
 				if err != nil {
 					log.Errorf("fetch state of fuds task error: %s, next release time is %s", err.Error(), time.Unix(ret.NextTime, 0).Format("2006-01-02 15:04:05"))
 					return err
@@ -1336,7 +1335,6 @@ var freeUpDiskCmd = &cli.Command{
 				defer edgeClose()
 
 				err = api.ClearFreeUpDisk(cctx.Context)
-
 				if err != nil {
 					log.Errorf("clear fuds task error: %s", err.Error())
 					return err

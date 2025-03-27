@@ -11,7 +11,7 @@ import (
 )
 
 // return true if is directory
-func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, assetCID string) (bool, int, error) {
+func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, assetCID string, filePass []byte) (bool, int, error) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -34,8 +34,8 @@ func (hs *HttpServer) serveUnixFS(w http.ResponseWriter, r *http.Request, assetC
 
 	// Handling Unixfs file
 	if f, ok := node.(files.File); ok {
-		log.Debugw("serving unixfs file", "path", contentPath)
-		statusCode, err := hs.serveFile(w, r, assetCID, f)
+		log.Debugw("serving unixfs file", "path", contentPath, "assetCid", assetCID, "filePass", filePass)
+		statusCode, err := hs.serveFile(w, r, assetCID, f, filePass)
 		return false, statusCode, err
 	}
 

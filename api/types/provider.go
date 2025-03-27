@@ -34,6 +34,16 @@ type Provider struct {
 	UpdatedAt  time.Time     `db:"updated_at"`
 }
 
+type ProviderWithResource struct {
+	*Provider
+	*ResourcesStatistics
+}
+
+type ProvidersResp struct {
+	Providers []*ProviderWithResource
+	Total     int64
+}
+
 type GetProviderOption struct {
 	Owner string
 	ID    string

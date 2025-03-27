@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"sync"
 	"unsafe"
 
 	"github.com/Filecoin-Titan/titan/node/edge/clib"
@@ -59,11 +60,19 @@ func daemonStart(ctx context.Context, daemonSwitch *clib.DaemonSwitch, repoPath,
 		log.Infof("daemonStart register new node")
 	}
 
-	d, err := newDaemon(ctx, repoPath)
+	d, err := newDaemon(ctx, repoPath, daemonSwitch)
 	if err != nil {
 		return err
 	}
 
-	go d.startServer(daemonSwitch)
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go d.startServer(wg)
+
+	wg.Add(1)
+	go d.connectToServer(wg)
+
+	go d.waitShutdown(wg)
+
 	return nil
 }
