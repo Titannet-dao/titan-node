@@ -178,21 +178,36 @@ var daemonStartCmd = &cli.Command{
 			log.Info("Register new node")
 		}
 
-		d, err := newDaemon(lcli.ReqContext(cctx), repoPath)
+		ds := clib.DaemonSwitch{StopChan: make(chan bool)}
+		d, err := newDaemon(lcli.ReqContext(cctx), repoPath, &ds)
 		if err != nil {
 			return err
 		}
 
-		ds := clib.DaemonSwitch{StopChan: make(chan bool)}
-		return d.startServer(&ds)
+		wg := &sync.WaitGroup{}
+
+		wg.Add(2)
+		go d.startServer(wg)
+
+		wg.Add(1)
+		go d.connectToServer(wg)
+
+		return d.waitShutdown(wg)
 	},
 }
 
-func keepalive(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
+func keepaliveV2(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	return api.NodeKeepaliveV2(ctx)
+}
+
+func keepalive(api api.Scheduler, timeout time.Duration) (*types.KeepaliveRsp, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return api.NodeKeepalive(ctx)
 }
 
 func getSchedulerVersion(api api.Scheduler, timeout time.Duration) (api.APIVersion, error) {
@@ -345,8 +360,6 @@ func waitQuietCh(edgeAPI api.Edge) chan struct{} {
 	return out
 }
 
-var quitWg = &sync.WaitGroup{}
-
 func buildSrvHandler(httpServer *httpserver.HttpServer, edgeApi api.Edge, cfg *config.EdgeCfg, schedulerApi api.Scheduler, privateKey *rsa.PrivateKey) (http.Handler, *http.Server) {
 	handler := EdgeHandler(edgeApi.AuthVerify, edgeApi, true)
 	handler = httpServer.NewHandler(handler)
@@ -365,7 +378,8 @@ func buildSrvHandler(httpServer *httpserver.HttpServer, edgeApi api.Edge, cfg *c
 	return handler, httpSrv
 }
 
-func startHTTP3Server(ctx context.Context, transport *quic.Transport, handler http.Handler, config *config.EdgeCfg) error {
+func startHTTP3Server(wg *sync.WaitGroup, ctx context.Context, transport *quic.Transport, handler http.Handler, config *config.EdgeCfg) error {
+	defer wg.Done()
 	defer transport.Conn.Close()
 
 	var tlsConfig *tls.Config
@@ -410,13 +424,14 @@ func startHTTP3Server(ctx context.Context, transport *quic.Transport, handler ht
 	}()
 
 	if err = srv.ServeListener(ln); err != nil {
-		quitWg.Done()
+		// quitWg.Done()
 		log.Warn("http3 server start with error: ", err.Error())
 	}
 	return err
 }
 
-func startHTTPServer(ctx context.Context, srv *http.Server, cfg config.Network) error {
+func startHTTPServer(wg *sync.WaitGroup, ctx context.Context, srv *http.Server, cfg config.Network) error {
+	defer wg.Done()
 	nl, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
 		return err
@@ -433,7 +448,6 @@ func startHTTPServer(ctx context.Context, srv *http.Server, cfg config.Network) 
 	}()
 
 	if err = srv.Serve(nl); err != nil {
-		quitWg.Done()
 		log.Warn("http server start with error: ", err.Error())
 	}
 
@@ -444,6 +458,7 @@ func registShutdownSignal(shutdown chan struct{}) {
 	sigChan := make(chan os.Signal, 2)
 	go func() {
 		<-sigChan
+		log.Infof("recive shutdown signal")
 		shutdown <- struct{}{}
 	}()
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)

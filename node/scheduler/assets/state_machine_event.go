@@ -45,9 +45,9 @@ func (evt PullAssetFatalError) applyGlobal(state *AssetPullingInfo) bool {
 type AssetForceState struct {
 	State AssetState
 	// Requester  string
-	Details        string
-	SeedNodeIDs    []string
-	DownloadSource *SourceDownloadInfo
+	Details         string
+	SeedNodeIDs     []string
+	DownloadSources []*SourceDownloadInfo
 }
 
 func (evt AssetForceState) applyGlobal(state *AssetPullingInfo) bool {
@@ -56,7 +56,7 @@ func (evt AssetForceState) applyGlobal(state *AssetPullingInfo) bool {
 	state.Details = evt.Details
 	state.SeedNodeIDs = evt.SeedNodeIDs
 	state.RetryCount = 0
-	state.DownloadSource = evt.DownloadSource
+	state.DownloadSources = evt.DownloadSources
 	return true
 }
 
@@ -67,7 +67,7 @@ type InfoUpdate struct {
 }
 
 func (evt InfoUpdate) applyGlobal(state *AssetPullingInfo) bool {
-	if state.State == SeedPulling || state.State == SeedUploading {
+	if state.State == SeedPulling || state.State == SeedUploading || state.State == SeedSyncing {
 		state.Size = evt.Size
 		state.Blocks = evt.Blocks
 	}
@@ -86,7 +86,7 @@ type PulledResult struct {
 }
 
 func (evt PulledResult) apply(state *AssetPullingInfo) {
-	if state.State == SeedPulling || state.State == SeedUploading {
+	if state.State == SeedPulling || state.State == SeedUploading || state.State == SeedSyncing {
 		state.Size = evt.Size
 		state.Blocks = evt.BlocksCount
 	}

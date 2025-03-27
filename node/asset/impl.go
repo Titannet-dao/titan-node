@@ -336,19 +336,24 @@ func (a *Asset) AddAssetView(ctx context.Context, assetCIDs []string) error {
 	for _, assetCID := range assetCIDs {
 		root, err := cid.Decode(assetCID)
 		if err != nil {
+			log.Errorf("Asset.AddAssetView decode cid %s faild:", assetCID, err.Error())
 			return err
 		}
 
 		exists, err := a.mgr.AssetExists(root)
 		if err != nil {
+			log.Errorf("Asset.AddAssetView check asset %s exists:", assetCID, err.Error())
 			return err
 		}
 
 		if !exists {
+			log.Errorf("Asset.AddAssetView asset %s not exists", assetCID)
 			return fmt.Errorf("asset %s not exist", assetCID)
 		}
 
-		return a.mgr.AddAssetToView(ctx, root)
+		if err = a.mgr.AddAssetToView(ctx, root); err != nil {
+			return err
+		}
 	}
 	return nil
 }

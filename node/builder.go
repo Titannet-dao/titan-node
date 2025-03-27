@@ -42,6 +42,8 @@ const (
 
 	ConfigWsHandler
 
+	TlsConfigHandler
+
 	_nInvokes // keep this last
 )
 

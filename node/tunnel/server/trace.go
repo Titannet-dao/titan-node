@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
@@ -20,6 +21,7 @@ func AppendTraceInfoToRequestHeader(buf []byte, nodeID string) []byte {
 	}
 
 	headerString := ""
+	remainingData := bytes.Buffer{}
 	reader := bufio.NewReader(bytes.NewReader(buf))
 	for {
 		line, err := reader.ReadString('\n')
@@ -28,6 +30,10 @@ func AppendTraceInfoToRequestHeader(buf []byte, nodeID string) []byte {
 		}
 
 		if line == "\r\n" {
+			_, err = io.Copy(&remainingData, reader)
+			if err != nil {
+				log.Errorf("AppendTraceInfoToRequestHeader %s", err.Error())
+			}
 			break
 		}
 		headerString += line
@@ -37,7 +43,7 @@ func AppendTraceInfoToRequestHeader(buf []byte, nodeID string) []byte {
 	headerString += fmt.Sprintf("%s: %d\r\n", headerRequestNodesTimestamps, time.Now().UnixMilli())
 
 	headerString += "\r\n"
-	return []byte(headerString)
+	return append([]byte(headerString), remainingData.Bytes()...)
 }
 
 func AppendTraceInfoToResponseHeader(buf []byte, nodeID string) []byte {
@@ -47,6 +53,7 @@ func AppendTraceInfoToResponseHeader(buf []byte, nodeID string) []byte {
 	}
 
 	headerString := ""
+	remainingData := bytes.Buffer{}
 	reader := bufio.NewReader(bytes.NewReader(buf))
 	for {
 		line, err := reader.ReadString('\n')
@@ -55,6 +62,10 @@ func AppendTraceInfoToResponseHeader(buf []byte, nodeID string) []byte {
 		}
 
 		if line == "\r\n" {
+			_, err = io.Copy(&remainingData, reader)
+			if err != nil {
+				log.Errorf("AppendTraceInfoToResponseHeader %s", err.Error())
+			}
 			break
 		}
 
@@ -65,5 +76,5 @@ func AppendTraceInfoToResponseHeader(buf []byte, nodeID string) []byte {
 	headerString += fmt.Sprintf("%s: %d\r\n", headerResponseNodesTimestamps, time.Now().UnixMilli())
 
 	headerString += "\r\n"
-	return []byte(headerString)
+	return append([]byte(headerString), remainingData.Bytes()...)
 }

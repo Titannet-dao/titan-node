@@ -18,18 +18,21 @@ func (hs *HttpServer) serveRawBlock(w http.ResponseWriter, r *http.Request, asse
 
 	root, err := cid.Decode(assetCID)
 	if err != nil {
+		log.Debugw("unable to decode baseCid", "error", err)
 		return http.StatusBadRequest, fmt.Errorf("decode root cid %s error: %s", assetCID, err.Error())
 	}
 
 	contentPath := path.New(r.URL.Path)
 	resolvedPath, err := hs.resolvePath(ctx, contentPath, root)
 	if err != nil {
+		log.Debugw("path resolve failed", "error", err)
 		return http.StatusBadRequest, fmt.Errorf("can not resolved path: %s", err.Error())
 	}
 
 	c := resolvedPath.Cid()
 	block, err := hs.asset.GetBlock(ctx, root, c)
 	if err != nil {
+		log.Debugw("error while getting content", "error", err)
 		return http.StatusInternalServerError, fmt.Errorf("can not get block %s, %s", c.String(), err.Error())
 	}
 

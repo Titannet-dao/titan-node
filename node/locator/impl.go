@@ -69,6 +69,22 @@ func (l *Locator) GetAccessPoints(ctx context.Context, nodeID, areaID string) ([
 
 	log.Debugf("GetAccessPoints, nodeID %s, areaID %s", nodeID, areaID)
 
+	if schedulers, err := l.getSchedulerWithAreaID(areaID, nodeID); err == nil && len(schedulers) > 0 {
+		return schedulers, nil
+	}
+
+	log.Debugf("Can not found node %s on %s, will search on all scheduler", nodeID, areaID)
+
+	configs := l.GetAllSchedulerConfigs()
+	schedulerAPIs, err := l.getOrNewSchedulerAPIs(configs)
+	if err != nil {
+		return nil, err
+	}
+
+	return l.selectBestSchedulers(schedulerAPIs, nodeID)
+}
+
+func (l *Locator) getSchedulerWithAreaID(areaID string, nodeID string) ([]string, error) {
 	configs, err := l.GetSchedulerConfigs(areaID)
 	if err != nil {
 		return nil, err
@@ -526,7 +542,7 @@ func (l *Locator) getSchedulerByLowestNumberOfNodes(schedulerCfgs []*types.Sched
 	lock := sync.Mutex{}
 	wg := &sync.WaitGroup{}
 	var config *types.SchedulerCfg
-	minCount := math.MaxInt64
+	minCount := math.MaxInt
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

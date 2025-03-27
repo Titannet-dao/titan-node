@@ -2,7 +2,6 @@ package modules
 
 import (
 	"context"
-	"github.com/Filecoin-Titan/titan/node/scheduler/container"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -50,11 +49,12 @@ func GenerateTokenWithWebPermission(ca *common.CommonAPI) (dtypes.PermissionWebT
 type AssetManagerParams struct {
 	fx.In
 
-	Lifecycle      fx.Lifecycle
-	MetricsCtx     helpers.MetricsCtx
-	MetadataDS     dtypes.AssetMetadataDS
-	NodeManger     *node.Manager
-	WorkloadManger *workload.Manager
+	Lifecycle        fx.Lifecycle
+	MetricsCtx       helpers.MetricsCtx
+	MetadataDS       dtypes.AssetMetadataDS
+	NodeManger       *node.Manager
+	ValidationManger *validation.Manager
+	WorkloadManger   *workload.Manager
 	dtypes.GetSchedulerConfigFunc
 	*db.SQLDB
 }
@@ -62,17 +62,18 @@ type AssetManagerParams struct {
 // NewAssetManager creates a new storage manager instance
 func NewAssetManager(params AssetManagerParams) *assets.Manager {
 	var (
-		mctx    = params.MetricsCtx
-		lc      = params.Lifecycle
-		nodeMgr = params.NodeManger
-		ds      = params.MetadataDS
-		cfgFunc = params.GetSchedulerConfigFunc
-		sdb     = params.SQLDB
-		wMgr    = params.WorkloadManger
+		mctx          = params.MetricsCtx
+		lc            = params.Lifecycle
+		nodeMgr       = params.NodeManger
+		validationMgr = params.ValidationManger
+		ds            = params.MetadataDS
+		cfgFunc       = params.GetSchedulerConfigFunc
+		sdb           = params.SQLDB
+		wMgr          = params.WorkloadManger
 	)
 
 	ctx := helpers.LifecycleCtx(mctx, lc)
-	m := assets.NewManager(nodeMgr, ds, cfgFunc, sdb, wMgr)
+	m := assets.NewManager(validationMgr, nodeMgr, ds, cfgFunc, sdb, wMgr)
 
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
@@ -123,8 +124,8 @@ func NewProjectManager(params ProjectManagerParams) *projects.Manager {
 }
 
 // NewValidation creates a new validation manager instance
-func NewValidation(mctx helpers.MetricsCtx, l fx.Lifecycle, nm *node.Manager, am *assets.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *validation.Manager {
-	v := validation.NewManager(nm, am, configFunc, p, lmgr)
+func NewValidation(mctx helpers.MetricsCtx, l fx.Lifecycle, nm *node.Manager, configFunc dtypes.GetSchedulerConfigFunc, p *pubsub.PubSub, lmgr *leadership.Manager) *validation.Manager {
+	v := validation.NewManager(nm, configFunc, p, lmgr)
 
 	ctx := helpers.LifecycleCtx(mctx, l)
 	l.Append(fx.Hook{
@@ -208,18 +209,4 @@ func RegisterToEtcd(mctx helpers.MetricsCtx, lc fx.Lifecycle, configFunc dtypes.
 	})
 
 	return eCli, nil
-}
-
-func NewContainerManager(mctx helpers.MetricsCtx, l fx.Lifecycle, nm *node.Manager, db *db.SQLDB, p *pubsub.PubSub) *container.Manager {
-	m := container.NewManager(nm, db, p)
-
-	ctx := helpers.LifecycleCtx(mctx, l)
-	l.Append(fx.Hook{
-		OnStart: func(context.Context) error {
-			go m.ListenNodeState(ctx)
-			return nil
-		},
-	})
-
-	return m
 }

@@ -13,7 +13,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-var (
+const (
 	// minRetryTime defines the minimum time duration between retries
 	minRetryTime = 1 * time.Minute
 
@@ -46,8 +46,7 @@ func (m *Manager) handleSeedSync(ctx statemachine.Context, info AssetPullingInfo
 		return ctx.Send(SkipStep{})
 	}
 
-	downloadSource := info.DownloadSource
-	if downloadSource == nil {
+	if len(info.DownloadSources) == 0 {
 		return ctx.Send(SelectFailed{error: xerrors.New("source node not found")})
 	}
 
@@ -65,7 +64,11 @@ func (m *Manager) handleSeedSync(ctx statemachine.Context, info AssetPullingInfo
 		return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", str)})
 	}
 
-	ds := &types.DownloadSources{Nodes: []*types.SourceDownloadInfo{downloadSource.ToSourceDownloadInfo()}}
+	ss := []*types.SourceDownloadInfo{}
+	for _, s := range info.DownloadSources {
+		ss = append(ss, s.ToSourceDownloadInfo())
+	}
+	ds := &types.DownloadSources{Nodes: ss}
 
 	// err = cNode.PullAsset(ctx.Context(), info.CID, downloadSource)
 	err := cNode.PullAssetV2(ctx.Context(), &types.AssetPullRequest{AssetCID: info.CID, Dss: ds})
@@ -78,6 +81,7 @@ func (m *Manager) handleSeedSync(ctx statemachine.Context, info AssetPullingInfo
 		Status:      types.ReplicaStatusWaiting,
 		Hash:        info.Hash.String(),
 		IsCandidate: true,
+		TotalSize:   info.Size,
 	})
 	if err != nil {
 		return ctx.Send(SelectFailed{error: xerrors.Errorf("node SaveReplicaStatus error; %s", err.Error())})
@@ -105,7 +109,7 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 	nodes := make(map[string]*node.Node)
 	if len(info.SeedNodeIDs) > 0 {
 		for _, nodeID := range info.SeedNodeIDs {
-			cNode := m.nodeMgr.GetCandidateNode(nodeID)
+			cNode := m.nodeMgr.GetNode(nodeID)
 			if cNode == nil {
 				return ctx.Send(SelectFailed{error: xerrors.Errorf("node not found; %s", info.SeedNodeIDs)})
 			}
@@ -137,6 +141,7 @@ func (m *Manager) handleSeedSelect(ctx statemachine.Context, info AssetPullingIn
 			Status:      types.ReplicaStatusWaiting,
 			Hash:        info.Hash.String(),
 			IsCandidate: true,
+			TotalSize:   info.Size,
 		})
 		if err != nil {
 			log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
@@ -183,6 +188,7 @@ func (m *Manager) handleUploadInit(ctx statemachine.Context, info AssetPullingIn
 			Status:      types.ReplicaStatusWaiting,
 			Hash:        info.Hash.String(),
 			IsCandidate: true,
+			TotalSize:   info.Size,
 		})
 		if err != nil {
 			log.Errorf("%s SaveReplicaStatus err:%s", nodeID, err.Error())
@@ -212,15 +218,15 @@ func (m *Manager) handleSeedUploading(ctx statemachine.Context, info AssetPullin
 
 // handleCandidatesSelect handles the selection of candidate nodes for asset pull
 func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle candidates select, %s", info.Hash)
+	log.Infof("handle candidates select, %s", info.Hash)
+
+	err := m.DeleteReplenishBackup(info.Hash.String())
+	if err != nil {
+		log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
+	}
 
 	needCount := info.CandidateReplicas - int64(len(info.CandidateReplicaSucceeds))
 	if needCount < 1 {
-		err := m.DeleteReplenishBackup(info.Hash.String())
-		if err != nil {
-			log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
-		}
-
 		// The number of candidate node replicas has reached the requirement
 		return ctx.Send(SkipStep{})
 	}
@@ -252,7 +258,9 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 			continue
 		}
 
-		m.SaveWorkloadRecord([]*types.WorkloadRecord{workload})
+		if workload != nil {
+			m.SaveWorkloadRecord([]*types.WorkloadRecord{workload})
+		}
 
 		go func() {
 			// err = cNode.PullAsset(ctx.Context(), info.CID, downloadSource)
@@ -267,6 +275,8 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 				Status:      types.ReplicaStatusWaiting,
 				Hash:        info.Hash.String(),
 				IsCandidate: true,
+				TotalSize:   info.Size,
+				WorkloadID:  workload.WorkloadID,
 			})
 			if err != nil {
 				log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
@@ -286,13 +296,13 @@ func (m *Manager) handleCandidatesSelect(ctx statemachine.Context, info AssetPul
 
 // handleCandidatesPulling handles the asset pulling process of candidate nodes
 func (m *Manager) handleCandidatesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle candidates pulling,cid: %s, hash:%s , waiting:%d", info.CID, info.Hash.String(), info.CandidateWaitings)
+	log.Infof("handle candidates pulling,cid: %s, hash:%s , waiting:%d", info.CID, info.Hash.String(), info.CandidateWaitings)
 
 	if int64(len(info.CandidateReplicaSucceeds)) >= info.CandidateReplicas {
-		err := m.DeleteReplenishBackup(info.Hash.String())
-		if err != nil {
-			log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
-		}
+		// err := m.DeleteReplenishBackup(info.Hash.String())
+		// if err != nil {
+		// 	log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
+		// }
 
 		return ctx.Send(PullSucceed{})
 	}
@@ -320,7 +330,7 @@ func (m *Manager) getCurBandwidthUp(nodes []string) int64 {
 
 // handleEdgesSelect handles the selection of edge nodes for asset pull
 func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingInfo) error {
-	log.Debugf("handle edges select , %s", info.Hash)
+	log.Infof("handle edges select , %s", info.Hash)
 
 	needCount := info.EdgeReplicas - int64(len(info.EdgeReplicaSucceeds))
 
@@ -360,7 +370,9 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 			continue
 		}
 
-		m.SaveWorkloadRecord([]*types.WorkloadRecord{workload})
+		if workload != nil {
+			m.SaveWorkloadRecord([]*types.WorkloadRecord{workload})
+		}
 
 		go func() {
 			// err := cNode.PullAsset(ctx.Context(), info.CID, downloadSource)
@@ -375,6 +387,8 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 				Status:      types.ReplicaStatusWaiting,
 				Hash:        info.Hash.String(),
 				IsCandidate: false,
+				TotalSize:   info.Size,
+				WorkloadID:  workload.WorkloadID,
 			})
 			if err != nil {
 				log.Errorf("%s SaveReplicaStatus err:%s", cNode.NodeID, err.Error())
@@ -395,7 +409,7 @@ func (m *Manager) handleEdgesSelect(ctx statemachine.Context, info AssetPullingI
 // handleEdgesPulling handles the asset pulling process of edge nodes
 func (m *Manager) handleEdgesPulling(ctx statemachine.Context, info AssetPullingInfo) error {
 	needBandwidth := info.Bandwidth - m.getCurBandwidthUp(info.EdgeReplicaSucceeds)
-	log.Debugf("handle edges pulling, %s ; %d>=%d , %d", info.Hash, int64(len(info.EdgeReplicaSucceeds)), info.EdgeReplicas, needBandwidth)
+	log.Infof("handle edges pulling, %s ; %d>=%d , %d", info.Hash, int64(len(info.EdgeReplicaSucceeds)), info.EdgeReplicas, needBandwidth)
 
 	if info.EdgeWaitings > 0 {
 		return nil
@@ -429,10 +443,10 @@ func (m *Manager) handlePullsFailed(ctx statemachine.Context, info AssetPullingI
 	if info.RetryCount >= int64(maxRetryCount) {
 		log.Infof("handle pulls failed: %s, retry count: %d", info.Hash.String(), info.RetryCount)
 
-		err := m.DeleteReplenishBackup(info.Hash.String())
-		if err != nil {
-			log.Errorf("%s handle candidates DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
-		}
+		// err := m.DeleteReplenishBackup(info.Hash.String())
+		// if err != nil {
+		// 	log.Errorf("%s handle pulls DeleteReplenishBackup err, %s", info.Hash.String(), err.Error())
+		// }
 
 		return nil
 	}
@@ -456,7 +470,7 @@ func (m *Manager) handleUploadFailed(ctx statemachine.Context, info AssetPulling
 func (m *Manager) handleRemove(ctx statemachine.Context, info AssetPullingInfo) error {
 	log.Infof("handle remove: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
-	defer m.AssetRemoveDone(info.Hash.String())
+	defer m.assetRemoveDone(info.Hash.String())
 
 	hash := info.Hash.String()
 	cid := info.CID
@@ -481,7 +495,15 @@ func (m *Manager) handleStop(ctx statemachine.Context, info AssetPullingInfo) er
 	log.Infof("handle stop: %s", info.Hash)
 	m.stopAssetTimeoutCounting(info.Hash.String())
 
-	// m.DeleteUnfinishedReplicas(info.Hash.String())
+	if info.RetryCount >= int64(maxRetryCount) {
+		log.Infof("handle stop: %s, retry count: %d", info.Hash.String(), info.RetryCount)
+		return nil
+	}
 
-	return nil
+	// m.DeleteUnfinishedReplicas(info.Hash.String())
+	if err := failedCoolDown(ctx, info, minRetryTime); err != nil {
+		return err
+	}
+
+	return ctx.Send(AssetRePull{})
 }

@@ -11,6 +11,7 @@ import (
 func main() {
 	err := gen.WriteMapEncodersToFile("../cbor_gen.go", "projects",
 		projects.ProjectInfo{},
+		projects.ProjectRequirement{},
 	)
 	if err != nil {
 		fmt.Println(err)

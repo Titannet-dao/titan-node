@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-libipfs/blocks"
 )
 
 // readOnlyBlockStore is an implementation of the BlockService interface for a read-only block store.

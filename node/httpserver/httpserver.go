@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	"github.com/Filecoin-Titan/titan/node/container"
 	gopath "path"
 	"sync"
 
@@ -41,10 +40,11 @@ type HttpServer struct {
 	validation          Validation
 	tokens              *sync.Map
 	apiSecret           *jwt.HMACSHA
-	maxSizeOfUploadFile int
+	maxSizeOfUploadFile int64
 	webRedirect         string
 	rateLimiter         *types.RateLimiter
-	client              *container.Client
+	v3Progress          *sync.Map
+	monitor             *Monitor
 }
 
 type HttpServerOptions struct {
@@ -53,10 +53,9 @@ type HttpServerOptions struct {
 	PrivateKey          *rsa.PrivateKey
 	Validation          Validation
 	APISecret           *jwt.HMACSHA
-	MaxSizeOfUploadFile int
+	MaxSizeOfUploadFile int64
 	WebRedirect         string
 	RateLimiter         *types.RateLimiter
-	Client              *container.Client
 }
 
 // NewHttpServer creates a new HttpServer with the given Asset, Scheduler, and RSA private key.
@@ -71,7 +70,8 @@ func NewHttpServer(opts *HttpServerOptions) *HttpServer {
 		maxSizeOfUploadFile: opts.MaxSizeOfUploadFile,
 		webRedirect:         opts.WebRedirect,
 		rateLimiter:         opts.RateLimiter,
-		client:              opts.Client,
+		v3Progress:          &sync.Map{},
+		monitor:             NewMonitor(),
 	}
 
 	if hs.validation != nil {
@@ -81,6 +81,18 @@ func NewHttpServer(opts *HttpServerOptions) *HttpServer {
 	if err := hs.updateSchedulerPublicKey(); err != nil {
 		log.Errorf("updateSchedulerPublicKey error %s", err.Error())
 	}
+
+	// monitoredHandler := hs.monitor.Middleware(mainHandler)
+
+	// // 初始化其他处理函数，确保它们是 http.HandlerFunc
+	// hs.handler = http.HandlerFunc(hs.handler)
+	// hs.uploadHandler = http.HandlerFunc(hs.uploadHandler)
+	// hs.uploadv2Handler = http.HandlerFunc(hs.uploadv2Handler)
+	// hs.uploadv3Handler = http.HandlerFunc(hs.uploadv3Handler)
+	// hs.uploadv3StatusHandler = http.HandlerFunc(hs.uploadv3StatusHandler)
+	// hs.uploadv4Handler = http.HandlerFunc(hs.uploadv4Handler)
+
+	hs.monitor.Start()
 
 	return hs
 }
@@ -110,6 +122,45 @@ func (hs *HttpServer) FirstToken() string {
 		return false
 	})
 	return token
+}
+
+func (hs *HttpServer) Stats() *types.KeepaliveReq {
+	// peekd, peeku := hs.monitor.Peak0.D, hs.monitor.Peak0.U
+
+	// 默认peak0, 如果peak0小于20%, 任务量小于5, 使用peak1, 如果peak1小于20%, 任务量小于5, 使用peak2
+
+	// ret := &types.KeepaliveReq{}
+
+	// peak0, peak1, peak2 := hs.monitor.Peak0, hs.monitor.Peak1, hs.monitor.Peak2
+	// var pu, pd int64 = peak0.U.Load(), peak0.D.Load()
+
+	// // degrade to peak1
+	// if pu < 0.2*RequiredBandDown && pu < peak1.D.Load() {
+	// 	pu = peak1.U.Load()
+	// }
+
+	// if pd < 0.2*RequiredBandUp && pd < peak1.U.Load() {
+	// 	pd = peak1.D.Load()
+	// }
+
+	// // degrade to peak2
+	// if pd < 0.2*RequiredBandUp && hs.monitor.Routes.TaskRunningCount() < Peak1LowTask {
+	// 	pd = peak2.D.Load()
+	// }
+
+	// if pu < 0.2*RequiredBandDown && hs.monitor.Routes.TaskRunningCount() < Peak1LowTask {
+	// 	pu = peak2.U.Load()
+	// }
+
+	// loads
+	// var lu, ld int64 = hs.monitor.Loads
+
+	stats := hs.monitor.GetStats()
+	return &types.KeepaliveReq{
+		Free:      types.FlowUnit{U: stats.Free.U, D: stats.Free.D},
+		Peak:      types.FlowUnit{U: stats.Peak.U, D: stats.Peak.D},
+		TaskCount: stats.TaskCount,
+	}
 }
 
 // resolvePath resolves an IPFS path to a ResolvedPath, given the asset CID.

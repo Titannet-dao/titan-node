@@ -47,10 +47,10 @@ var testDaemonStartCmd = &cli.Command{
 		// 阻塞主 goroutine，直到收到中断信号
 		fmt.Println("wait for term signal ...")
 
-		go func() {
-			time.Sleep(3 * time.Second)
-			testDownloadFile()
-		}()
+		// go func() {
+		// 	time.Sleep(3 * time.Second)
+		// 	testDownloadFile()
+		// }()
 
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -59,8 +59,8 @@ var testDaemonStartCmd = &cli.Command{
 
 			switch sig {
 			case syscall.SIGINT:
-				testDownloadCancel()
-				// testStopDaemon()
+				// testDownloadCancel()
+				testStopDaemon()
 				// time.Sleep(10 * time.Second)
 				fmt.Println("Received SIGINT (Ctrl+C)")
 				// return nil
@@ -80,7 +80,7 @@ var testDaemonStartCmd = &cli.Command{
 }
 
 func testStartDaemon() (string, error) {
-	args := clib.StartDaemonReq{RepoPath: "./test2/titanl2", LocatorURL: "https://test-locator.titannet.io:5000/rpc/v0"}
+	args := clib.StartDaemonReq{RepoPath: "C:/Users/aaa/.titanedge", LocatorURL: "https://cassini-locator.titannet.io:5000/rpc/v0"}
 	startDaemonArgsJSON, err := json.Marshal(args)
 	if err != nil {
 		fmt.Println("err ", err.Error())

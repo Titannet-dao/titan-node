@@ -17,32 +17,24 @@ var nodeCmds = &cli.Command{
 	Usage: "Manage node",
 	Subcommands: []*cli.Command{
 		onlineNodeCountCmd,
-		requestActivationCodesCmd,
 		showNodeInfoCmd,
-		nodeQuitCmd,
-		setNodePortCmd,
 		edgeExternalAddrCmd,
 		listNodeCmd,
 		deactivateCmd,
+		forceNodeOfflineCmd,
 		unDeactivateCmd,
 		listNodeOfIPCmd,
 		listReplicaCmd,
 		nodeCleanReplicasCmd,
-		listValidationResultsCmd,
-		listProfitDetailsCmd,
-		freeUpDiskSpaceCmd,
-		updateNodeDynamicInfoCmd,
-		generateCandidateCodeCmd,
 		nodeFromGeoCmd,
 		getRegionInfosCmd,
-		setTunserverURLCmd,
-		reimburseProfitCmd,
+		recompenseProfitCmd,
 	},
 }
 
-var reimburseProfitCmd = &cli.Command{
-	Name:  "rp",
-	Usage: "reimburse profit",
+var recompenseProfitCmd = &cli.Command{
+	Name:  "profit",
+	Usage: "recompense profit",
 	Flags: []cli.Flag{
 		nodeIDFlag,
 		&cli.StringFlag{
@@ -68,98 +60,13 @@ var reimburseProfitCmd = &cli.Command{
 		}
 		defer closer()
 
-		return schedulerAPI.ReimburseNodeProfit(ctx, nodeID, note, profit)
-	},
-}
-
-var setTunserverURLCmd = &cli.Command{
-	Name:  "sts",
-	Usage: "set node tun server url",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-		&cli.StringFlag{
-			Name:  "ws-node",
-			Usage: "ws node id",
-			Value: "",
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		wsNodeID := cctx.String("ws-node")
-		nodeID := cctx.String("node-id")
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		return schedulerAPI.SetTunserverURL(ctx, nodeID, wsNodeID)
-	},
-}
-
-var updateNodeDynamicInfoCmd = &cli.Command{
-	Name:  "update-info",
-	Usage: "update node info",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-		&cli.Int64Flag{
-			Name:  "dt",
-			Usage: "Download Traffic",
-			Value: 0,
-		},
-		&cli.Int64Flag{
-			Name:  "ut",
-			Usage: "Upload Traffic",
-			Value: 0,
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		dt := cctx.Int64("dt")
-		ut := cctx.Int64("ut")
-		nodeID := cctx.String("node-id")
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		return schedulerAPI.UpdateNodeDynamicInfo(ctx, &types.NodeDynamicInfo{NodeID: nodeID, DownloadTraffic: dt, UploadTraffic: ut})
-	},
-}
-
-var freeUpDiskSpaceCmd = &cli.Command{
-	Name:  "fuds",
-	Usage: "free up disk space",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-		&cli.Int64Flag{
-			Name:  "size",
-			Usage: "free up size",
-			Value: 0,
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		nodeID := cctx.String("node-id")
-		size := cctx.Int64("size")
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		_, err = schedulerAPI.FreeUpDiskSpace(ctx, nodeID, size)
-		return err
+		return schedulerAPI.RecompenseNodeProfit(ctx, nodeID, note, profit)
 	},
 }
 
 var deactivateCmd = &cli.Command{
 	Name:  "deactivate",
-	Usage: "node deactivate",
+	Usage: "node deactivate (40% of the points will be retained)",
 	Flags: []cli.Flag{
 		nodeIDFlag,
 	},
@@ -177,6 +84,36 @@ var deactivateCmd = &cli.Command{
 		defer closer()
 
 		return schedulerAPI.DeactivateNode(ctx, nodeID, 24*7)
+	},
+}
+
+var forceNodeOfflineCmd = &cli.Command{
+	Name:  "force-offline",
+	Usage: "force node offline (Points will not be retained)",
+	Flags: []cli.Flag{
+		nodeIDFlag,
+		&cli.BoolFlag{
+			Name:  "value",
+			Usage: "",
+			Value: false,
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+		nodeID := cctx.String("node-id")
+		if nodeID == "" {
+			return xerrors.New("node-id is nil")
+		}
+
+		value := cctx.Bool("value")
+
+		ctx := ReqContext(cctx)
+		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		return schedulerAPI.ForceNodeOffline(ctx, nodeID, value)
 	},
 }
 
@@ -204,7 +141,7 @@ var unDeactivateCmd = &cli.Command{
 }
 
 var onlineNodeCountCmd = &cli.Command{
-	Name:  "online-count",
+	Name:  "online",
 	Usage: "online node count",
 	Flags: []cli.Flag{
 		nodeTypeFlag,
@@ -257,8 +194,8 @@ var listNodeCmd = &cli.Command{
 			tablewriter.Col("Profit"),
 			tablewriter.Col("OnlineDuration"),
 			tablewriter.Col("OfflineDuration"),
-			tablewriter.Col("Geo"),
-			// tablewriter.Col("Test"),
+			// tablewriter.Col("Geo"),
+			tablewriter.Col("Type"),
 			// tablewriter.Col("Ver"),
 		)
 
@@ -274,7 +211,8 @@ var listNodeCmd = &cli.Command{
 				"Profit":          fmt.Sprintf("%.4f", info.Profit),
 				"OnlineDuration":  fmt.Sprintf("%d", info.OnlineDuration),
 				"OfflineDuration": fmt.Sprintf("%d", info.OfflineDuration),
-				"Geo":             fmt.Sprintf("%s", info.AreaID),
+				// "Geo":             fmt.Sprintf("%s", info.AreaID),
+				"Type": info.Type.String(),
 				// "Test":            info.IsTestNode,
 				// "Ver":             info.SystemVersion,
 			}
@@ -289,41 +227,8 @@ var listNodeCmd = &cli.Command{
 	},
 }
 
-var listValidationResultsCmd = &cli.Command{
-	Name:  "lv",
-	Usage: "list node validation results",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-		limitFlag,
-		offsetFlag,
-	},
-	Action: func(cctx *cli.Context) error {
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		nodeID := cctx.String("node-id")
-		limit := cctx.Int("limit")
-		offset := cctx.Int("offset")
-
-		list, err := schedulerAPI.GetValidationResults(ctx, nodeID, limit, offset)
-		if err != nil {
-			return err
-		}
-
-		for _, info := range list.ValidationResultInfos {
-			fmt.Printf("cid:%s %d , %s \n", info.Cid, info.Status, info.StartTime.String())
-		}
-
-		return err
-	},
-}
-
 var listReplicaCmd = &cli.Command{
-	Name:  "lr",
+	Name:  "list-replica",
 	Usage: "list node replica",
 	Flags: []cli.Flag{
 		nodeIDFlag,
@@ -356,7 +261,7 @@ var listReplicaCmd = &cli.Command{
 }
 
 var listNodeOfIPCmd = &cli.Command{
-	Name:  "lip",
+	Name:  "list-ip",
 	Usage: "list node of ip",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
@@ -409,43 +314,8 @@ func colorOnline(status types.NodeStatus) string {
 	return color.YellowString(status.String())
 }
 
-var requestActivationCodesCmd = &cli.Command{
-	Name:  "activation-code",
-	Usage: "request node activation codes ",
-	Flags: []cli.Flag{
-		nodeTypeFlag,
-	},
-	Action: func(cctx *cli.Context) error {
-		t := cctx.Int("node-type")
-
-		if t != int(types.NodeEdge) && t != int(types.NodeCandidate) {
-			return xerrors.Errorf("node-type err:%d", t)
-		}
-
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		list, err := schedulerAPI.RequestActivationCodes(ctx, types.NodeType(t), 1)
-		if err != nil {
-			return err
-		}
-
-		for _, code := range list {
-			fmt.Println("node:", code.NodeID)
-			fmt.Println("code:", code.ActivationCode)
-			fmt.Println("")
-		}
-
-		return err
-	},
-}
-
 var nodeFromGeoCmd = &cli.Command{
-	Name:  "nfg",
+	Name:  "list-from-geo",
 	Usage: "get nodes from geo",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
@@ -569,46 +439,15 @@ var showNodeInfoCmd = &cli.Command{
 		fmt.Printf("Geo: %s \n", info.AreaID)
 		fmt.Printf("netflow upload: %s \n", units.BytesSize(float64(info.NetFlowUp)))
 		fmt.Printf("netflow download: %s \n", units.BytesSize(float64(info.NetFlowDown)))
-
-		return nil
-	},
-}
-
-var nodeQuitCmd = &cli.Command{
-	Name:  "quit",
-	Usage: "Node quit the titan",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-	},
-
-	Before: func(cctx *cli.Context) error {
-		return nil
-	},
-	Action: func(cctx *cli.Context) error {
-		nodeID := cctx.String("node-id")
-		if nodeID == "" {
-			return xerrors.New("node-id is nil")
-		}
-
-		ctx := ReqContext(cctx)
-
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		err = schedulerAPI.DeactivateNode(ctx, nodeID, 10)
-		if err != nil {
-			return err
-		}
+		fmt.Printf("AssetCount: %d \n", info.AssetCount)
+		fmt.Printf("RetrieveCount: %d \n", info.RetrieveCount)
 
 		return nil
 	},
 }
 
 var nodeCleanReplicasCmd = &cli.Command{
-	Name:  "cr",
+	Name:  "clean-replica",
 	Usage: "clean nodes failed replica",
 	Flags: []cli.Flag{},
 
@@ -656,70 +495,6 @@ var edgeExternalAddrCmd = &cli.Command{
 		}
 
 		fmt.Printf("edge external addr:%s\n", addr)
-		return nil
-	},
-}
-
-var listProfitDetailsCmd = &cli.Command{
-	Name:  "lpd",
-	Usage: "List Profit Details",
-	Flags: []cli.Flag{
-		limitFlag,
-		offsetFlag,
-		nodeIDFlag,
-		&cli.IntSliceFlag{
-			Name:  "type",
-			Usage: "profit type",
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		ctx := ReqContext(cctx)
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		limit := cctx.Int("limit")
-		offset := cctx.Int("offset")
-		nID := cctx.String("node-id")
-		types := cctx.IntSlice("type")
-
-		tw := tablewriter.New(
-			tablewriter.Col("NodeID"),
-			tablewriter.Col("PType"),
-			tablewriter.Col("Size"),
-			tablewriter.Col("Profit"),
-			tablewriter.Col("CreatedTime"),
-			tablewriter.Col("Rate"),
-			tablewriter.Col("Note"),
-			// tablewriter.NewLineCol("Processes"),
-		)
-
-		info, err := schedulerAPI.GetProfitDetailsForNode(ctx, nID, limit, offset, types)
-		if err != nil {
-			return err
-		}
-
-		fmt.Println("info : ", info.Total)
-
-		for w := 0; w < len(info.Infos); w++ {
-			info := info.Infos[w]
-
-			m := map[string]interface{}{
-				"NodeID":      info.NodeID,
-				"PType":       info.PType,
-				"Size":        units.BytesSize(float64(info.Size)),
-				"Profit":      info.Profit,
-				"CreatedTime": info.CreatedTime.Format(defaultDateTimeLayout),
-				"Rate":        info.Rate,
-				"Note":        info.Note,
-			}
-
-			tw.Write(m)
-		}
-
-		tw.Flush(os.Stdout)
 		return nil
 	},
 }

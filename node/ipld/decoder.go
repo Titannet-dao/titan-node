@@ -4,21 +4,22 @@ import (
 	"context"
 
 	"github.com/ipfs/go-cid"
-	legacy "github.com/ipfs/go-ipld-legacy"
+	ipldlegacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/ipfs/go-libipfs/blocks"
 	"github.com/ipfs/go-merkledag"
 	dagpb "github.com/ipld/go-codec-dagpb"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 )
 
+var legacy = ipldlegacy.NewDecoder()
+
 func init() {
 	legacy.RegisterCodec(cid.DagProtobuf, dagpb.Type.PBNode, merkledag.ProtoNodeConverter)
 	legacy.RegisterCodec(cid.Raw, basicnode.Prototype.Bytes, merkledag.RawNodeConverter)
-
 }
 
 // DecodeNode handle codec not match case
-func DecodeNode(ctx context.Context, b blocks.Block) (legacy.UniversalNode, error) {
+func DecodeNode(ctx context.Context, b blocks.Block) (ipldlegacy.UniversalNode, error) {
 	node, err := legacy.DecodeNode(ctx, b)
 	if err == nil {
 		return node, nil

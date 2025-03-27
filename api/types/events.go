@@ -1,8 +1,10 @@
 package types
 
-type Event string
+// // Event represents a specific type of event in the system.
+// type Event string
 
-type ServiceEvent struct {
-	ServiceName string
-	Events      []Event
-}
+// // ServiceEvent represents an event related to a specific service.
+// type ServiceEvent struct {
+// 	ServiceName string
+// 	Events      []Event
+// }

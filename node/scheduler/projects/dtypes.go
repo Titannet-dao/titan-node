@@ -1,6 +1,9 @@
 package projects
 
 import (
+	"bytes"
+	"encoding/gob"
+
 	"github.com/Filecoin-Titan/titan/api/types"
 	cbg "github.com/whyrusleeping/cbor-gen"
 )
@@ -12,8 +15,10 @@ func (c ProjectID) String() string {
 	return string(c)
 }
 
+// ProjectState represents the state of a project in the scheduler.
 type ProjectState string
 
+// NodeSelect indicates the project state when a node is selected.
 const (
 	NodeSelect ProjectState = "NodeSelect"
 	Update     ProjectState = "Update"
@@ -28,7 +33,17 @@ func (ps ProjectState) String() string {
 	return string(ps)
 }
 
-// ProjectInfo
+// ProjectRequirement represents the resource requirements for a project.
+type ProjectRequirement struct {
+	CPUCores int64
+	Memory   int64
+	AreaID   string
+	Version  int64
+
+	NodeIDs []string
+}
+
+// ProjectInfo represents information about a project.
 type ProjectInfo struct {
 	// uuid
 	UUID      ProjectID
@@ -37,42 +52,61 @@ type ProjectInfo struct {
 	BundleURL string
 	Replicas  int64
 
-	CPUCores int64
-	Memory   int64
-	AreaID   string
+	Type int64
+	// CPUCores int64
+	// Memory   int64
+	// AreaID   string
 
 	UserID string
 
 	DetailsList []string
+
+	Requirement ProjectRequirement
 
 	EdgeReplicaSucceeds []string
 	EdgeWaitings        int64
 	RetryCount          int64
 	ReplenishReplicas   int64
 
-	NodeIDs []string
-	Event   int64
+	// NodeIDs []string
+	Event int64
 }
 
-// ToProjectInfo converts ProjectInfo to types.ProjectInfo
-func (state *ProjectInfo) ToProjectInfo() *types.ProjectInfo {
-	return &types.ProjectInfo{
-		UUID:              state.UUID.String(),
-		State:             state.State.String(),
-		Name:              state.Name,
-		BundleURL:         state.BundleURL,
-		Replicas:          state.Replicas,
-		UserID:            state.UserID,
-		RetryCount:        state.RetryCount,
-		ReplenishReplicas: state.ReplenishReplicas,
-		CPUCores:          state.CPUCores,
-		Memory:            float64(state.Memory),
-		AreaID:            state.AreaID,
-	}
-}
+// // ToProjectInfo converts ProjectInfo to types.ProjectInfo
+// func (state *ProjectInfo) ToProjectInfo() *types.ProjectInfo {
+// 	// var ws types.ProjectRequirement
+// 	// dec := gob.NewDecoder(bytes.NewBuffer(state.p))
+// 	// err := dec.Decode(&ws)
+// 	// if err != nil {
+// 	// 	log.Errorf("decode data to []*types.Workload error: %s", err.Error())
+// 	// 	return nil
+// 	// }
+
+// 	return &types.ProjectInfo{
+// 		UUID:              state.UUID.String(),
+// 		State:             state.State.String(),
+// 		Name:              state.Name,
+// 		BundleURL:         state.BundleURL,
+// 		Replicas:          state.Replicas,
+// 		UserID:            state.UserID,
+// 		RetryCount:        state.RetryCount,
+// 		ReplenishReplicas: state.ReplenishReplicas,
+// 		// Requirement:       ws,
+// 	}
+// }
 
 // projectInfoFrom converts types.ProjectInfo to ProjectInfo
 func projectInfoFrom(info *types.ProjectInfo) *ProjectInfo {
+	pr := ProjectRequirement{}
+	if info.RequirementByte != nil {
+		dec := gob.NewDecoder(bytes.NewBuffer(info.RequirementByte))
+		err := dec.Decode(&pr)
+		if err != nil {
+			log.Errorf("decode data to []*types.Workload error: %s", err.Error())
+			return nil
+		}
+	}
+
 	cInfo := &ProjectInfo{
 		UUID:              ProjectID(info.UUID),
 		State:             ProjectState(info.State),
@@ -82,10 +116,14 @@ func projectInfoFrom(info *types.ProjectInfo) *ProjectInfo {
 		UserID:            info.UserID,
 		RetryCount:        info.RetryCount,
 		ReplenishReplicas: info.ReplenishReplicas,
-		CPUCores:          info.CPUCores,
-		Memory:            int64(info.Memory),
-		AreaID:            info.AreaID,
+		Requirement:       pr,
+		Type:              int64(info.Type),
+		// CPUCores:          info.CPUCores,
+		// Memory:            int64(info.Memory),
+		// AreaID:            info.AreaID,
 	}
+
+	// log.Debugf("projectInfoFrom : %s ,area:%s nodes : %s", info.UUID, cInfo.Requirement.AreaID, cInfo.Requirement.NodeIDs)
 
 	for _, r := range info.DetailsList {
 		switch r.Status {

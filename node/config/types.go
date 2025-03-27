@@ -76,7 +76,7 @@ type EdgeCfg struct {
 	IPFSAPIURL        string
 	// seconds
 	ValidateDuration    int
-	MaxSizeOfUploadFile int
+	MaxSizeOfUploadFile int64
 
 	Puller Puller
 

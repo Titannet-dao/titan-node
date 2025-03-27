@@ -34,7 +34,7 @@ func failedCoolDown(ctx statemachine.Context, info ProjectInfo, t time.Duration)
 
 // handleNodeSelect handles the selection nodes for project
 func (m *Manager) handleNodeSelect(ctx statemachine.Context, info ProjectInfo) error {
-	log.Debugf("handle Select : %s", info.UUID)
+	log.Infof("handle Select : %s ,area:%s nodes : %s , len:%d", info.UUID, info.Requirement.AreaID, info.Requirement.NodeIDs, len(info.Requirement.NodeIDs))
 
 	curCount := int64(len(info.EdgeReplicaSucceeds))
 
@@ -43,8 +43,10 @@ func (m *Manager) handleNodeSelect(ctx statemachine.Context, info ProjectInfo) e
 		filterMap[nodeID] = struct{}{}
 	}
 
-	if info.NodeIDs != nil && len(info.NodeIDs) > 0 {
-		for _, nodeID := range info.NodeIDs {
+	if len(info.Requirement.NodeIDs) > 0 {
+		for _, nodeID := range info.Requirement.NodeIDs {
+			log.Infof("handle Select : %s , node: %s ", info.UUID, nodeID)
+
 			node := m.nodeMgr.GetEdgeNode(nodeID)
 			if node == nil {
 				continue
@@ -67,6 +69,7 @@ func (m *Manager) handleNodeSelect(ctx statemachine.Context, info ProjectInfo) e
 				Id:     info.UUID.String(),
 				NodeID: node.NodeID,
 				Status: status,
+				Type:   types.ProjectType(info.Type),
 			})
 			if err != nil {
 				log.Errorf("DeployProject SaveWorkerdDetailsInfo %s err:%s", node.NodeID, err.Error())
@@ -100,6 +103,7 @@ func (m *Manager) handleNodeSelect(ctx statemachine.Context, info ProjectInfo) e
 				Id:     info.UUID.String(),
 				NodeID: node.NodeID,
 				Status: status,
+				Type:   types.ProjectType(info.Type),
 			})
 			if err != nil {
 				log.Errorf("DeployProject SaveWorkerdDetailsInfo %s err:%s", node.NodeID, err.Error())
@@ -145,6 +149,7 @@ func (m *Manager) handleUpdate(ctx statemachine.Context, info ProjectInfo) error
 			Id:     info.UUID.String(),
 			NodeID: node.NodeID,
 			Status: status,
+			Type:   types.ProjectType(info.Type),
 		})
 		if err != nil {
 			log.Errorf("DeployProject SaveWorkerdDetailsInfo %s err:%s", node.NodeID, err.Error())

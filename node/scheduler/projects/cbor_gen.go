@@ -26,7 +26,7 @@ func (t *ProjectInfo) MarshalCBOR(w io.Writer) error {
 
 	cw := cbg.NewCborWriter(w)
 
-	if _, err := cw.Write([]byte{176}); err != nil {
+	if _, err := cw.Write([]byte{174}); err != nil {
 		return err
 	}
 
@@ -51,6 +51,28 @@ func (t *ProjectInfo) MarshalCBOR(w io.Writer) error {
 	}
 	if _, err := io.WriteString(w, string(t.Name)); err != nil {
 		return err
+	}
+
+	// t.Type (int64) (int64)
+	if len("Type") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"Type\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Type"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("Type")); err != nil {
+		return err
+	}
+
+	if t.Type >= 0 {
+		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.Type)); err != nil {
+			return err
+		}
+	} else {
+		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Type-1)); err != nil {
+			return err
+		}
 	}
 
 	// t.UUID (projects.ProjectID) (string)
@@ -121,51 +143,6 @@ func (t *ProjectInfo) MarshalCBOR(w io.Writer) error {
 		return err
 	}
 
-	// t.AreaID (string) (string)
-	if len("AreaID") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"AreaID\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("AreaID"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("AreaID")); err != nil {
-		return err
-	}
-
-	if len(t.AreaID) > cbg.MaxLength {
-		return xerrors.Errorf("Value in field t.AreaID was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(t.AreaID))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string(t.AreaID)); err != nil {
-		return err
-	}
-
-	// t.Memory (int64) (int64)
-	if len("Memory") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"Memory\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Memory"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("Memory")); err != nil {
-		return err
-	}
-
-	if t.Memory >= 0 {
-		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.Memory)); err != nil {
-			return err
-		}
-	} else {
-		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Memory-1)); err != nil {
-			return err
-		}
-	}
-
 	// t.UserID (string) (string)
 	if len("UserID") > cbg.MaxLength {
 		return xerrors.Errorf("Value in field \"UserID\" was too long")
@@ -187,60 +164,6 @@ func (t *ProjectInfo) MarshalCBOR(w io.Writer) error {
 	}
 	if _, err := io.WriteString(w, string(t.UserID)); err != nil {
 		return err
-	}
-
-	// t.NodeIDs ([]string) (slice)
-	if len("NodeIDs") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"NodeIDs\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("NodeIDs"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("NodeIDs")); err != nil {
-		return err
-	}
-
-	if len(t.NodeIDs) > cbg.MaxLength {
-		return xerrors.Errorf("Slice value in field t.NodeIDs was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajArray, uint64(len(t.NodeIDs))); err != nil {
-		return err
-	}
-	for _, v := range t.NodeIDs {
-		if len(v) > cbg.MaxLength {
-			return xerrors.Errorf("Value in field v was too long")
-		}
-
-		if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(v))); err != nil {
-			return err
-		}
-		if _, err := io.WriteString(w, string(v)); err != nil {
-			return err
-		}
-	}
-
-	// t.CPUCores (int64) (int64)
-	if len("CPUCores") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"CPUCores\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("CPUCores"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("CPUCores")); err != nil {
-		return err
-	}
-
-	if t.CPUCores >= 0 {
-		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.CPUCores)); err != nil {
-			return err
-		}
-	} else {
-		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.CPUCores-1)); err != nil {
-			return err
-		}
 	}
 
 	// t.Replicas (int64) (int64)
@@ -340,6 +263,22 @@ func (t *ProjectInfo) MarshalCBOR(w io.Writer) error {
 		if _, err := io.WriteString(w, string(v)); err != nil {
 			return err
 		}
+	}
+
+	// t.Requirement (projects.ProjectRequirement) (struct)
+	if len("Requirement") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"Requirement\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Requirement"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("Requirement")); err != nil {
+		return err
+	}
+
+	if err := t.Requirement.MarshalCBOR(cw); err != nil {
+		return err
 	}
 
 	// t.EdgeWaitings (int64) (int64)
@@ -469,6 +408,32 @@ func (t *ProjectInfo) UnmarshalCBOR(r io.Reader) (err error) {
 
 				t.Name = string(sval)
 			}
+			// t.Type (int64) (int64)
+		case "Type":
+			{
+				maj, extra, err := cr.ReadHeader()
+				var extraI int64
+				if err != nil {
+					return err
+				}
+				switch maj {
+				case cbg.MajUnsignedInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 positive overflow")
+					}
+				case cbg.MajNegativeInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 negative overflow")
+					}
+					extraI = -1 - extraI
+				default:
+					return fmt.Errorf("wrong type for int64 field: %d", maj)
+				}
+
+				t.Type = int64(extraI)
+			}
 			// t.UUID (projects.ProjectID) (string)
 		case "UUID":
 
@@ -517,43 +482,6 @@ func (t *ProjectInfo) UnmarshalCBOR(r io.Reader) (err error) {
 
 				t.State = ProjectState(sval)
 			}
-			// t.AreaID (string) (string)
-		case "AreaID":
-
-			{
-				sval, err := cbg.ReadString(cr)
-				if err != nil {
-					return err
-				}
-
-				t.AreaID = string(sval)
-			}
-			// t.Memory (int64) (int64)
-		case "Memory":
-			{
-				maj, extra, err := cr.ReadHeader()
-				var extraI int64
-				if err != nil {
-					return err
-				}
-				switch maj {
-				case cbg.MajUnsignedInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 positive overflow")
-					}
-				case cbg.MajNegativeInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 negative overflow")
-					}
-					extraI = -1 - extraI
-				default:
-					return fmt.Errorf("wrong type for int64 field: %d", maj)
-				}
-
-				t.Memory = int64(extraI)
-			}
 			// t.UserID (string) (string)
 		case "UserID":
 
@@ -564,64 +492,6 @@ func (t *ProjectInfo) UnmarshalCBOR(r io.Reader) (err error) {
 				}
 
 				t.UserID = string(sval)
-			}
-			// t.NodeIDs ([]string) (slice)
-		case "NodeIDs":
-
-			maj, extra, err = cr.ReadHeader()
-			if err != nil {
-				return err
-			}
-
-			if extra > cbg.MaxLength {
-				return fmt.Errorf("t.NodeIDs: array too large (%d)", extra)
-			}
-
-			if maj != cbg.MajArray {
-				return fmt.Errorf("expected cbor array")
-			}
-
-			if extra > 0 {
-				t.NodeIDs = make([]string, extra)
-			}
-
-			for i := 0; i < int(extra); i++ {
-
-				{
-					sval, err := cbg.ReadString(cr)
-					if err != nil {
-						return err
-					}
-
-					t.NodeIDs[i] = string(sval)
-				}
-			}
-
-			// t.CPUCores (int64) (int64)
-		case "CPUCores":
-			{
-				maj, extra, err := cr.ReadHeader()
-				var extraI int64
-				if err != nil {
-					return err
-				}
-				switch maj {
-				case cbg.MajUnsignedInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 positive overflow")
-					}
-				case cbg.MajNegativeInt:
-					extraI = int64(extra)
-					if extraI < 0 {
-						return fmt.Errorf("int64 negative overflow")
-					}
-					extraI = -1 - extraI
-				default:
-					return fmt.Errorf("wrong type for int64 field: %d", maj)
-				}
-
-				t.CPUCores = int64(extraI)
 			}
 			// t.Replicas (int64) (int64)
 		case "Replicas":
@@ -718,6 +588,16 @@ func (t *ProjectInfo) UnmarshalCBOR(r io.Reader) (err error) {
 				}
 			}
 
+			// t.Requirement (projects.ProjectRequirement) (struct)
+		case "Requirement":
+
+			{
+
+				if err := t.Requirement.UnmarshalCBOR(cr); err != nil {
+					return xerrors.Errorf("unmarshaling t.Requirement: %w", err)
+				}
+
+			}
 			// t.EdgeWaitings (int64) (int64)
 		case "EdgeWaitings":
 			{
@@ -800,6 +680,309 @@ func (t *ProjectInfo) UnmarshalCBOR(r io.Reader) (err error) {
 
 					t.EdgeReplicaSucceeds[i] = string(sval)
 				}
+			}
+
+		default:
+			// Field doesn't exist on this type, so ignore it
+			cbg.ScanForLinks(r, func(cid.Cid) {})
+		}
+	}
+
+	return nil
+}
+func (t *ProjectRequirement) MarshalCBOR(w io.Writer) error {
+	if t == nil {
+		_, err := w.Write(cbg.CborNull)
+		return err
+	}
+
+	cw := cbg.NewCborWriter(w)
+
+	if _, err := cw.Write([]byte{165}); err != nil {
+		return err
+	}
+
+	// t.AreaID (string) (string)
+	if len("AreaID") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"AreaID\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("AreaID"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("AreaID")); err != nil {
+		return err
+	}
+
+	if len(t.AreaID) > cbg.MaxLength {
+		return xerrors.Errorf("Value in field t.AreaID was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(t.AreaID))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string(t.AreaID)); err != nil {
+		return err
+	}
+
+	// t.Memory (int64) (int64)
+	if len("Memory") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"Memory\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Memory"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("Memory")); err != nil {
+		return err
+	}
+
+	if t.Memory >= 0 {
+		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.Memory)); err != nil {
+			return err
+		}
+	} else {
+		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Memory-1)); err != nil {
+			return err
+		}
+	}
+
+	// t.NodeIDs ([]string) (slice)
+	if len("NodeIDs") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"NodeIDs\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("NodeIDs"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("NodeIDs")); err != nil {
+		return err
+	}
+
+	if len(t.NodeIDs) > cbg.MaxLength {
+		return xerrors.Errorf("Slice value in field t.NodeIDs was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajArray, uint64(len(t.NodeIDs))); err != nil {
+		return err
+	}
+	for _, v := range t.NodeIDs {
+		if len(v) > cbg.MaxLength {
+			return xerrors.Errorf("Value in field v was too long")
+		}
+
+		if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len(v))); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, string(v)); err != nil {
+			return err
+		}
+	}
+
+	// t.Version (int64) (int64)
+	if len("Version") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"Version\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Version"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("Version")); err != nil {
+		return err
+	}
+
+	if t.Version >= 0 {
+		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.Version)); err != nil {
+			return err
+		}
+	} else {
+		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.Version-1)); err != nil {
+			return err
+		}
+	}
+
+	// t.CPUCores (int64) (int64)
+	if len("CPUCores") > cbg.MaxLength {
+		return xerrors.Errorf("Value in field \"CPUCores\" was too long")
+	}
+
+	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("CPUCores"))); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, string("CPUCores")); err != nil {
+		return err
+	}
+
+	if t.CPUCores >= 0 {
+		if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.CPUCores)); err != nil {
+			return err
+		}
+	} else {
+		if err := cw.WriteMajorTypeHeader(cbg.MajNegativeInt, uint64(-t.CPUCores-1)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *ProjectRequirement) UnmarshalCBOR(r io.Reader) (err error) {
+	*t = ProjectRequirement{}
+
+	cr := cbg.NewCborReader(r)
+
+	maj, extra, err := cr.ReadHeader()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+	}()
+
+	if maj != cbg.MajMap {
+		return fmt.Errorf("cbor input should be of type map")
+	}
+
+	if extra > cbg.MaxLength {
+		return fmt.Errorf("ProjectRequirement: map struct too large (%d)", extra)
+	}
+
+	var name string
+	n := extra
+
+	for i := uint64(0); i < n; i++ {
+
+		{
+			sval, err := cbg.ReadString(cr)
+			if err != nil {
+				return err
+			}
+
+			name = string(sval)
+		}
+
+		switch name {
+		// t.AreaID (string) (string)
+		case "AreaID":
+
+			{
+				sval, err := cbg.ReadString(cr)
+				if err != nil {
+					return err
+				}
+
+				t.AreaID = string(sval)
+			}
+			// t.Memory (int64) (int64)
+		case "Memory":
+			{
+				maj, extra, err := cr.ReadHeader()
+				var extraI int64
+				if err != nil {
+					return err
+				}
+				switch maj {
+				case cbg.MajUnsignedInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 positive overflow")
+					}
+				case cbg.MajNegativeInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 negative overflow")
+					}
+					extraI = -1 - extraI
+				default:
+					return fmt.Errorf("wrong type for int64 field: %d", maj)
+				}
+
+				t.Memory = int64(extraI)
+			}
+			// t.NodeIDs ([]string) (slice)
+		case "NodeIDs":
+
+			maj, extra, err = cr.ReadHeader()
+			if err != nil {
+				return err
+			}
+
+			if extra > cbg.MaxLength {
+				return fmt.Errorf("t.NodeIDs: array too large (%d)", extra)
+			}
+
+			if maj != cbg.MajArray {
+				return fmt.Errorf("expected cbor array")
+			}
+
+			if extra > 0 {
+				t.NodeIDs = make([]string, extra)
+			}
+
+			for i := 0; i < int(extra); i++ {
+
+				{
+					sval, err := cbg.ReadString(cr)
+					if err != nil {
+						return err
+					}
+
+					t.NodeIDs[i] = string(sval)
+				}
+			}
+
+			// t.Version (int64) (int64)
+		case "Version":
+			{
+				maj, extra, err := cr.ReadHeader()
+				var extraI int64
+				if err != nil {
+					return err
+				}
+				switch maj {
+				case cbg.MajUnsignedInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 positive overflow")
+					}
+				case cbg.MajNegativeInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 negative overflow")
+					}
+					extraI = -1 - extraI
+				default:
+					return fmt.Errorf("wrong type for int64 field: %d", maj)
+				}
+
+				t.Version = int64(extraI)
+			}
+			// t.CPUCores (int64) (int64)
+		case "CPUCores":
+			{
+				maj, extra, err := cr.ReadHeader()
+				var extraI int64
+				if err != nil {
+					return err
+				}
+				switch maj {
+				case cbg.MajUnsignedInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 positive overflow")
+					}
+				case cbg.MajNegativeInt:
+					extraI = int64(extra)
+					if extraI < 0 {
+						return fmt.Errorf("int64 negative overflow")
+					}
+					extraI = -1 - extraI
+				default:
+					return fmt.Errorf("wrong type for int64 field: %d", maj)
+				}
+
+				t.CPUCores = int64(extraI)
 			}
 
 		default:

@@ -20,9 +20,9 @@ const (
 
 	oneDay = 24 * time.Hour
 
-	BufSize = (4 << 20) / 128 * 127
+	bufSize = (4 << 20) / 128 * 127
 
-	BlockGasLimit = int64(10_000_000_000)
+	blockGasLimit = int64(10_000_000_000)
 )
 
 // Manager is the node manager responsible for managing the online nodes

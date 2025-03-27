@@ -2,16 +2,16 @@ package workload
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
+	"github.com/Filecoin-Titan/titan/node/cidutil"
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/db"
 	"github.com/Filecoin-Titan/titan/node/scheduler/leadership"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
-	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
-	"golang.org/x/xerrors"
 )
 
 var log = logging.Logger("workload")
@@ -23,7 +23,8 @@ type Manager struct {
 	nodeMgr       *node.Manager
 	*db.SQLDB
 
-	resultQueue chan *WorkloadResult
+	resultQueue []*Result
+	resultLock  sync.Mutex
 }
 
 // NewManager return new node manager instance
@@ -33,7 +34,7 @@ func NewManager(sdb *db.SQLDB, configFunc dtypes.GetSchedulerConfigFunc, lmgr *l
 		leadershipMgr: lmgr,
 		SQLDB:         sdb,
 		nodeMgr:       nmgr,
-		resultQueue:   make(chan *WorkloadResult),
+		resultQueue:   make([]*Result, 0),
 	}
 
 	go manager.handleResults()
@@ -41,37 +42,102 @@ func NewManager(sdb *db.SQLDB, configFunc dtypes.GetSchedulerConfigFunc, lmgr *l
 	return manager
 }
 
-type WorkloadResult struct {
+// Result represents the result of a workload operation.
+type Result struct {
 	data   *types.WorkloadRecordReq
 	nodeID string
 }
 
-func (m *Manager) PushResult(data *types.WorkloadRecordReq, nodeID string) error {
-	log.Infof("workload PushResult nodeID:[%s] , %s\n", nodeID, data.WorkloadID)
+func (m *Manager) addWorkloadResult(r *Result) {
+	m.resultLock.Lock()
+	defer m.resultLock.Unlock()
 
-	if nodeID == "" {
-		return nil
+	m.resultQueue = append(m.resultQueue, r)
+}
+
+func (m *Manager) popWorkloadResult() *Result {
+	m.resultLock.Lock()
+	defer m.resultLock.Unlock()
+
+	if len(m.resultQueue) > 0 {
+		out := m.resultQueue[0]
+		m.resultQueue = m.resultQueue[1:]
+
+		return out
 	}
 
-	m.resultQueue <- &WorkloadResult{data: data, nodeID: nodeID}
+	return nil
+}
+
+// PushResult sends the result of a workload to the specified node.
+func (m *Manager) PushResult(data *types.WorkloadRecordReq, nodeID string) error {
+	log.Infof("workload PushResult nodeID:[%s] , %s [%s]\n", nodeID, data.WorkloadID, data.AssetCID)
+
+	m.addWorkloadResult(&Result{data: data, nodeID: nodeID})
+	// m.resultQueue <- &WorkloadResult{data: data, nodeID: nodeID}
 
 	return nil
 }
 
 func (m *Manager) handleResults() {
 	for {
-		result := <-m.resultQueue
+		// result := <-m.resultQueue
+		result := m.popWorkloadResult()
+		if result != nil {
+			m.handleClientWorkload(result.data, result.nodeID)
+		} else {
+			time.Sleep(time.Minute)
+		}
+	}
+}
 
-		m.handleClientWorkload(result.data, result.nodeID)
+func (m *Manager) saveRetrieveEventFromWorkload(dw types.Workload, hash, downloadNode string) {
+	status := types.EventStatusFailed
+	speed := int64(0)
+	succeededCount := 0
+	failedCount := 0
+
+	if dw.Status == types.WorkloadReqStatusSucceeded {
+		sd := int64((float64(dw.DownloadSize) / float64(dw.CostTime)) * 1000)
+		if sd > 0 {
+			m.nodeMgr.UpdateNodeBandwidths(downloadNode, speed, 0)
+			m.nodeMgr.UpdateNodeBandwidths(dw.SourceID, 0, speed)
+			speed = sd
+		}
+		status = types.EventStatusSucceed
+		succeededCount = 1
+	} else {
+		failedCount = 1
+	}
+
+	event := &types.RetrieveEvent{
+		Hash:     hash,
+		NodeID:   dw.SourceID,
+		ClientID: downloadNode,
+		Size:     dw.DownloadSize,
+		Status:   status,
+		Speed:    speed,
+	}
+
+	if err := m.SaveRetrieveEventInfo(event, succeededCount, failedCount); err != nil {
+		log.Errorf("handleClientWorkload SaveRetrieveEventInfo  error %s", err.Error())
 	}
 }
 
 // handleClientWorkload handle node workload
-func (m *Manager) handleClientWorkload(data *types.WorkloadRecordReq, nodeID string) error {
-	downloadTotalSize := int64(0)
-
+func (m *Manager) handleClientWorkload(data *types.WorkloadRecordReq, downloadNode string) error {
 	if data.WorkloadID == "" {
-		return xerrors.New("WorkloadID is nil")
+		hash, err := cidutil.CIDToHash(data.AssetCID)
+		if err != nil {
+			return err
+		}
+
+		// L1 download
+		for _, dw := range data.Workloads {
+			m.saveRetrieveEventFromWorkload(dw, hash, downloadNode)
+		}
+
+		return nil
 	}
 
 	record, err := m.LoadWorkloadRecordOfID(data.WorkloadID)
@@ -84,79 +150,54 @@ func (m *Manager) handleClientWorkload(data *types.WorkloadRecordReq, nodeID str
 		return nil
 	}
 
-	for _, dw := range data.Workloads {
-		downloadTotalSize += dw.DownloadSize
-	}
-
-	if record == nil {
-		log.Errorf("handleClientWorkload record is nil : %s, %s", data.AssetCID, nodeID)
-		return nil
-	}
-
 	// update status
 	record.Status = types.WorkloadStatusSucceeded
 	err = m.UpdateWorkloadRecord(record, types.WorkloadStatusCreate)
 	if err != nil {
-		log.Errorf("handleClientWorkload UpdateWorkloadRecord error: %s", err.Error())
+		log.Errorf("handleClientWorkload UpdateWorkloadRecord %s error: %s", data.WorkloadID, err.Error())
 		return err
 	}
 
-	eventList := make([]*types.RetrieveEvent, 0)
+	hash, err := cidutil.CIDToHash(record.AssetCID)
+	if err != nil {
+		return err
+	}
+
 	detailsList := make([]*types.ProfitDetails, 0)
 
 	limit := int64(float64(record.AssetSize))
 
 	for _, dw := range data.Workloads {
-		// update node bandwidths
-		speed := int64((float64(dw.DownloadSize) / float64(dw.CostTime)) * 1000)
-		if speed > 0 {
-			// m.nodeMgr.UpdateNodeBandwidths(dw.SourceID, 0, speed)
-			m.nodeMgr.UpdateNodeBandwidths(record.ClientID, speed, 0)
+		m.saveRetrieveEventFromWorkload(dw, hash, record.ClientID)
+
+		if dw.Status == types.WorkloadReqStatusSucceeded {
+			// Only edge can get this reward
+			node := m.nodeMgr.GetNode(dw.SourceID)
+			if node == nil {
+				continue
+			}
+			node.UploadTraffic += dw.DownloadSize
+
+			if downloadNode != "" && node.Type == types.NodeEdge {
+				if dw.DownloadSize > limit {
+					dw.DownloadSize = limit
+				}
+
+				dInfo := m.nodeMgr.GetNodeBePullProfitDetails(node, float64(dw.DownloadSize), "")
+				if dInfo != nil {
+					dInfo.CID = record.AssetCID
+					dInfo.Note = fmt.Sprintf("%s,%s", dInfo.Note, record.WorkloadID)
+
+					detailsList = append(detailsList, dInfo)
+				}
+			}
 		}
 
-		// Only edge can get this reward
-		node := m.nodeMgr.GetEdgeNode(dw.SourceID)
-		if node == nil {
-			continue
-		}
-		node.UploadTraffic += dw.DownloadSize
-
-		dInfo := m.nodeMgr.GetNodeBePullProfitDetails(node, float64(dw.DownloadSize), "")
-		if dInfo != nil {
-			dInfo.CID = record.AssetCID
-			dInfo.Note = fmt.Sprintf("%s,%s", dInfo.Note, record.WorkloadID)
-
-			detailsList = append(detailsList, dInfo)
-		}
-
-		if dw.DownloadSize > limit {
-			dw.DownloadSize = limit
-		}
-
-		retrieveEvent := &types.RetrieveEvent{
-			CID:         record.AssetCID,
-			TokenID:     uuid.NewString(),
-			NodeID:      dw.SourceID,
-			ClientID:    record.ClientID,
-			Size:        dw.DownloadSize,
-			CreatedTime: record.CreatedTime.Unix(),
-			EndTime:     time.Now().Unix(),
-		}
-		eventList = append(eventList, retrieveEvent)
 	}
 
-	// Retrieve Event
-	for _, data := range eventList {
-		if err := m.SaveRetrieveEventInfo(data); err != nil {
-			log.Errorf("handleClientWorkload SaveRetrieveEventInfo token:%s ,  error %s", record.WorkloadID, err.Error())
-		}
-	}
-
-	for _, data := range detailsList {
-		err = m.nodeMgr.AddNodeProfit(data)
-		if err != nil {
-			log.Errorf("handleClientWorkload AddNodeProfit %s,%d, %.4f err:%s", data.NodeID, data.PType, data.Profit, err.Error())
-		}
+	err = m.nodeMgr.AddNodeProfitDetails(detailsList)
+	if err != nil {
+		log.Errorf("AddNodeProfit err:%s", err.Error())
 	}
 
 	return nil

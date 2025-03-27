@@ -475,7 +475,6 @@ func (w *Workerd) RestartProjects(ctx context.Context) {
 			}
 		}
 	}
-
 }
 
 // GetFreePort asks the kernel for a free open port that is ready to use.
@@ -530,7 +529,6 @@ func (w *Workerd) checkConnectivity(ctx context.Context, projects []*types.Proje
 			if err != nil {
 				log.Errorf("failed to destory project %s, %v", project.ID, err)
 			}
-
 		}(p)
 	}
 	wg.Wait()

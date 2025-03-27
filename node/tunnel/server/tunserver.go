@@ -112,8 +112,21 @@ func (ts *Tunserver) handleProject(w http.ResponseWriter, r *http.Request) {
 
 	relays := r.Header["Relay"]
 
-	headerString := ts.getHeaderString(r, targetNodeID, projectID)
-	log.Infof("headerString ", headerString)
+	opts := TunnelOptions{
+		scheduler:    ts.scheduler,
+		projectID:    projectID,
+		targetNodeID: targetNodeID,
+		nodeID:       ts.nodeID,
+		tunID:        uuid.NewString(),
+		// req:          &TcpReq{conn: conn},
+	}
+
+	tunnel, err := newTunnel(context.Background(), ts, relays, &opts)
+	if err != nil {
+		log.Errorf("new tunnel failed: %s", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {
@@ -129,22 +142,9 @@ func (ts *Tunserver) handleProject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	opts := TunnelOptions{
-		scheduler:    ts.scheduler,
-		projectID:    projectID,
-		targetNodeID: targetNodeID,
-		nodeID:       ts.nodeID,
-		tunID:        uuid.NewString(),
-		req:          &TcpReq{conn: conn},
-	}
+	tunnel.req = &TcpReq{conn: conn}
 
-	tunnel, err := newTunnel(context.Background(), ts, relays, &opts)
-	if err != nil {
-		log.Errorf("new tunnel failed: %s", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+	headerString := ts.getHeaderString(r, targetNodeID, projectID)
 	tunnel.onReqMessage([]byte(headerString))
 
 	buf := make([]byte, 4096)
@@ -186,20 +186,13 @@ func (ts *Tunserver) handleRelay(w http.ResponseWriter, r *http.Request) {
 
 	relays := r.Header["Relay"]
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Errorf("Error upgrading to WebSocket:", err)
-		return
-	}
-	defer conn.Close()
-
 	opts := TunnelOptions{
 		scheduler:    ts.scheduler,
 		projectID:    projectID,
 		targetNodeID: targetNodeID,
 		nodeID:       ts.nodeID,
 		tunID:        uuid.NewString(),
-		req:          &WsReq{conn: conn, writeLock: sync.Mutex{}},
+		// req:          &WsReq{conn: conn, writeLock: sync.Mutex{}},
 	}
 
 	tunnel, err := newTunnel(context.Background(), ts, relays, &opts)
@@ -208,6 +201,15 @@ func (ts *Tunserver) handleRelay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Errorf("Error upgrading to WebSocket:", err)
+		return
+	}
+	defer conn.Close()
+
+	tunnel.req = &WsReq{conn: conn, writeLock: sync.Mutex{}}
 
 	for {
 		messageType, p, err := conn.ReadMessage()

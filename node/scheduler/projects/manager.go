@@ -56,7 +56,7 @@ func NewManager(nodeManager *node.Manager, sdb *db.SQLDB, ds datastore.Batching)
 	return m
 }
 
-// Start initializes and starts the project state machine and associated tickers
+// StartTimer Start initializes and starts the project state machine and associated tickers
 func (m *Manager) StartTimer(ctx context.Context) {
 	if err := m.initStateMachines(); err != nil {
 		log.Errorf("restartStateMachines err: %s", err.Error())
@@ -310,8 +310,9 @@ func (m *Manager) startCheckServicingProjectTimer() {
 	}
 }
 
+// CheckProjectReplicasFromNode checks the project replicas for a given node ID.
 func (m *Manager) CheckProjectReplicasFromNode(nodeID string) {
-	list, err := m.LoadProjectReplicasForNode(nodeID)
+	list, err := m.LoadAllProjectReplicasForNode(nodeID)
 	if err != nil {
 		log.Errorf("checkProjectReplicasFromNode projects :%s", err.Error())
 		return
@@ -437,7 +438,9 @@ func (m *Manager) checkProjectReplicas(limit, offset int) int {
 				// delete replicas
 				projectDeleteReplicas[result.ID] += 0
 
-				m.removeReplica(result.ID, nodeID, types.ProjectEventStatusChange)
+				m.removeReplica(result.ID, nodeID, types.ProjectEventFailed)
+			} else {
+				log.Warnf("checkProjectReplicas %s id:[%s] status:[%s] msg:[%s]", nodeID, result.ID, result.Status.String(), result.Msg)
 			}
 		}
 	}
@@ -519,8 +522,10 @@ func (m *Manager) checkUnDoneProjects(limit, offset int) int {
 }
 
 func (m *Manager) chooseNodes(needCount int, filterMap map[string]struct{}, info ProjectInfo) []*node.Node {
+	log.Infof("chooseNodes id %s ,%d ,AreaID[%s] ,Version[%d] ", info.UUID, needCount, info.Requirement.AreaID, info.Requirement.Version)
+
 	out := make([]*node.Node, 0)
-	continent, country, province, city := region.DecodeAreaID(info.AreaID)
+	continent, country, province, city := region.DecodeAreaID(info.Requirement.AreaID)
 	if continent != "" {
 		list := m.nodeMgr.GeoMgr.FindNodesFromGeo(continent, country, province, city, types.NodeEdge)
 		sort.Slice(list, func(i, j int) bool {
@@ -565,6 +570,16 @@ func (m *Manager) checkNode(nodeID string, filterMap map[string]struct{}, info P
 	}
 
 	if _, exist := filterMap[node.NodeID]; exist {
+		return nil
+	}
+
+	nInfo, err := m.LoadNodeInfo(nodeID)
+	if err != nil {
+		return nil
+	}
+
+	if nInfo.Version < info.Requirement.Version {
+		log.Infof("checkNode nodeID %s ,Version %d", nodeID, nInfo.Version)
 		return nil
 	}
 

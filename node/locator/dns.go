@@ -3,10 +3,11 @@ package locator
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Filecoin-Titan/titan/api"
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -206,7 +207,7 @@ func (h *dnsHandler) handlerNodeLocation(m *dns.Msg, domain string) (bool, error
 	if len(fields) < 4 {
 		return false, fmt.Errorf("invalid domain %s", domain)
 	}
-	
+
 	nodeID := fields[0]
 	// check node id
 	if !h.isMatchNodeID(nodeID) {
@@ -295,6 +296,7 @@ func (h *dnsHandler) isValidCID(cidString string) bool {
 	return err == nil
 }
 
+// skip error
 func (h *dnsHandler) ReserveDeploymentHostnames(m *dns.Msg, domain string) (bool, error) {
 	fields := strings.Split(domain, ".")
 	if len(fields) < 4 {
@@ -307,10 +309,20 @@ func (h *dnsHandler) ReserveDeploymentHostnames(m *dns.Msg, domain string) (bool
 		return false, nil
 	}
 
-	deployUUID := uuid.MustParse(deploymentId)
+	deployUUID, err := uuid.Parse(deploymentId)
+	if err != nil {
+		log.Warnf("dnsHandler.ReserveDeploymentHostnames parse deploymentId failed %s", err.Error())
+		return false, nil
+	}
+
 	ip, err := h.dnsServer.GetDeploymentCandidateIP(context.Background(), deployUUID.String())
 	if err != nil {
-		return false, err
+		log.Warnf("dnsHandler.ReserveDeploymentHostnames GetDeploymentCandidateIPfailed %s", err.Error())
+		return false, nil
+	}
+
+	if len(ip) == 0 {
+		return false, nil
 	}
 
 	if rr, err := dns.NewRR(fmt.Sprintf("%s A %s", domain, ip)); err == nil {

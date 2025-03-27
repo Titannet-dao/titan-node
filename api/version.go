@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
@@ -10,6 +12,40 @@ import (
 )
 
 type Version uint32
+
+func NewVerFromString(ver string) Version {
+	parts := strings.Split(ver, "+")
+	if len(parts) == 0 {
+		return Version(0)
+	}
+
+	v := parts[0]
+	vs := strings.Split(v, ".")
+	if len(vs) != 3 {
+		return Version(0)
+	}
+
+	major6, err := strconv.ParseUint(vs[0], 10, 8) // base 10, bitSize 8
+	if err != nil {
+		return Version(0)
+	}
+
+	minor6, err := strconv.ParseUint(vs[1], 10, 8) // base 10, bitSize 8
+	if err != nil {
+		return Version(0)
+	}
+
+	patch6, err := strconv.ParseUint(vs[2], 10, 8) // base 10, bitSize 8
+	if err != nil {
+		return Version(0)
+	}
+
+	major := uint8(major6)
+	minor := uint8(minor6)
+	patch := uint8(patch6)
+
+	return newVer(major, minor, patch)
+}
 
 func newVer(major, minor, patch uint8) Version {
 	return Version(uint32(major)<<16 | uint32(minor)<<8 | uint32(patch))
@@ -56,7 +92,7 @@ func VersionForType(nodeType types.NodeType) (Version, error) {
 		return SchedulerAPIVersion0, nil
 	case types.NodeCandidate:
 		return CandidateAPIVersion0, nil
-	case types.NodeEdge:
+	case types.NodeEdge, types.NodeL3:
 		return EdgeAPIVersion0, nil
 	case types.NodeLocator:
 		return LocationAPIVersion0, nil

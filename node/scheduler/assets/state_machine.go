@@ -33,14 +33,19 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 		on(SelectFailed{}, SeedFailed),
 		on(SkipStep{}, CandidatesSelect),
 	),
-	SeedSync: planOne(
-		on(PullRequestSent{}, SeedUploading),
-		on(SelectFailed{}, SyncFailed),
-		on(SkipStep{}, CandidatesSelect),
-	),
 	SeedPulling: planOne(
 		on(PullSucceed{}, CandidatesSelect),
 		on(PullFailed{}, SeedFailed),
+		apply(PulledResult{}),
+	),
+	SeedSync: planOne(
+		on(PullRequestSent{}, SeedSyncing),
+		on(SelectFailed{}, SyncFailed),
+		on(SkipStep{}, CandidatesSelect),
+	),
+	SeedSyncing: planOne(
+		on(PullSucceed{}, CandidatesSelect),
+		on(PullFailed{}, SyncFailed),
 		apply(PulledResult{}),
 	),
 	UploadInit: planOne(
@@ -85,8 +90,10 @@ var planners = map[AssetState]func(events []statemachine.Event, state *AssetPull
 	SyncFailed:   planOne(),
 	UploadFailed: planOne(),
 	Remove:       planOne(),
-	Stop:         planOne(),
-	Servicing:    planOne(),
+	Stop: planOne(
+		on(AssetRePull{}, CandidatesSelect),
+	),
+	Servicing: planOne(),
 }
 
 // plan creates a plan for the next asset pulling action based on the given events and asset state
@@ -118,12 +125,10 @@ func (m *Manager) plan(events []statemachine.Event, state *AssetPullingInfo) (fu
 		return m.handleSeedSelect, processed, nil
 	case SeedSync:
 		return m.handleSeedSync, processed, nil
-	case SeedPulling:
-		return m.handleSeedPulling, processed, nil
 	case UploadInit:
 		return m.handleUploadInit, processed, nil
-	case SeedUploading:
-		return m.handleSeedUploading, processed, nil
+	case SeedPulling, SeedSyncing, SeedUploading:
+		return m.handleSeedPulling, processed, nil
 	case CandidatesSelect:
 		return m.handleCandidatesSelect, processed, nil
 	case EdgesSelect:

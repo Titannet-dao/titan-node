@@ -3,7 +3,6 @@ package candidate
 import (
 	"context"
 	"fmt"
-	"github.com/Filecoin-Titan/titan/node/container"
 	"net"
 	"net/http"
 	"net/url"
@@ -45,10 +44,8 @@ type Candidate struct {
 	*device.Device
 	*vd.Validation
 	*datasync.DataSync
-	*container.Client
 	Scheduler api.Scheduler
 	Config    *config.CandidateCfg
-	TCPSrv    *TCPServer
 }
 
 // WaitQuiet does nothing and returns nil error.
@@ -151,5 +148,5 @@ func (c *Candidate) DeactivateNode(ctx context.Context) error {
 }
 
 func (c *Candidate) CalculateExitProfit(ctx context.Context) (types.ExitProfitRsp, error) {
-	return c.Scheduler.CalculateExitProfit(ctx, "")
+	return c.Scheduler.CalculateDowntimePenalty(ctx, "")
 }

@@ -41,7 +41,7 @@ type ProjectForceState struct {
 func (evt ProjectForceState) applyGlobal(state *ProjectInfo) bool {
 	state.State = evt.State
 	state.RetryCount = 0
-	state.NodeIDs = evt.NodeIDs
+	// state.Requirement.NodeIDs = evt.NodeIDs
 	state.Event = evt.Event
 	return true
 }
@@ -55,6 +55,7 @@ type DeployResult struct {
 func (evt DeployResult) apply(state *ProjectInfo) {
 }
 
+// Ignore is a method that indicates whether the deployment result should be ignored.
 func (evt DeployResult) Ignore() {
 }
 
@@ -77,6 +78,7 @@ func (evt ProjectRedeploy) apply(state *ProjectInfo) {
 	state.RetryCount++
 }
 
+// Ignore is a method that allows ignoring the redeploy event.
 func (evt ProjectRedeploy) Ignore() {
 }
 
@@ -87,6 +89,7 @@ func (evt DeploySucceed) apply(state *ProjectInfo) {
 	state.RetryCount = 0
 }
 
+// Ignore is a method that indicates the deployment succeeded and should be ignored.
 func (evt DeploySucceed) Ignore() {
 }
 
@@ -105,6 +108,7 @@ func (evt DeployFailed) apply(state *ProjectInfo) {
 	state.RetryCount = 1
 }
 
+// Ignore handles the deployment failure by ignoring the event.
 func (evt DeployFailed) Ignore() {
 }
 

@@ -33,6 +33,9 @@ import (
 
 const (
 	connectivityCheckTimeout = 2 * time.Second
+
+	// Interval for initiating free space release
+	freeUpDayInterval = 1
 )
 
 // GetOnlineNodeCount returns the count of online nodes for a given node type
@@ -42,7 +45,7 @@ func (s *Scheduler) GetOnlineNodeCount(ctx context.Context, nodeType types.NodeT
 	}
 
 	i := 0
-	_, nodes := s.NodeManager.GetAllCandidateNodes()
+	_, nodes := s.NodeManager.GetValidCandidateNodes()
 	for _, node := range nodes {
 		if node == nil {
 			continue
@@ -150,7 +153,7 @@ func (s *Scheduler) RegisterNode(ctx context.Context, nodeID, publicKey string, 
 	}
 
 	// check params
-	if nodeType != types.NodeEdge && nodeType != types.NodeL5 {
+	if nodeType != types.NodeEdge && nodeType != types.NodeL5 && nodeType != types.NodeL3 {
 		return nil, xerrors.New("invalid node type")
 	}
 
@@ -207,9 +210,78 @@ func isInIPWhitelist(ip string, ipWhiteList []string) bool {
 	return false
 }
 
+// RegisterNodeV2 register edge node, return key
+func (s *Scheduler) RegisterNodeV2(ctx context.Context, info types.NodeRegister) (*types.ActivationDetail, error) {
+	if info.NodeType == types.NodeEdge {
+		if !s.areaMatch(info.AreaID) {
+			return nil, xerrors.Errorf("%s area is not match %s", info.NodeID, info.AreaID)
+		}
+
+		return s.RegisterNode(ctx, info.NodeID, info.PublicKey, types.NodeEdge)
+	} else if info.NodeType == types.NodeCandidate {
+		if !s.areaMatch(info.AreaID) {
+			cInfo, err := s.db.GetCandidateCodeInfo(info.Code)
+			if err != nil {
+				return nil, err
+			}
+
+			if !cInfo.IsTest {
+				return nil, xerrors.Errorf("%s area is not match %s", info.NodeID, info.AreaID)
+			}
+		}
+
+		return s.RegisterCandidateNode(ctx, info.NodeID, info.PublicKey, info.Code)
+	}
+
+	return s.RegisterNode(ctx, info.NodeID, info.PublicKey, info.NodeType)
+}
+
+func (s *Scheduler) areaMatch(nodeArea string) bool {
+	sID, isC := s.getAreaInfo()
+	if isC {
+		return true
+	}
+
+	parts := strings.Split(nodeArea, "-")
+	if len(parts) < 2 {
+		return false
+	}
+
+	continent := strings.ToLower(strings.Replace(parts[0], " ", "", -1))
+	country := strings.ToLower(strings.Replace(parts[1], " ", "", -1))
+	areaID := fmt.Sprintf("%s-%s", continent, country)
+
+	return sID == areaID
+}
+
 // RegisterEdgeNode register edge node, return key
 func (s *Scheduler) RegisterEdgeNode(ctx context.Context, nodeID, publicKey string) (*types.ActivationDetail, error) {
 	return s.RegisterNode(ctx, nodeID, publicKey, types.NodeEdge)
+}
+
+// ForceNodeOffline changes the online status of a node identified by nodeID.
+// If the status is true, it forces the node offline. If the status is false, it brings the node back online.
+func (s *Scheduler) ForceNodeOffline(ctx context.Context, nodeID string, forceOffline bool) error {
+	if forceOffline {
+		// is candidate
+		err := s.db.NodeExistsFromType(nodeID, types.NodeCandidate)
+		if err == nil {
+			// if node is candidate , need to backup asset
+			s.AssetManager.CandidateDeactivate(nodeID)
+		}
+	}
+
+	err := s.db.SaveForceOffline(nodeID, forceOffline)
+	if err != nil {
+		return xerrors.Errorf("SaveDeactivateNode %s err : %s", nodeID, err.Error())
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		node.ForceOffline = forceOffline
+	}
+
+	return nil
 }
 
 // DeactivateNode is used to deactivate a node in the titan server.
@@ -224,6 +296,12 @@ func (s *Scheduler) DeactivateNode(ctx context.Context, nodeID string, hours int
 		nodeID = nID
 	}
 
+	// is candidate
+	err := s.db.NodeExistsFromType(nodeID, types.NodeCandidate)
+	if err != nil {
+		return err
+	}
+
 	deactivateTime, err := s.db.LoadDeactivateNodeTime(nodeID)
 	if err != nil {
 		return xerrors.Errorf("LoadDeactivateNodeTime %s err : %s", nodeID, err.Error())
@@ -233,28 +311,28 @@ func (s *Scheduler) DeactivateNode(ctx context.Context, nodeID string, hours int
 		return xerrors.Errorf("node %s is waiting to deactivate", nodeID)
 	}
 
-	if hours <= 0 {
-		hours = 24
+	minute := hours * 60
+	if minute <= 0 {
+		minute = 30
 	}
 
 	penaltyPoint := 0.0
 
-	// is candidate
-	err = s.db.NodeExistsFromType(nodeID, types.NodeCandidate)
-	if err == nil {
-		info, err := s.db.LoadNodeInfo(nodeID)
-		if err != nil {
-			return err
-		}
-		// if node is candidate , need to backup asset
-		s.AssetManager.CandidateDeactivate(nodeID)
-
-		pe, _ := s.NodeManager.CalculateExitProfit(info.Profit)
-		penaltyPoint = info.Profit - pe
+	info, err := s.db.LoadNodeInfo(nodeID)
+	if err != nil {
+		return err
 	}
+	// if node is candidate , need to backup asset
+	s.AssetManager.CandidateDeactivate(nodeID)
 
-	deactivateTime = time.Now().Add(time.Duration(hours) * time.Hour).Unix()
-	err = s.db.SaveDeactivateNode(nodeID, deactivateTime, penaltyPoint)
+	pe, _ := s.NodeManager.CalculateDowntimePenalty(info.Profit)
+	penaltyPoint = info.Profit - pe
+
+	deactivateTime = time.Now().Add(time.Duration(minute) * time.Minute).Unix()
+
+	log.Warnf("DeactivateNode:[%s] Profit:[%.2f] - [%.2f] = [%.2f]", nodeID, info.Profit, penaltyPoint, pe)
+
+	err = s.db.SaveDeactivateNode(nodeID, deactivateTime, penaltyPoint, 0)
 	if err != nil {
 		return xerrors.Errorf("SaveDeactivateNode %s err : %s", nodeID, err.Error())
 	}
@@ -264,14 +342,109 @@ func (s *Scheduler) DeactivateNode(ctx context.Context, nodeID string, hours int
 		node.DeactivateTime = deactivateTime
 		node.Profit -= penaltyPoint
 		s.NodeManager.RepayNodeWeight(node)
-
 		// remove from validation
 	}
 
 	return nil
 }
 
-func (s *Scheduler) CalculateExitProfit(ctx context.Context, nodeID string) (types.ExitProfitRsp, error) {
+// MigrateNodeOut Migrate out the node
+func (s *Scheduler) MigrateNodeOut(ctx context.Context, nodeID string) (*types.NodeMigrateInfo, error) {
+	out := &types.NodeMigrateInfo{}
+
+	rInfo, err := s.db.LoadNodeRegisterInfo(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	// if rInfo.NodeType != types.NodeCandidate {
+	// 	return nil, xerrors.Errorf("node :%s not candidate", nodeID)
+	// }
+
+	nInfo, err := s.db.LoadNodeInfo(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	pInfo, err := s.db.LoadNodeProfits(nodeID, 200, 0, []int{0, 1, 2, 3, 4, 5, 6, 7, 8})
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	onlineCounts := make(map[time.Time]int)
+	for i := 0; i < 8; i++ {
+		date := now.AddDate(0, 0, -i)
+		date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
+
+		count, err := s.db.GetOnlineCount(nodeID, date)
+		if err == nil {
+			onlineCounts[date] = count
+		}
+	}
+
+	var cInfo *types.CandidateCodeInfo
+	if rInfo.NodeType == types.NodeCandidate {
+		cInfo, err = s.db.GetCandidateCodeInfoForNodeID(nodeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	out.ActivationInfo = rInfo
+	out.NodeInfo = nInfo
+	out.OnlineCounts = onlineCounts
+	out.CodeInfo = cInfo
+	out.Key = uuid.NewString()
+	out.ProfitList = pInfo.Infos
+
+	err = s.db.SaveMigrateKey(out.Key, nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// MigrateNodeIn Migrate in the node
+func (s *Scheduler) MigrateNodeIn(ctx context.Context, info *types.NodeMigrateInfo) error {
+	if info.ActivationInfo == nil || info.NodeInfo == nil {
+		return xerrors.New("Parameter cannot be empty")
+	}
+
+	info.NodeInfo.SchedulerID = s.ServerID
+
+	return s.db.MigrateNodeDetails(info)
+}
+
+// CleanupNode removes residual data from the source server after a node has been migrated.
+func (s *Scheduler) CleanupNode(ctx context.Context, nodeID, key string) error {
+	rInfo, err := s.db.LoadNodeRegisterInfo(nodeID)
+	if err != nil {
+		return err
+	}
+
+	if rInfo.MigrateKey != key {
+		return xerrors.Errorf("Migrate key mismatch [%s] [%s]", key, rInfo.MigrateKey)
+	}
+
+	s.AssetManager.CandidateDeactivate(nodeID)
+
+	err = s.db.CleanNodeInfo(nodeID)
+	if err != nil {
+		return err
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		s.NodeManager.SetNodeOffline(node)
+	}
+
+	return nil
+}
+
+// CalculateDowntimePenalty calculates the penalty points to be deducted for a node's requested downtime.
+func (s *Scheduler) CalculateDowntimePenalty(ctx context.Context, nodeID string) (types.ExitProfitRsp, error) {
 	nID := handler.GetNodeID(ctx)
 	if len(nID) > 0 {
 		nodeID = nID
@@ -279,7 +452,7 @@ func (s *Scheduler) CalculateExitProfit(ctx context.Context, nodeID string) (typ
 
 	err := s.db.NodeExistsFromType(nodeID, types.NodeCandidate)
 	if err != nil {
-		return types.ExitProfitRsp{}, nil
+		return types.ExitProfitRsp{}, err
 	}
 
 	info, err := s.db.LoadNodeInfo(nodeID)
@@ -287,12 +460,22 @@ func (s *Scheduler) CalculateExitProfit(ctx context.Context, nodeID string) (typ
 		return types.ExitProfitRsp{}, err
 	}
 
-	pe, exitRate := s.NodeManager.CalculateExitProfit(info.Profit)
+	pe, exitRate := s.NodeManager.CalculateDowntimePenalty(info.Profit)
 	return types.ExitProfitRsp{
 		CurrentPoint:   info.Profit,
 		RemainingPoint: pe,
 		PenaltyRate:    exitRate,
 	}, err
+}
+
+// AssignTunserverURL assigns a Tunserver URL.
+func (s *Scheduler) AssignTunserverURL(ctx context.Context) (*types.TunserverRsp, error) {
+	return &types.TunserverRsp{}, nil
+}
+
+// CalculateExitProfit Deprecated
+func (s *Scheduler) CalculateExitProfit(ctx context.Context, nodeID string) (types.ExitProfitRsp, error) {
+	return s.CalculateDowntimePenalty(ctx, nodeID)
 }
 
 // UndoNodeDeactivation is used to undo the deactivation of a node in the titan server.
@@ -307,7 +490,7 @@ func (s *Scheduler) UndoNodeDeactivation(ctx context.Context, nodeID string) err
 		return xerrors.New("Node has been deactivation")
 	}
 
-	err = s.db.SaveDeactivateNode(nodeID, 0, 0)
+	err = s.db.SaveDeactivateNode(nodeID, 0, 0, deactivateTime)
 	if err != nil {
 		return xerrors.Errorf("DeleteDeactivateNode %s err : %s", nodeID, err.Error())
 	}
@@ -389,21 +572,40 @@ func (s *Scheduler) EdgeConnect(ctx context.Context, opts *types.ConnectOptions)
 	return s.nodeConnect(ctx, opts, types.NodeEdge)
 }
 
+// L3Connect l3 node login to the scheduler
+func (s *Scheduler) L3Connect(ctx context.Context, opts *types.ConnectOptions) error {
+	return s.lnNodeConnected(ctx, opts, types.NodeL3)
+}
+
 // L5Connect l5 node login to the scheduler
 func (s *Scheduler) L5Connect(ctx context.Context, opts *types.ConnectOptions) error {
+	return s.lnNodeConnected(ctx, opts, types.NodeL5)
+}
+
+func (s *Scheduler) lnNodeConnected(ctx context.Context, opts *types.ConnectOptions, nType types.NodeType) error {
 	// return s.nodeConnect(ctx, opts, types.NodeEdge)
 	remoteAddr := handler.GetRemoteAddr(ctx)
 	nodeID := handler.GetNodeID(ctx)
 
-	l5 := s.NodeManager.GetNode(nodeID)
-	if l5 == nil {
-		if err := s.NodeManager.NodeExists(nodeID); err != nil {
-			return xerrors.Errorf("node: %s, type: %d, error: %w", nodeID, types.NodeL5, err)
+	nNode := s.NodeManager.GetNode(nodeID)
+	if nNode == nil {
+		if err := s.db.NodeExistsFromType(nodeID, nType); err != nil {
+			return xerrors.Errorf("node: %s, type: %d, error: %w", nodeID, nType, err)
 		}
-		l5 = node.New()
 	}
 
-	pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
+	// TODO temporary codes
+	err := s.db.UpdateNodeType(nodeID, nType)
+	if err != nil {
+		return xerrors.Errorf("UpdateNodeType %s err : %s", nodeID, err.Error())
+	}
+
+	externalIP, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return xerrors.Errorf("nodeConnect err SplitHostPort err:%s", err.Error())
+	}
+
+	pStr, err := s.db.LoadNodePublicKey(nodeID)
 	if err != nil && err != sql.ErrNoRows {
 		return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
 	}
@@ -413,29 +615,70 @@ func (s *Scheduler) L5Connect(ctx context.Context, opts *types.ConnectOptions) e
 		return xerrors.Errorf("load node port %s err : %s", nodeID, err.Error())
 	}
 
-	l5.PublicKey = publicKey
-	l5.Token = opts.Token
-
-	nodeInfo := &types.NodeInfo{
-		Type:            types.NodeL5,
-		NodeDynamicInfo: types.NodeDynamicInfo{NodeID: nodeID},
-		RemoteAddr:      remoteAddr,
+	if nNode == nil {
+		nNode = node.New()
 	}
-	l5.InitInfo(nodeInfo)
 
-	err = l5.ConnectRPC(s.Transport, remoteAddr, types.NodeL5)
+	nNode.PublicKey = publicKey
+	nNode.Token = opts.Token
+
+	err = nNode.ConnectRPC(s.Transport, remoteAddr, nType)
 	if err != nil {
 		return err
 	}
 
-	l5Version, err := l5.API.Version(context.Background())
+	// init node info
+	nInfo, err := nNode.API.GetNodeInfo(context.Background())
 	if err != nil {
-		log.Errorf("get l5 version failed %s", err.Error())
-	} else {
-		log.Infof("L5 %s connected, version %s remoteAddr %s", nodeID, l5Version.String(), remoteAddr)
+		return xerrors.Errorf("%s nodeConnect err NodeInfo err:%s", nodeID, err.Error())
 	}
+
+	nodeInfo := s.nodeParametersApplyLimits(nInfo)
+
+	ver := api.NewVerFromString(nodeInfo.SystemVersion)
+	nodeInfo.Version = int64(ver)
+
+	nodeInfo.NodeID = nodeID
+	nodeInfo.Type = nType
+	nodeInfo.RemoteAddr = remoteAddr
+	nodeInfo.SchedulerID = s.ServerID
+	nodeInfo.ExternalIP = externalIP
+	nodeInfo.BandwidthUp = units.MiB
+	nodeInfo.BandwidthDown = units.GiB
+	nodeInfo.NATType = types.NatTypeUnknown.String()
+	nodeInfo.LastSeen = time.Now()
+	nodeInfo.FirstTime = time.Now()
+
+	dbInfo, err := s.db.LoadNodeInfo(nodeID)
+	if err != nil && err != sql.ErrNoRows {
+		return xerrors.Errorf("nodeConnect err load node online duration %s err : %s", nodeID, err.Error())
+	}
+
+	if dbInfo != nil {
+		// init node info
+		nodeInfo.PortMapping = dbInfo.PortMapping
+		nodeInfo.OnlineDuration = dbInfo.OnlineDuration
+		nodeInfo.OfflineDuration = dbInfo.OfflineDuration
+		nodeInfo.BandwidthDown = dbInfo.BandwidthDown
+		nodeInfo.BandwidthUp = dbInfo.BandwidthUp
+		nodeInfo.DownloadTraffic = dbInfo.DownloadTraffic
+		nodeInfo.UploadTraffic = dbInfo.UploadTraffic
+		nodeInfo.FirstTime = dbInfo.FirstTime
+	}
+
+	nNode.OnlineRate = s.NodeManager.ComputeNodeOnlineRate(nodeID, nodeInfo.FirstTime)
+
+	nNode.InitInfo(nodeInfo)
+
+	log.Infof("ln node %s connected, version %s remoteAddr %s", nodeID, ver, remoteAddr)
+
+	err = s.saveNodeInfo(nodeInfo)
+	if err != nil {
+		return err
+	}
+
 	// node
-	return s.NodeManager.NodeOnline(l5, nodeInfo)
+	return s.NodeManager.NodeOnline(nNode, nodeInfo)
 }
 
 // GetExternalAddress retrieves the external address of the caller.
@@ -476,7 +719,7 @@ func (s *Scheduler) NodeLogin(ctx context.Context, nodeID, sign string) (string,
 		ID: nodeID,
 	}
 
-	if nType == types.NodeEdge {
+	if nType == types.NodeEdge || nType == types.NodeL3 {
 		p.Allow = append(p.Allow, api.RoleEdge)
 	} else if nType == types.NodeCandidate {
 		p.Allow = append(p.Allow, api.RoleCandidate)
@@ -495,15 +738,18 @@ func (s *Scheduler) NodeLogin(ctx context.Context, nodeID, sign string) (string,
 }
 
 // GetNodeInfo returns information about the specified node.
-func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeInfo, error) {
-	nodeInfo := types.NodeInfo{}
+func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (*types.NodeInfo, error) {
+	nodeInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
+	if err != nil {
+		return nil, xerrors.Errorf("nodeID %s LoadNodeInfo err:%s", nodeID, err.Error())
+	}
+
+	today := time.Now()
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
+
 	nodeInfo.Status = types.NodeOffline
 
-	dbInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
-	if err != nil {
-		return nodeInfo, xerrors.Errorf("nodeID %s LoadNodeInfo err:%s", nodeID, err.Error())
-	}
-	nodeInfo = *dbInfo
+	nodeInfo.ReplicaCount, err = s.NodeManager.LoadSucceedReplicaCountNodeID(nodeInfo.NodeID)
 
 	n := s.NodeManager.GetNode(nodeID)
 	if n != nil {
@@ -511,13 +757,16 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 		nodeInfo.NATType = n.NATType
 		nodeInfo.Type = n.Type
 		nodeInfo.CPUUsage = n.CPUUsage
+		nodeInfo.MemoryUsage = n.MemoryUsage
 		nodeInfo.DiskUsage = n.DiskUsage
+		nodeInfo.DiskSpace = n.DiskSpace
 		nodeInfo.ExternalIP = n.ExternalIP
 		nodeInfo.IncomeIncr = n.IncomeIncr
 		nodeInfo.IsTestNode = n.IsTestNode
 		nodeInfo.AreaID = n.AreaID
 		nodeInfo.RemoteAddr = n.RemoteAddr
 		nodeInfo.Mx = node.RateOfL2Mx(n.OnlineDuration)
+		nodeInfo.TodayOnlineTimeWindow = s.loadNodeTodayOnlineTimeWindow(nodeID, todayDate)
 
 		log.Debugf("%s node select codes:%v , url:%s", nodeID, n.SelectWeights(), n.ExternalURL)
 	}
@@ -525,15 +774,24 @@ func (s *Scheduler) GetNodeInfo(ctx context.Context, nodeID string) (types.NodeI
 	return nodeInfo, nil
 }
 
+func (s *Scheduler) loadNodeTodayOnlineTimeWindow(nodeID string, todayDate time.Time) int {
+	todayCount, _ := s.db.GetOnlineCount(nodeID, todayDate)
+
+	return todayCount
+}
+
 // GetNodeList retrieves a list of nodes with pagination.
 func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*types.ListNodesRsp, error) {
 	info := &types.ListNodesRsp{Data: make([]types.NodeInfo, 0)}
 
-	rows, total, err := s.NodeManager.LoadNodeInfos(limit, offset)
+	rows, total, err := s.NodeManager.LoadActiveNodeInfos(limit, offset)
 	if err != nil {
 		return nil, xerrors.Errorf("LoadNodeInfos err:%s", err.Error())
 	}
 	defer rows.Close()
+
+	today := time.Now()
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
 
 	nodeInfos := make([]types.NodeInfo, 0)
 	for rows.Next() {
@@ -544,19 +802,29 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 			continue
 		}
 
+		sInfo, err := s.NodeManager.LoadNodeStatisticsInfo(nodeInfo.NodeID)
+		if err == nil {
+			nodeInfo.NodeStatisticsInfo = sInfo
+		}
+
+		nodeInfo.ReplicaCount, err = s.NodeManager.LoadSucceedReplicaCountNodeID(nodeInfo.NodeID)
+
 		n := s.NodeManager.GetNode(nodeInfo.NodeID)
 		if n != nil {
 			nodeInfo.Status = types.NodeServicing
 			nodeInfo.NATType = n.NATType
 			nodeInfo.Type = n.Type
 			nodeInfo.CPUUsage = n.CPUUsage
+			nodeInfo.MemoryUsage = n.MemoryUsage
 			nodeInfo.DiskUsage = n.DiskUsage
+			nodeInfo.DiskSpace = n.DiskSpace
 			nodeInfo.ExternalIP = n.ExternalIP
 			nodeInfo.IncomeIncr = n.IncomeIncr
 			nodeInfo.IsTestNode = n.IsTestNode
 			nodeInfo.AreaID = n.AreaID
 			nodeInfo.RemoteAddr = n.RemoteAddr
 			nodeInfo.Mx = node.RateOfL2Mx(n.OnlineDuration)
+			nodeInfo.TodayOnlineTimeWindow = s.loadNodeTodayOnlineTimeWindow(nodeInfo.NodeID, todayDate)
 		}
 
 		nodeInfos = append(nodeInfos, *nodeInfo)
@@ -568,6 +836,7 @@ func (s *Scheduler) GetNodeList(ctx context.Context, offset int, limit int) (*ty
 	return info, nil
 }
 
+// GetCandidateURLsForDetectNat returns candidate URLs for NAT detection.
 func (s *Scheduler) GetCandidateURLsForDetectNat(ctx context.Context) ([]string, error) {
 	return s.NatManager.GetCandidateURLsForDetectNat(ctx)
 }
@@ -680,6 +949,7 @@ func (s *Scheduler) GetEdgeDownloadInfos(ctx context.Context, cid string) (*type
 	return ret, nil
 }
 
+// GetNodeToken retrieves the token for the specified node.
 func (s *Scheduler) GetNodeToken(ctx context.Context, nodeID string) (string, error) {
 	node := s.NodeManager.GetNode(nodeID)
 	if node == nil {
@@ -689,10 +959,12 @@ func (s *Scheduler) GetNodeToken(ctx context.Context, nodeID string) (string, er
 	return node.Token, nil
 }
 
+// GetNodeOfIP get nodes of ip
 func (s *Scheduler) GetNodeOfIP(ctx context.Context, ip string) ([]string, error) {
 	return s.NodeManager.IPMgr.GetNodeOfIP(ip), nil
 }
 
+// CheckIpUsage checks if a specific IP address is present on the server.
 func (s *Scheduler) CheckIpUsage(ctx context.Context, ip string) (bool, error) {
 	if s.NodeManager.IPMgr.CheckIPExist(ip) {
 		return true, nil
@@ -721,33 +993,64 @@ func (s *Scheduler) getSource(cNode *node.Node, cid string, titanRsa *titanrsa.R
 	return source
 }
 
-func (s *Scheduler) GetDownloadInfos(cid string, needCandidate bool) (*types.AssetSourceDownloadInfoRsp, int64, error) {
-	out := &types.AssetSourceDownloadInfoRsp{}
-
+func (s *Scheduler) getDownloadInfos(cid string, needCandidate bool) (*types.AssetSourceDownloadInfoRsp, int64, int, error) {
 	hash, err := cidutil.CIDToHash(cid)
 	if err != nil {
-		return nil, 0, xerrors.Errorf("GetAssetSourceDownloadInfo %s cid to hash err:%s", cid, err.Error())
-	}
-
-	replicas, err := s.db.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
-	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, xerrors.Errorf("GetAssetSourceDownloadInfo %s cid to hash err:%s", cid, err.Error())
 	}
 
 	aInfo, err := s.db.LoadAssetRecord(hash)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
+	out := &types.AssetSourceDownloadInfoRsp{}
 	if aInfo.Source == int64(types.AssetSourceAWS) {
 		out.AWSBucket = aInfo.Note
 	}
 
+	replicas, err := s.db.LoadReplicasByStatus(hash, []types.ReplicaStatus{types.ReplicaStatusSucceeded})
+	if err != nil {
+		return out, 0, 0, err
+	}
+
+	count := len(replicas)
+	if count == 0 {
+		return out, 0, count, nil
+	}
+
+	type nodeBandwidthUp struct {
+		NodeID      string
+		BandwidthUp int64
+	}
+
+	list := []*nodeBandwidthUp{}
+	for _, rInfo := range replicas {
+		nodeID := rInfo.NodeID
+
+		cNode := s.NodeManager.GetNode(nodeID)
+		if cNode != nil {
+			list = append(list, &nodeBandwidthUp{NodeID: nodeID, BandwidthUp: cNode.BandwidthUp})
+		}
+	}
+
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].BandwidthUp > list[j].BandwidthUp
+	})
+
+	// // Shuffle array
+	// for i := len(replicas) - 1; i > 0; i-- {
+	// 	j := rand.Intn(i + 1)
+	// 	replicas[i], replicas[j] = replicas[j], replicas[i]
+	// }
+
 	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
 	sources := make([]*types.SourceDownloadInfo, 0)
 
-	for _, rInfo := range replicas {
+	for i := 0; i < len(list); i++ {
+		rInfo := list[i]
 		nodeID := rInfo.NodeID
+		// candidate
 		cNode := s.NodeManager.GetCandidateNode(nodeID)
 		if cNode != nil {
 			source := s.getSource(cNode, cid, titanRsa)
@@ -758,11 +1061,12 @@ func (s *Scheduler) GetDownloadInfos(cid string, needCandidate bool) (*types.Ass
 			continue
 		}
 
+		// edge
 		if needCandidate {
 			continue
 		}
 
-		if len(sources) > 6 {
+		if len(sources) > 10 {
 			continue
 		}
 
@@ -780,20 +1084,19 @@ func (s *Scheduler) GetDownloadInfos(cid string, needCandidate bool) (*types.Ass
 	}
 
 	if len(sources) == 0 {
-		return out, 0, nil
+		return out, 0, count, nil
 	}
 
-	// Shuffle array
-	for i := len(sources) - 1; i > 0; i-- {
-		j := rand.Intn(i + 1)
+	rand.Shuffle(len(sources), func(i, j int) {
 		sources[i], sources[j] = sources[j], sources[i]
-	}
+	})
 
 	out.SourceList = sources
 
-	return out, aInfo.TotalSize, nil
+	return out, aInfo.TotalSize, count, nil
 }
 
+// GetAssetSourceDownloadInfo retrieves the download details for a specified asset.
 func (s *Scheduler) GetAssetSourceDownloadInfo(ctx context.Context, cid string) (*types.AssetSourceDownloadInfoRsp, error) {
 	// from app
 	clientID := ""
@@ -811,44 +1114,45 @@ func (s *Scheduler) GetAssetSourceDownloadInfo(ctx context.Context, cid string) 
 		}
 	}
 
-	log.Infof("GetAssetSourceDownloadInfo clientID:%s, cid:%s", clientID, cid)
-	out, totalSize, err := s.GetDownloadInfos(cid, false)
+	// TODO need good BandwidthUp
+	// log.Infof("GetAssetSourceDownloadInfo clientID:%s, cid:%s , nodeID:%s", clientID, cid, nodeID)
+	out, totalSize, _, err := s.getDownloadInfos(cid, false)
 	if err != nil {
 		return nil, err
 	}
 
 	// init workload
-	if event == types.WorkloadEventSync {
-		out.WorkloadID = uuid.NewString()
+	// if event == types.WorkloadEventSync {
+	out.WorkloadID = uuid.NewString()
 
-		ws := make([]*types.Workload, 0)
-		for _, info := range out.SourceList {
-			ws = append(ws, &types.Workload{SourceID: info.NodeID})
-		}
-
-		buffer := &bytes.Buffer{}
-		enc := gob.NewEncoder(buffer)
-		err := enc.Encode(ws)
-		if err != nil {
-			log.Errorf("GetAssetSourceDownloadInfo encode error:%s", err.Error())
-			return out, nil
-		}
-
-		record := &types.WorkloadRecord{
-			WorkloadID: out.WorkloadID,
-			AssetCID:   cid,
-			ClientID:   clientID,
-			AssetSize:  totalSize,
-			Workloads:  buffer.Bytes(),
-			Event:      event,
-			Status:     types.WorkloadStatusCreate,
-		}
-
-		if err = s.NodeManager.SaveWorkloadRecord([]*types.WorkloadRecord{record}); err != nil {
-			log.Errorf("GetAssetSourceDownloadInfo SaveWorkloadRecord error:%s", err.Error())
-			return out, nil
-		}
+	ws := make([]*types.Workload, 0)
+	for _, info := range out.SourceList {
+		ws = append(ws, &types.Workload{SourceID: info.NodeID})
 	}
+
+	buffer := &bytes.Buffer{}
+	enc := gob.NewEncoder(buffer)
+	err = enc.Encode(ws)
+	if err != nil {
+		log.Errorf("GetAssetSourceDownloadInfo encode error:%s", err.Error())
+		return out, nil
+	}
+
+	record := &types.WorkloadRecord{
+		WorkloadID: out.WorkloadID,
+		AssetCID:   cid,
+		ClientID:   clientID,
+		AssetSize:  totalSize,
+		Workloads:  buffer.Bytes(),
+		Event:      event,
+		Status:     types.WorkloadStatusCreate,
+	}
+
+	if err = s.NodeManager.SaveWorkloadRecord([]*types.WorkloadRecord{record}); err != nil {
+		log.Errorf("GetAssetSourceDownloadInfo SaveWorkloadRecord error:%s", err.Error())
+		return out, nil
+	}
+	// }
 
 	return out, nil
 }
@@ -863,10 +1167,134 @@ func (s *Scheduler) NodeExists(ctx context.Context, nodeID string) error {
 	return s.NodeManager.NodeExists(nodeID)
 }
 
+// NodeKeepaliveV3 candidate and edge keepalive
+func (s *Scheduler) NodeKeepaliveV3(ctx context.Context, req *types.KeepaliveReq) (*types.KeepaliveRsp, error) {
+	uuid, err := s.CommonAPI.Session(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	nodeID := handler.GetNodeID(ctx)
+	if len(nodeID) == 0 {
+		return nil, fmt.Errorf("Can not get nodeID from request")
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node == nil {
+		return &types.KeepaliveRsp{ErrCode: int(terrors.NodeOffline), ErrMsg: fmt.Sprintf("node %s offline or not exist", nodeID)}, nil
+	}
+
+	if node.ForceOffline {
+		return &types.KeepaliveRsp{ErrCode: int(terrors.ForceOffline), ErrMsg: fmt.Sprintf("The node %s has been forced offline", nodeID)}, nil
+	}
+
+	if node.Type == types.NodeCandidate {
+		now := time.Now().Unix()
+		log.Infof("NodeKeepaliveV3 node [%s] DeactivateTime:[%d] , [%d] \n", nodeID, node.DeactivateTime, now)
+
+		if node.DeactivateTime > 0 && node.DeactivateTime < now {
+			return &types.KeepaliveRsp{ErrCode: int(terrors.NodeDeactivate), ErrMsg: fmt.Sprintf("The node %s has been deactivate and cannot be logged in", nodeID)}, nil
+		}
+
+		if node.NATType == types.NatTypePortRestricted.String() || node.NATType == types.NatTypeRestricted.String() || node.NATType == types.NatTypeSymmetric.String() {
+			return nil, xerrors.Errorf("The NAT type [%s] of the node [%s] does not conform to the rules", node.NATType, nodeID)
+		}
+
+		if node.NATType != types.NatTypeUnknown.String() && !node.IsStorageNode && !node.IsTestNode {
+			return nil, xerrors.Errorf("%s checkDomain %s ", nodeID, node.ExternalURL)
+		}
+
+		if req != nil {
+			node.SetBandwidths(req.Free, req.Peak)
+		}
+	}
+
+	lastTime := time.Now()
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	if remoteAddr != node.RemoteAddr {
+		count, lastTime := node.GetNumberOfIPChanges()
+		duration := time.Now().Sub(lastTime)
+		seconds := duration.Seconds()
+
+		if seconds > 10*6*20 {
+			node.SetCountOfIPChanges(0)
+
+			if count > 120 {
+				log.Infof("NodeKeepaliveV3 Exceeded expectations %s , ip:%s : %s, count:%d ,resetSeconds:%.2f ", nodeID, remoteAddr, node.RemoteAddr, count, seconds)
+			}
+			return &types.KeepaliveRsp{ErrCode: int(terrors.NodeIPInconsistent), ErrMsg: fmt.Sprintf("node %s new ip %s, old ip %s, resetSeconds:%.2f , resetCount:%d", nodeID, remoteAddr, node.RemoteAddr, seconds, count)}, nil
+		}
+
+		count++
+		node.SetCountOfIPChanges(count)
+	}
+
+	node.SetLastRequestTime(lastTime)
+	return &types.KeepaliveRsp{SessionID: uuid.String(), SessionUUID: uuid}, nil
+}
+
 // NodeKeepalive candidate and edge keepalive
-func (s *Scheduler) NodeKeepalive(ctx context.Context) (uuid.UUID, error) {
-	uuid, _ := s.CommonAPI.Session(ctx)
-	return uuid, xerrors.New("The interface has been deprecated")
+func (s *Scheduler) NodeKeepalive(ctx context.Context) (*types.KeepaliveRsp, error) {
+	uuid, err := s.CommonAPI.Session(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	nodeID := handler.GetNodeID(ctx)
+	if len(nodeID) == 0 {
+		return nil, fmt.Errorf("Can not get nodeID from request")
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node == nil {
+		return &types.KeepaliveRsp{ErrCode: int(terrors.NodeOffline), ErrMsg: fmt.Sprintf("node %s offline or not exist", nodeID)}, nil
+	}
+
+	if node.Type == types.NodeCandidate {
+		now := time.Now().Unix()
+		log.Infof("NodeKeepalive node [%s] DeactivateTime:[%d] , [%d] \n", nodeID, node.DeactivateTime, now)
+
+		if node.DeactivateTime > 0 && node.DeactivateTime < now {
+			return &types.KeepaliveRsp{ErrCode: int(terrors.NodeDeactivate), ErrMsg: fmt.Sprintf("The node %s has been deactivate and cannot be logged in", nodeID)}, nil
+		}
+	}
+
+	if node.ForceOffline {
+		return &types.KeepaliveRsp{ErrCode: int(terrors.ForceOffline), ErrMsg: fmt.Sprintf("The node %s has been forced offline", nodeID)}, nil
+	}
+
+	if node.Type == types.NodeCandidate {
+		if node.NATType == types.NatTypePortRestricted.String() || node.NATType == types.NatTypeRestricted.String() || node.NATType == types.NatTypeSymmetric.String() {
+			return nil, xerrors.Errorf("The NAT type [%s] of the node [%s] does not conform to the rules", node.NATType, nodeID)
+		}
+
+		if node.NATType != types.NatTypeUnknown.String() && !node.IsStorageNode && !node.IsTestNode {
+			return nil, xerrors.Errorf("%s checkDomain %s ", nodeID, node.ExternalURL)
+		}
+	}
+
+	lastTime := time.Now()
+	remoteAddr := handler.GetRemoteAddr(ctx)
+	if remoteAddr != node.RemoteAddr {
+		count, lastTime := node.GetNumberOfIPChanges()
+		duration := time.Now().Sub(lastTime)
+		seconds := duration.Seconds()
+
+		if seconds > 10*6*20 {
+			node.SetCountOfIPChanges(0)
+
+			if count > 120 {
+				log.Infof("NodeKeepaliveV2 Exceeded expectations %s , ip:%s : %s, count:%d ,resetSeconds:%.2f ", nodeID, remoteAddr, node.RemoteAddr, count, seconds)
+			}
+			return &types.KeepaliveRsp{ErrCode: int(terrors.NodeIPInconsistent), ErrMsg: fmt.Sprintf("node %s new ip %s, old ip %s, resetSeconds:%.2f , resetCount:%d", nodeID, remoteAddr, node.RemoteAddr, seconds, count)}, nil
+		}
+
+		count++
+		node.SetCountOfIPChanges(count)
+	}
+
+	node.SetLastRequestTime(lastTime)
+	return &types.KeepaliveRsp{SessionID: uuid.String()}, nil
 }
 
 // NodeKeepaliveV2 candidate and edge keepalive
@@ -880,8 +1308,17 @@ func (s *Scheduler) NodeKeepaliveV2(ctx context.Context) (uuid.UUID, error) {
 
 		node := s.NodeManager.GetNode(nodeID)
 		if node != nil {
-			if node.DeactivateTime > 0 && node.DeactivateTime < time.Now().Unix() {
-				return uuid, &api.ErrNode{Code: int(terrors.NodeDeactivate), Message: fmt.Sprintf("The node %s has been deactivate and cannot be logged in", nodeID)}
+			if node.Type == types.NodeCandidate {
+				now := time.Now().Unix()
+				log.Infof("NodeKeepaliveV2 node [%s] DeactivateTime:[%d] , [%d] \n", nodeID, node.DeactivateTime, now)
+
+				if node.DeactivateTime > 0 && node.DeactivateTime < now {
+					return uuid, &api.ErrNode{Code: int(terrors.NodeDeactivate), Message: fmt.Sprintf("The node %s has been deactivate and cannot be logged in", nodeID)}
+				}
+			}
+
+			if node.ForceOffline {
+				return uuid, &api.ErrNode{Code: int(terrors.ForceOffline), Message: fmt.Sprintf("The node %s has been forced offline", nodeID)}
 			}
 
 			if node.Type == types.NodeCandidate {
@@ -889,7 +1326,7 @@ func (s *Scheduler) NodeKeepaliveV2(ctx context.Context) (uuid.UUID, error) {
 					return uuid, xerrors.Errorf("The NAT type [%s] of the node [%s] does not conform to the rules", node.NATType, nodeID)
 				}
 
-				if !node.IsStorageNode && !node.IsTestNode {
+				if node.NATType != types.NatTypeUnknown.String() && !node.IsStorageNode && !node.IsTestNode {
 					return uuid, xerrors.Errorf("%s checkDomain %s ", nodeID, node.ExternalURL)
 				}
 			}
@@ -974,37 +1411,6 @@ func (s *Scheduler) VerifyTokenWithLimitCount(ctx context.Context, token string)
 		return nil, fmt.Errorf("token is expiration")
 	}
 
-	// assetHash, err := cidutil.CIDToHash(payload.AssetCID)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// if _, err = s.db.GetAssetName(assetHash, payload.UserID); err == sql.ErrNoRows {
-	// 	return nil, fmt.Errorf("asset %s does not exist", payload.AssetCID)
-	// }
-
-	// userInfo, err := s.loadUserInfo(payload.UserID)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// if userInfo.EnableVIP {
-	// 	return jwtPayload, nil
-	// }
-
-	// count, err := s.db.GetAssetVisitCount(assetHash)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// if count >= s.SchedulerCfg.MaxCountOfVisitShareLink {
-	// 	return nil, &api.ErrWeb{Code: terrors.VisitShareLinkOutOfMaxCount.Int(), Message: fmt.Sprintf("visit share link is out of max count %d", s.SchedulerCfg.MaxCountOfVisitShareLink)}
-	// }
-
-	// if err = s.db.UpdateAssetVisitCount(assetHash); err != nil {
-	// 	return nil, err
-	// }
-
 	return jwtPayload, nil
 }
 
@@ -1025,27 +1431,6 @@ func (s *Scheduler) DownloadDataResult(ctx context.Context, bucket, cid string, 
 	s.AssetManager.UpdateFillAssetResponseCount(bucket, cid, nodeID, size)
 
 	return nil
-
-	// node := s.NodeManager.GetCandidateNode(nodeID)
-	// if node == nil {
-	// 	return xerrors.Errorf("node %s not exists", nodeID)
-	// }
-
-	// if cid == "" {
-	// 	return s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: false})
-	// }
-
-	// err := s.db.UpdateAWSData(&types.AWSDataInfo{Bucket: bucket, Cid: cid, IsDistribute: true})
-	// if err != nil {
-	// 	return err
-	// }
-
-	// info, err := s.db.LoadAWSData(bucket)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// return s.AssetManager.CreateBaseAsset(cid, nodeID, size, int64(info.Replicas))
 }
 
 // GetCandidateNodeIP get candidate ip for locator
@@ -1072,6 +1457,7 @@ func (s *Scheduler) verifyTCPConnectivity(targetURL string) error {
 	return nil
 }
 
+// GetMinioConfigFromCandidate retrieves the MinIO configuration for the specified candidate node.
 func (s *Scheduler) GetMinioConfigFromCandidate(ctx context.Context, nodeID string) (*types.MinioConfig, error) {
 	node := s.NodeManager.GetCandidateNode(nodeID)
 	if node == nil {
@@ -1081,10 +1467,11 @@ func (s *Scheduler) GetMinioConfigFromCandidate(ctx context.Context, nodeID stri
 	return node.API.GetMinioConfig(ctx)
 }
 
+// GetCandidateIPs returns a list of candidate node IP information.
 func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, error) {
 	list := make([]*types.NodeIPInfo, 0)
 
-	_, cNodes := s.NodeManager.GetAllCandidateNodes()
+	_, cNodes := s.NodeManager.GetValidCandidateNodes()
 	if len(cNodes) == 0 {
 		return list, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: terrors.NotFoundNode.String()}
 	}
@@ -1100,6 +1487,7 @@ func (s *Scheduler) GetCandidateIPs(ctx context.Context) ([]*types.NodeIPInfo, e
 	return list, nil
 }
 
+// GetNodeOnlineState returns the online state of the node and any error encountered.
 func (s *Scheduler) GetNodeOnlineState(ctx context.Context) (bool, error) {
 	nodeID := handler.GetNodeID(ctx)
 	if len(nodeID) == 0 {
@@ -1114,7 +1502,6 @@ func (s *Scheduler) GetNodeOnlineState(ctx context.Context) (bool, error) {
 // GetAssetView get the asset view of node
 func (s *Scheduler) GetAssetView(ctx context.Context, nodeID string, isFromNode bool) (*types.AssetView, error) {
 	if isFromNode {
-		fmt.Println("from node")
 		node := s.NodeManager.GetNode(nodeID)
 		if node == nil {
 			return nil, fmt.Errorf("node %s offline or not exist", nodeID)
@@ -1146,10 +1533,9 @@ func (s *Scheduler) GetAssetView(ctx context.Context, nodeID string, isFromNode 
 	return &types.AssetView{TopHash: topHash, BucketHashes: bucketHashMap}, nil
 }
 
-// GetAssetInBucket get the assets of the bucket
+// GetAssetsInBucket get the assets of the bucket
 func (s *Scheduler) GetAssetsInBucket(ctx context.Context, nodeID string, bucketID int, isFromNode bool) ([]string, error) {
 	if isFromNode {
-		fmt.Println("from node")
 		node := s.NodeManager.GetNode(nodeID)
 		if node == nil {
 			return nil, fmt.Errorf("node %s offline or not exist", nodeID)
@@ -1177,6 +1563,7 @@ func (s *Scheduler) GetAssetsInBucket(ctx context.Context, nodeID string, bucket
 	return assetHashes, nil
 }
 
+// PerformSyncData synchronizes data for the specified node.
 func (s *Scheduler) PerformSyncData(ctx context.Context, nodeID string) error {
 	node := s.NodeManager.GetNode(nodeID)
 	if node == nil {
@@ -1197,7 +1584,7 @@ func (s *Scheduler) PerformSyncData(ctx context.Context, nodeID string) error {
 	return nil
 }
 
-// GetReplicasForNode retrieves a asset list of node
+// GetProfitDetailsForNode retrieves profit details for a specific node.
 func (s *Scheduler) GetProfitDetailsForNode(ctx context.Context, nodeID string, limit, offset int, ts []int) (*types.ListNodeProfitDetailsRsp, error) {
 	if len(ts) == 0 {
 		return nil, nil
@@ -1210,9 +1597,6 @@ func (s *Scheduler) GetProfitDetailsForNode(ctx context.Context, nodeID string, 
 
 	return info, nil
 }
-
-// Interval for initiating free space release
-var FreeUpDayInterval = 1
 
 // FreeUpDiskSpace Request to free up disk space, returns file hashes and next time
 func (s *Scheduler) FreeUpDiskSpace(ctx context.Context, nodeID string, size int64) (*types.FreeUpDiskResp, error) {
@@ -1232,10 +1616,10 @@ func (s *Scheduler) FreeUpDiskSpace(ctx context.Context, nodeID string, size int
 	}
 
 	now := time.Now()
-	fiveDaysAgo := now.AddDate(0, 0, -FreeUpDayInterval)
-	nextReleaseTime := t.AddDate(0, 0, +FreeUpDayInterval)
+	fiveDaysAgo := now.AddDate(0, 0, -freeUpDayInterval)
+	nextReleaseTime := t.AddDate(0, 0, +freeUpDayInterval)
 	if !t.Before(fiveDaysAgo) {
-		return &types.FreeUpDiskResp{NextTime: nextReleaseTime.Unix()}, xerrors.Errorf("Less than %d days have passed since the last release", FreeUpDayInterval)
+		return &types.FreeUpDiskResp{NextTime: nextReleaseTime.Unix()}, xerrors.Errorf("Less than %d days have passed since the last release", freeUpDayInterval)
 	}
 
 	// todo
@@ -1269,7 +1653,7 @@ func (s *Scheduler) FreeUpDiskSpace(ctx context.Context, nodeID string, size int
 	if len(removeList) > 0 {
 		err = s.db.SaveFreeUpDiskTime(nodeID, now)
 		if err != nil {
-			return &types.FreeUpDiskResp{NextTime: now.AddDate(0, 0, +FreeUpDayInterval).Unix()}, err
+			return &types.FreeUpDiskResp{NextTime: now.AddDate(0, 0, +freeUpDayInterval).Unix()}, err
 		}
 	}
 
@@ -1278,9 +1662,10 @@ func (s *Scheduler) FreeUpDiskSpace(ctx context.Context, nodeID string, size int
 		log.Errorf("FreeUpDiskSpace %s SaveReplenishBackup err:%s", nodeID, err.Error())
 	}
 
-	return &types.FreeUpDiskResp{Hashes: removeList, NextTime: now.AddDate(0, 0, +FreeUpDayInterval).Unix()}, nil
+	return &types.FreeUpDiskResp{Hashes: removeList, NextTime: now.AddDate(0, 0, +freeUpDayInterval).Unix()}, nil
 }
 
+// GetNextFreeTime returns the next available time slot for the given node.
 func (s *Scheduler) GetNextFreeTime(ctx context.Context, nodeID string) (int64, error) {
 	nID := handler.GetNodeID(ctx)
 	if nID != "" {
@@ -1292,26 +1677,10 @@ func (s *Scheduler) GetNextFreeTime(ctx context.Context, nodeID string) (int64, 
 		return 0, err
 	}
 
-	return t.AddDate(0, 0, +FreeUpDayInterval).Unix(), nil
+	return t.AddDate(0, 0, +freeUpDayInterval).Unix(), nil
 }
 
-func (s *Scheduler) UpdateNodeDynamicInfo(ctx context.Context, info *types.NodeDynamicInfo) error {
-	node := s.NodeManager.GetNode(info.NodeID)
-	if node == nil {
-		return xerrors.Errorf("node %s not found", info.NodeID)
-	}
-
-	if node.DownloadTraffic < info.DownloadTraffic {
-		node.DownloadTraffic += info.DownloadTraffic
-	}
-
-	if node.UploadTraffic < info.UploadTraffic {
-		node.UploadTraffic += info.UploadTraffic
-	}
-
-	return nil
-}
-
+// CandidateCodeExist checks if a candidate code exists in the database.
 func (s *Scheduler) CandidateCodeExist(ctx context.Context, code string) (bool, error) {
 	info, err := s.db.GetCandidateCodeInfo(code)
 	if err != nil {
@@ -1443,51 +1812,12 @@ func dpGetRemoveAssets(assets []*types.AssetRecord, sum int64) []*types.AssetRec
 	return sub
 }
 
-// AssignTunserverURL
-func (s *Scheduler) AssignTunserverURL(ctx context.Context) (*types.TunserverRsp, error) {
-	nodeID := handler.GetNodeID(ctx)
-	if len(nodeID) == 0 {
-		return nil, fmt.Errorf("invalid request")
-	}
-
-	var vNode *node.Node
-	wID, err := s.db.LoadWSServerID(nodeID)
-	if err == nil && wID != "" {
-		vNode = s.NodeManager.GetCandidateNode(wID)
-	}
-
-	if vNode == nil {
-		// select candidate
-		_, list := s.NodeManager.GetAllCandidateNodes()
-		if len(list) > 0 {
-			index := rand.Intn(len(list))
-			vNode = list[index]
-		}
-	}
-
-	if vNode == nil {
-		return nil, fmt.Errorf("node not found")
-	}
-
-	wsURL := vNode.WsURL()
-	vID := vNode.NodeID
-
-	return &types.TunserverRsp{URL: wsURL, NodeID: vID}, nil
-}
-
-func (s *Scheduler) UpdateTunserverURL(ctx context.Context, nodeID string) error {
-	nID := handler.GetNodeID(ctx)
-	if len(nID) == 0 {
-		return fmt.Errorf("invalid request")
-	}
-
-	return s.NodeManager.SetTunserverURL(nID, nodeID)
-}
-
+// SetTunserverURL sets the Tunnel server URL for the specified node.
 func (s *Scheduler) SetTunserverURL(ctx context.Context, nodeID, wsNodeID string) error {
 	return s.NodeManager.SetTunserverURL(nodeID, wsNodeID)
 }
 
+// GetTunserverURLFromUser retrieves the Tunnel server URL based on the provided AreaID.
 func (s *Scheduler) GetTunserverURLFromUser(ctx context.Context, req *types.TunserverReq) (*types.TunserverRsp, error) {
 	geoInfo, err := s.GetGeoInfoFromAreaID(req.AreaID)
 	if geoInfo == nil {
@@ -1520,14 +1850,19 @@ func (s *Scheduler) GetTunserverURLFromUser(ctx context.Context, req *types.Tuns
 	return &types.TunserverRsp{URL: node.WsURL(), NodeID: nodeID}, nil
 }
 
-// GetProjectsForNode
+// GetProjectReplicasForNode retrieves project replicas for a given node based on the provided criteria.
+func (s *Scheduler) GetProjectReplicasForNode(ctx context.Context, req *types.NodeProjectReq) (*types.ListProjectReplicaRsp, error) {
+	return s.db.LoadProjectReplicasForNode(req.NodeID, req.Limit, req.Offset, req.ProjectID, req.Statuses)
+}
+
+// GetProjectsForNode retrieves the project replicas for the given node ID.
 func (s *Scheduler) GetProjectsForNode(ctx context.Context, nodeID string) ([]*types.ProjectReplicas, error) {
 	nID := handler.GetNodeID(ctx)
 	if nID != "" {
 		nodeID = nID
 	}
 
-	list, err := s.db.LoadProjectReplicasForNode(nodeID)
+	list, err := s.db.LoadAllProjectReplicasForNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -1544,6 +1879,7 @@ func (s *Scheduler) GetProjectsForNode(ctx context.Context, nodeID string) ([]*t
 	return list, nil
 }
 
+// GetNodesFromRegion retrieves nodes from a specified region.
 func (s *Scheduler) GetNodesFromRegion(ctx context.Context, areaID string) ([]*types.NodeInfo, error) {
 	continent, country, province, city := region.DecodeAreaID(areaID)
 	if continent != "" {
@@ -1553,15 +1889,17 @@ func (s *Scheduler) GetNodesFromRegion(ctx context.Context, areaID string) ([]*t
 	return nil, xerrors.Errorf("continent is nil ; %s", areaID)
 }
 
+// GetCurrentRegionInfos returns the current region information for the given area ID.
 func (s *Scheduler) GetCurrentRegionInfos(ctx context.Context, areaID string) (map[string]int, error) {
 	continent, country, province, _ := region.DecodeAreaID(areaID)
 	return s.NodeManager.GeoMgr.GetGeoKey(continent, country, province), nil
 }
 
-func (s *Scheduler) ReimburseNodeProfit(ctx context.Context, nodeID, note string, profit float64) error {
-	data := s.NodeManager.GetReimburseProfitDetails(nodeID, profit, note)
+// RecompenseNodeProfit processes the recompense profit for a given node.
+func (s *Scheduler) RecompenseNodeProfit(ctx context.Context, nodeID, note string, profit float64) error {
+	data := s.NodeManager.GetRecompenseProfitDetails(nodeID, profit, note)
 	if data != nil {
-		err := s.db.AddNodeProfit(data)
+		err := s.db.AddNodeProfitDetails([]*types.ProfitDetails{data})
 		if err != nil {
 			return xerrors.Errorf("AddNodeProfit %s,%d, %.4f err:%s", data.NodeID, data.PType, data.Profit, err.Error())
 		}
@@ -1579,15 +1917,114 @@ func (s *Scheduler) CreateTunnel(ctx context.Context, req *types.CreateTunnelReq
 
 	cNode := s.NodeManager.GetCandidateNode(nodeID)
 	if cNode == nil {
-		return fmt.Errorf("can not find node %s", nodeID)
+		return fmt.Errorf("can not find candidate %s", nodeID)
 	}
 
 	req.WsURL = cNode.WsURL()
 
 	eNode := s.NodeManager.GetEdgeNode(req.NodeID)
 	if eNode == nil {
-		return fmt.Errorf("can not find node %s", nodeID)
+		return fmt.Errorf("can not find edge %s", req.NodeID)
 	}
 
 	return eNode.CreateTunnel(ctx, req)
+}
+
+func (s *Scheduler) LoadNodeBandwidthScores(ctx context.Context, nodeID string, start, end time.Time, limit int, offset int) (*types.ListBandwidthScoreRsp, error) {
+	// return s.db.LoadBandwidthScoresOfNode(nodeID, limit, offset, start, end)
+	return nil, nil
+}
+
+func (s *Scheduler) AddNodeServiceEvent(ctx context.Context, event *types.ServiceEvent) error {
+	err := s.db.NodeExists(event.NodeID)
+	if err != nil {
+		return err
+	}
+
+	// node := s.NodeManager.GetNode(event.NodeID)
+	// if node != nil {
+	// 	node.AddServiceEvent(event)
+	// }
+
+	// TODO
+	event.Score = 10
+
+	return s.db.SaveServiceEvent(event)
+}
+
+func (s *Scheduler) LoadServiceEvents(ctx context.Context, startTime, endTime time.Time) (map[string]*types.ServiceStats, error) {
+	// TODO cache
+	events, err := s.db.LoadServiceEvents(startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+
+	nodeStats := make(map[string]*types.ServiceStats)
+
+	for _, event := range events {
+		nodeID := event.NodeID
+
+		statsInfo, ok := nodeStats[nodeID]
+		if !ok {
+			statsInfo = &types.ServiceStats{NodeID: nodeID, DownloadSpeeds: []int64{}, UploadSpeeds: []int64{}, Scores: []int64{}}
+			nodeStats[nodeID] = statsInfo
+		}
+
+		if event.Type == types.ServiceTypeUpload { // Upload
+			statsInfo.UploadTotalCount++
+
+			if event.Status == types.ServiceTypeSucceed {
+				statsInfo.UploadSuccessCount++
+				statsInfo.UploadSpeeds = append(statsInfo.UploadSpeeds, event.Speed)
+				statsInfo.Scores = append(statsInfo.Scores, event.Score)
+			} else if event.Status == types.ServiceTypeFailed {
+				statsInfo.UploadFailCount++
+			}
+		} else if event.Type == types.ServiceTypeDownload { // Download
+			statsInfo.DownloadTotalCount++
+
+			if event.Status == types.ServiceTypeSucceed {
+				statsInfo.DownloadSuccessCount++
+				statsInfo.DownloadSpeeds = append(statsInfo.DownloadSpeeds, event.Speed)
+				statsInfo.Scores = append(statsInfo.Scores, event.Score)
+			} else if event.Status == types.ServiceTypeFailed {
+				statsInfo.DownloadFailCount++
+			}
+		}
+	}
+
+	for _, stats := range nodeStats {
+		if len(stats.DownloadSpeeds) > 0 {
+			total := int64(0)
+			for _, value := range stats.DownloadSpeeds {
+				total += value
+			}
+
+			stats.DownloadAvgSpeed = total / int64(len(stats.DownloadSpeeds))
+		}
+
+		if len(stats.UploadSpeeds) > 0 {
+			total := int64(0)
+			for _, value := range stats.UploadSpeeds {
+				total += value
+			}
+
+			stats.UploadAvgSpeed = total / int64(len(stats.UploadSpeeds))
+		}
+
+		if len(stats.Scores) > 0 {
+			total := int64(0)
+			for _, value := range stats.Scores {
+				total += value
+			}
+
+			stats.AvgScore = total / int64(len(stats.Scores))
+		}
+
+		stats.DownloadSpeeds = nil
+		stats.UploadSpeeds = nil
+		stats.Scores = nil
+	}
+
+	return nodeStats, nil
 }

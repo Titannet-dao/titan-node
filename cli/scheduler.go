@@ -18,16 +18,16 @@ var SchedulerCMDs = []*cli.Command{
 	WithCategory("node", nodeCmds),
 	WithCategory("asset", assetCmds),
 	WithCategory("config", sConfigCmds),
-	WithCategory("user", userCmds),
 	WithCategory("project", projectCmds),
 	WithCategory("codes", codesCmds),
-	WithCategory("provider", providerCmds),
-	WithCategory("deployment", deploymentCmds),
-	startElectionCmd,
+	// WithCategory("provider", providerCmds),
+	// WithCategory("deployment", deploymentCmds),
+
 	// other
 	edgeUpdaterCmd,
 	loadWorkloadCmd,
 	reNatCmd,
+	showValidatorCmd,
 }
 
 var (
@@ -35,6 +35,12 @@ var (
 		Name:  "node-id",
 		Usage: "node id",
 		Value: "",
+	}
+
+	nodeIDsFlag = &cli.StringSliceFlag{
+		Name:  "node-ids",
+		Usage: "node ids : --node-ids=id1,id2",
+		Value: &cli.StringSlice{},
 	}
 
 	cidFlag = &cli.StringFlag{
@@ -139,21 +145,14 @@ var loadWorkloadCmd = &cli.Command{
 	},
 }
 
-var setNodePortCmd = &cli.Command{
-	Name:  "set-node-port",
-	Usage: "set the node port",
-	Flags: []cli.Flag{
-		nodeIDFlag,
-		portFlag,
-	},
+var showValidatorCmd = &cli.Command{
+	Name:  "sv",
+	Usage: "show validators ",
 
 	Before: func(cctx *cli.Context) error {
 		return nil
 	},
 	Action: func(cctx *cli.Context) error {
-		nodeID := cctx.String("node-id")
-		port := cctx.String("port")
-
 		ctx := ReqContext(cctx)
 
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
@@ -162,13 +161,22 @@ var setNodePortCmd = &cli.Command{
 		}
 		defer closer()
 
-		return schedulerAPI.UpdateNodePort(ctx, nodeID, port)
+		list, err := schedulerAPI.GetValidators(ctx)
+		if err != nil {
+			return err
+		}
+
+		for _, nodeID := range list {
+			fmt.Println(nodeID)
+		}
+
+		return nil
 	},
 }
 
 var reNatCmd = &cli.Command{
 	Name:  "rn",
-	Usage: "re determine node nat type",
+	Usage: "recheck determine node nat type",
 	Flags: []cli.Flag{
 		nodeIDFlag,
 	},
@@ -188,27 +196,6 @@ var reNatCmd = &cli.Command{
 		defer closer()
 
 		return schedulerAPI.ReDetermineNodeNATType(ctx, nodeID)
-	},
-}
-
-var startElectionCmd = &cli.Command{
-	Name:  "start-election",
-	Usage: "Start election validator",
-
-	Before: func(cctx *cli.Context) error {
-		return nil
-	},
-	Action: func(cctx *cli.Context) error {
-		ctx := ReqContext(cctx)
-
-		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
-		if err != nil {
-			return err
-		}
-
-		defer closer()
-
-		return schedulerAPI.TriggerElection(ctx)
 	},
 }
 
