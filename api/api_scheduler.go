@@ -112,7 +112,8 @@ type NodeAPI interface {
 	// - hours: The deactivation countdown time in hours. It specifies the duration
 	// before the deactivation is executed. If the deactivation is canceled within
 	// this period, the node will remain active.
-	DeactivateNode(ctx context.Context, nodeID string, hours int) error //perm:web,admin,candidate
+	DeactivateNode(ctx context.Context, nodeID string, hours int) error                          //perm:web,admin,candidate
+	DeactivateNodeV2(ctx context.Context, nodeID string, hours int, reductionRate float64) error //perm:web,admin,candidate
 	// ForceNodeOffline changes the online status of a node identified by nodeID.
 	// If the status is true, it forces the node offline. If the status is false, it brings the node back online.
 	ForceNodeOffline(ctx context.Context, nodeID string, forceOffline bool) error //perm:web,admin

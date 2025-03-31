@@ -27,6 +27,7 @@ const (
 	CodeDaemonStartFailed     // -978  daemon start failed
 	CodeDaemonAlreadyStoppped // -977  daemon is stopped
 	CodeDaemonStopFailed      // -976  daemon stop failed
+	CodeDaemonLogSetError     // - 975  daemon log set error
 
 	CodeSuccess    = 0
 	CodeDefaultErr = -1

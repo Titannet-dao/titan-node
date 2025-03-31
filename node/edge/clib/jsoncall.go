@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +24,11 @@ import (
 	titanrsa "github.com/Filecoin-Titan/titan/node/rsa"
 	"github.com/filecoin-project/go-jsonrpc"
 	logging "github.com/ipfs/go-log/v2"
+	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var log = logging.Logger("jsoncall")
@@ -56,6 +60,7 @@ type StartDaemonReq struct {
 	RepoPath   string `json:"repoPath"`
 	LogPath    string `json:"logPath"`
 	LocatorURL string `json:"locatorURL"`
+	LogRotate  bool   `json:"logRotate"`
 }
 
 type ReadConfigReq struct {
@@ -199,6 +204,46 @@ func setLogFile(logPath string) {
 	logging.SetAllLoggers(logging.LevelInfo)
 }
 
+func setLogRotate(logPath string) error {
+	config := logging.GetConfig()
+	config.Stderr = false
+	config.Stdout = false
+	logging.SetupLogging(config)
+
+	logDir := filepath.Dir(logPath)
+	ext := filepath.Ext(logPath)
+	logbaseName := strings.TrimRight(filepath.Base(logPath), ext)
+	rotator, err := rotatelogs.New(
+		path.Join(logDir, logbaseName+"-%Y-%m-%d"+ext),
+		rotatelogs.WithLinkName(logPath),
+		rotatelogs.WithRotationTime(24*time.Hour),
+		rotatelogs.WithMaxAge(7*24*time.Hour),
+	)
+	if err != nil {
+		return err
+	}
+
+	encoderCfg := zap.NewProductionEncoderConfig()
+	encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderCfg.EncodeLevel = zapcore.CapitalLevelEncoder
+	encoder := zapcore.NewJSONEncoder(encoderCfg)
+	writer := zapcore.AddSync(rotator)
+	core := zapcore.NewCore(encoder, writer, zapcore.InfoLevel)
+
+	logging.SetPrimaryCore(core)
+	logging.SetAllLoggers(logging.LevelInfo)
+
+	// set log and natural day align
+	now := time.Now()
+	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	delay := nextMidnight.Sub(now)
+	time.AfterFunc(delay, func() {
+		rotator.Rotate()
+	})
+
+	return nil
+}
+
 func (clib *CLib) startDaemon(jsonStr string) (int, error) {
 	req := StartDaemonReq{}
 	err := json.Unmarshal([]byte(jsonStr), &req)
@@ -237,7 +282,13 @@ func (clib *CLib) startDaemon(jsonStr string) (int, error) {
 	types.RunningNodeType = types.NodeEdge
 
 	if len(req.LogPath) > 0 {
-		setLogFile(req.LogPath)
+		if req.LogRotate {
+			if err := setLogRotate(req.LogPath); err != nil {
+				return CodeDaemonLogSetError, fmt.Errorf("set log rotate failed %s", err.Error())
+			}
+		} else {
+			setLogFile(req.LogPath)
+		}
 	}
 
 	clib.repoPath = req.RepoPath

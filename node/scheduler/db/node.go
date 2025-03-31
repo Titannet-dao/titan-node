@@ -215,39 +215,6 @@ func (n *SQLDB) UpdateNodeDynamicInfo(infos []*types.NodeDynamicInfo) error {
 	return tx.Commit()
 }
 
-// // UpdateNodeDynamicInfo updates various dynamic information fields for multiple nodes.
-// func (n *SQLDB) UpdateNodeDynamicInfo(infos []*types.NodeDynamicInfo, date time.Time) error {
-// 	stmt, err := n.db.Preparex(`UPDATE ` + nodeInfoTable + ` SET last_seen=?,online_duration=?,disk_usage=?,bandwidth_up=?,bandwidth_down=?,
-// 		    titan_disk_usage=?,available_disk_space=?,download_traffic=?,upload_traffic=? WHERE node_id=?`)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer stmt.Close()
-
-// 	for _, info := range infos {
-// 		if _, err := stmt.Exec(info.LastSeen, info.OnlineDuration, info.DiskUsage, info.BandwidthUp, info.BandwidthDown, info.TitanDiskUsage,
-// 			info.AvailableDiskSpace, info.DownloadTraffic, info.UploadTraffic, info.NodeID); err != nil {
-// 			log.Errorf("SaveReplenishBackup %s, %.4f,%d,%d,%.4f,%.4f err:%s", info.NodeID, info.DiskUsage, info.BandwidthUp, info.BandwidthDown, info.TitanDiskUsage, info.AvailableDiskSpace, err.Error())
-// 		}
-// 	}
-
-// 	stmt2, err := n.db.Preparex(`INSERT INTO ` + onlineCountTable + ` (node_id, created_time, online_count)
-// 	VALUES (?, ?, ?)
-// 	ON DUPLICATE KEY UPDATE online_count=?`)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer stmt2.Close()
-
-// 	for _, info := range infos {
-// 		if _, err := stmt2.Exec(info.NodeID, date, info.TodayOnlineTimeWindow, info.TodayOnlineTimeWindow); err != nil {
-// 			log.Errorf("UpdateOnlineCount %s err:%s", info.NodeID, err.Error())
-// 		}
-// 	}
-
-// 	return nil
-// }
-
 // SaveNodeRegisterInfos stores registration details for multiple nodes.
 func (n *SQLDB) SaveNodeRegisterInfos(details []*types.ActivationDetail) error {
 	query := fmt.Sprintf(
@@ -886,11 +853,7 @@ func (n *SQLDB) CleanData() {
 		log.Warnf("CleanData validationResultTable err:%s", err.Error())
 	}
 
-	query = fmt.Sprintf(`DELETE FROM %s WHERE created_time<DATE_SUB(NOW(), INTERVAL 10 DAY) `, profitDetailsTable)
-	_, err = n.db.Exec(query)
-	if err != nil {
-		log.Warnf("CleanData profitDetailsTable err:%s", err.Error())
-	}
+	n.cleanProfitDetailsData()
 
 	query = fmt.Sprintf(`DELETE FROM %s WHERE created_time<DATE_SUB(NOW(), INTERVAL 8 DAY) `, onlineCountTable)
 	_, err = n.db.Exec(query)
@@ -904,29 +867,100 @@ func (n *SQLDB) CleanData() {
 		log.Warnf("CleanData assetDownloadTable err:%s", err.Error())
 	}
 
-	query = fmt.Sprintf(`DELETE FROM %s WHERE created_time<DATE_SUB(NOW(), INTERVAL 30 DAY) `, projectEventTable)
-	_, err = n.db.Exec(query)
-	if err != nil {
-		log.Warnf("CleanData projectEventTable err:%s", err.Error())
-	}
+	n.cleanTableData(projectEventTable)
 
-	query = fmt.Sprintf(`DELETE FROM %s WHERE created_time<DATE_SUB(NOW(), INTERVAL 30 DAY) `, nodeRetrieveTable)
-	_, err = n.db.Exec(query)
-	if err != nil {
-		log.Warnf("CleanData nodeRetrieveTable err:%s", err.Error())
-	}
+	n.cleanTableData(nodeRetrieveTable)
 
-	query = fmt.Sprintf(`DELETE FROM %s WHERE start_time<DATE_SUB(NOW(), INTERVAL 30 DAY) `, serviceEventTable)
-	_, err = n.db.Exec(query)
-	if err != nil {
-		log.Warnf("CleanData serviceEventTable err:%s", err.Error())
-	}
+	n.cleanServiceEventTableData()
+}
 
-	// query = fmt.Sprintf(`DELETE FROM %s WHERE created_time<DATE_SUB(NOW(), INTERVAL 30 DAY) `, bandwidthScoreEventTable)
-	// _, err = n.db.Exec(query)
-	// if err != nil {
-	// 	log.Warnf("CleanData bandwidthScoreEventTable err:%s", err.Error())
-	// }
+func (n *SQLDB) cleanTableData(table string) {
+	totalDeleted := 0
+
+	for {
+		query := fmt.Sprintf(`
+            DELETE FROM %s 
+            WHERE created_time < DATE_SUB(NOW(), INTERVAL 30 DAY) 
+            LIMIT %d`,
+			table, batchSize)
+
+		result, err := n.db.Exec(query)
+		if err != nil {
+			log.Warnf("CleanData table err: %s", err.Error())
+			break
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		totalDeleted += int(rowsAffected)
+
+		if rowsAffected < int64(batchSize) {
+			log.Infof("CleanData %s completed. Total deleted: %d", table, totalDeleted)
+			break
+		}
+
+		time.Sleep(time.Duration(sleepSeconds) * time.Second)
+	}
+}
+
+func (n *SQLDB) cleanServiceEventTableData() {
+	totalDeleted := 0
+
+	for {
+		query := fmt.Sprintf(`
+            DELETE FROM %s 
+            WHERE start_time < DATE_SUB(NOW(), INTERVAL 30 DAY) 
+            LIMIT %d`,
+			serviceEventTable, batchSize)
+
+		result, err := n.db.Exec(query)
+		if err != nil {
+			log.Warnf("CleanData serviceEventTable err: %s", err.Error())
+			break
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		totalDeleted += int(rowsAffected)
+
+		if rowsAffected < int64(batchSize) {
+			log.Infof("CleanData serviceEventTable completed. Total deleted: %d", totalDeleted)
+			break
+		}
+
+		time.Sleep(time.Duration(sleepSeconds) * time.Second)
+	}
+}
+
+const (
+	batchSize    = 1000
+	sleepSeconds = 5
+)
+
+func (n *SQLDB) cleanProfitDetailsData() {
+	totalDeleted := 0
+
+	for {
+		query := fmt.Sprintf(`
+            DELETE FROM %s 
+            WHERE created_time < DATE_SUB(NOW(), INTERVAL 150 DAY) 
+            LIMIT %d`,
+			profitDetailsTable, batchSize)
+
+		result, err := n.db.Exec(query)
+		if err != nil {
+			log.Warnf("CleanData profitDetailsTable err: %s", err.Error())
+			break
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		totalDeleted += int(rowsAffected)
+
+		if rowsAffected < int64(batchSize) {
+			log.Infof("CleanData profitDetailsTable completed. Total deleted: %d", totalDeleted)
+			break
+		}
+
+		time.Sleep(time.Duration(sleepSeconds) * time.Second)
+	}
 }
 
 // SaveCandidateCodeInfo stores information related to candidate codes used in node verification or testing.
@@ -1016,42 +1050,6 @@ func (n *SQLDB) DeleteCandidateCodeInfo(code string) error {
 	_, err := n.db.Exec(query, code)
 	return err
 }
-
-// // UpdateServerOnlineCount updates the online count for nodes on a specific date, incrementing counts where applicable.
-// func (n *SQLDB) UpdateServerOnlineCount(serverID string, count int, date time.Time) error {
-// 	stmt, err := n.db.Preparex(`INSERT INTO ` + onlineCountTable + ` (node_id, created_time, online_count)
-//         VALUES (?, ?, ?)
-//         ON DUPLICATE KEY UPDATE online_count=online_count+?`)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer stmt.Close()
-
-// 	if _, err := stmt.Exec(serverID, date, count, count); err != nil {
-// 		log.Errorf("UpdateServerOnlineCount %s err:%s", serverID, err.Error())
-// 	}
-
-// 	return nil
-// }
-
-// // UpdateOnlineCount updates the online count for nodes on a specific date, incrementing counts where applicable.
-// func (n *SQLDB) UpdateOnlineCount(nodes []string, countIncr int, date time.Time) error {
-// 	stmt, err := n.db.Preparex(`INSERT INTO ` + onlineCountTable + ` (node_id, created_time, online_count)
-//         VALUES (?, ?, ?)
-//         ON DUPLICATE KEY UPDATE online_count=online_count+?`)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer stmt.Close()
-
-// 	for _, nodeID := range nodes {
-// 		if _, err := stmt.Exec(nodeID, date, countIncr, countIncr); err != nil {
-// 			log.Errorf("UpdateOnlineCount %s err:%s", nodeID, err.Error())
-// 		}
-// 	}
-
-// 	return nil
-// }
 
 // GetOnlineCount retrieves the online count for a specific node on a given date.
 func (n *SQLDB) GetOnlineCount(node string, date time.Time) (int, error) {

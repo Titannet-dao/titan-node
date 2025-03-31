@@ -96,12 +96,6 @@ func (s *Scheduler) RegisterCandidateNode(ctx context.Context, nodeID, publicKey
 		return nil, xerrors.Errorf("pem to publicKey err : %s", err.Error())
 	}
 
-	// isValidator := false
-	// if nodeType == types.NodeValidator {
-	// 	isValidator = true
-	// 	// nodeType = types.NodeCandidate
-	// }
-
 	if err = s.db.NodeExistsFromType(nodeID, nodeType); err == nil {
 		return nil, xerrors.Errorf("Node %s are exist", nodeID)
 	}
@@ -133,13 +127,6 @@ func (s *Scheduler) RegisterCandidateNode(ctx context.Context, nodeID, publicKey
 	if err = s.db.SaveNodePublicKey(publicKey, nodeID); err != nil {
 		return nil, xerrors.Errorf("SaveNodePublicKey %w", err)
 	}
-
-	// if isValidator {
-	// err = s.db.UpdateValidators([]string{nodeID}, s.ServerID, false)
-	// if err != nil {
-	// 	log.Errorf("RegisterNode UpdateValidators %s err:%s", nodeID, err.Error())
-	// }
-	// }
 
 	return detail, nil
 }
@@ -325,7 +312,65 @@ func (s *Scheduler) DeactivateNode(ctx context.Context, nodeID string, hours int
 	// if node is candidate , need to backup asset
 	s.AssetManager.CandidateDeactivate(nodeID)
 
-	pe, _ := s.NodeManager.CalculateDowntimePenalty(info.Profit)
+	pe, _ := s.NodeManager.CalculateDowntimePenalty(info.Profit, 0.6)
+	penaltyPoint = info.Profit - pe
+
+	deactivateTime = time.Now().Add(time.Duration(minute) * time.Minute).Unix()
+
+	log.Warnf("DeactivateNode:[%s] Profit:[%.2f] - [%.2f] = [%.2f]", nodeID, info.Profit, penaltyPoint, pe)
+
+	err = s.db.SaveDeactivateNode(nodeID, deactivateTime, penaltyPoint, 0)
+	if err != nil {
+		return xerrors.Errorf("SaveDeactivateNode %s err : %s", nodeID, err.Error())
+	}
+
+	node := s.NodeManager.GetNode(nodeID)
+	if node != nil {
+		node.DeactivateTime = deactivateTime
+		node.Profit -= penaltyPoint
+		s.NodeManager.RepayNodeWeight(node)
+		// remove from validation
+	}
+
+	return nil
+}
+
+func (s *Scheduler) DeactivateNodeV2(ctx context.Context, nodeID string, hours int, reductionRate float64) error {
+	nID := handler.GetNodeID(ctx)
+	if len(nID) > 0 {
+		nodeID = nID
+	}
+
+	// is candidate
+	err := s.db.NodeExistsFromType(nodeID, types.NodeCandidate)
+	if err != nil {
+		return err
+	}
+
+	deactivateTime, err := s.db.LoadDeactivateNodeTime(nodeID)
+	if err != nil {
+		return xerrors.Errorf("LoadDeactivateNodeTime %s err : %s", nodeID, err.Error())
+	}
+
+	if deactivateTime > 0 {
+		return xerrors.Errorf("node %s is waiting to deactivate", nodeID)
+	}
+
+	minute := hours * 60
+	if minute <= 0 {
+		minute = 30
+	}
+
+	penaltyPoint := 0.0
+
+	info, err := s.db.LoadNodeInfo(nodeID)
+	if err != nil {
+		return err
+	}
+	// if node is candidate , need to backup asset
+	s.AssetManager.CandidateDeactivate(nodeID)
+
+	pe, _ := s.NodeManager.CalculateDowntimePenalty(info.Profit, reductionRate)
 	penaltyPoint = info.Profit - pe
 
 	deactivateTime = time.Now().Add(time.Duration(minute) * time.Minute).Unix()
@@ -356,10 +401,6 @@ func (s *Scheduler) MigrateNodeOut(ctx context.Context, nodeID string) (*types.N
 	if err != nil {
 		return nil, err
 	}
-
-	// if rInfo.NodeType != types.NodeCandidate {
-	// 	return nil, xerrors.Errorf("node :%s not candidate", nodeID)
-	// }
 
 	nInfo, err := s.db.LoadNodeInfo(nodeID)
 	if err != nil {
@@ -460,7 +501,7 @@ func (s *Scheduler) CalculateDowntimePenalty(ctx context.Context, nodeID string)
 		return types.ExitProfitRsp{}, err
 	}
 
-	pe, exitRate := s.NodeManager.CalculateDowntimePenalty(info.Profit)
+	pe, exitRate := s.NodeManager.CalculateDowntimePenalty(info.Profit, 0.6)
 	return types.ExitProfitRsp{
 		CurrentPoint:   info.Profit,
 		RemainingPoint: pe,
@@ -1037,12 +1078,6 @@ func (s *Scheduler) getDownloadInfos(cid string, needCandidate bool) (*types.Ass
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].BandwidthUp > list[j].BandwidthUp
 	})
-
-	// // Shuffle array
-	// for i := len(replicas) - 1; i > 0; i-- {
-	// 	j := rand.Intn(i + 1)
-	// 	replicas[i], replicas[j] = replicas[j], replicas[i]
-	// }
 
 	titanRsa := titanrsa.New(crypto.SHA256, crypto.SHA256.New())
 	sources := make([]*types.SourceDownloadInfo, 0)
@@ -1940,11 +1975,6 @@ func (s *Scheduler) AddNodeServiceEvent(ctx context.Context, event *types.Servic
 	if err != nil {
 		return err
 	}
-
-	// node := s.NodeManager.GetNode(event.NodeID)
-	// if node != nil {
-	// 	node.AddServiceEvent(event)
-	// }
 
 	// TODO
 	event.Score = 10

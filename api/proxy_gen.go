@@ -371,6 +371,8 @@ type NodeAPIStruct struct {
 
 		DeactivateNode func(p0 context.Context, p1 string, p2 int) (error) `perm:"web,admin,candidate"`
 
+		DeactivateNodeV2 func(p0 context.Context, p1 string, p2 int, p3 float64) (error) `perm:"web,admin,candidate"`
+
 		DownloadDataResult func(p0 context.Context, p1 string, p2 string, p3 int64) (error) `perm:"edge,candidate"`
 
 		EdgeConnect func(p0 context.Context, p1 *types.ConnectOptions) (error) `perm:"edge"`
@@ -1737,6 +1739,17 @@ func (s *NodeAPIStruct) DeactivateNode(p0 context.Context, p1 string, p2 int) (e
 }
 
 func (s *NodeAPIStub) DeactivateNode(p0 context.Context, p1 string, p2 int) (error) {
+	return ErrNotSupported
+}
+
+func (s *NodeAPIStruct) DeactivateNodeV2(p0 context.Context, p1 string, p2 int, p3 float64) (error) {
+	if s.Internal.DeactivateNodeV2 == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.DeactivateNodeV2(p0, p1, p2, p3)
+}
+
+func (s *NodeAPIStub) DeactivateNodeV2(p0 context.Context, p1 string, p2 int, p3 float64) (error) {
 	return ErrNotSupported
 }
 

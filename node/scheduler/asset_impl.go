@@ -19,7 +19,6 @@ import (
 	"github.com/Filecoin-Titan/titan/node/modules/dtypes"
 	"github.com/Filecoin-Titan/titan/node/scheduler/assets"
 	"github.com/Filecoin-Titan/titan/node/scheduler/node"
-	"github.com/docker/go-units"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	"golang.org/x/xerrors"
 )
@@ -159,12 +158,6 @@ func (s *Scheduler) GetAssetRecords(ctx context.Context, limit, offset int, stat
 			log.Errorf("asset StructScan err: %s", err.Error())
 			continue
 		}
-
-		// cInfo.ReplicaInfos, err = s.db.LoadReplicasByStatus(cInfo.Hash, types.ReplicaStatusAll)
-		// if err != nil {
-		// 	log.Errorf("asset %s load replicas err: %s", cInfo.CID, err.Error())
-		// 	continue
-		// }
 
 		list = append(list, cInfo)
 	}
@@ -358,7 +351,26 @@ func (s *Scheduler) CreateAsset(ctx context.Context, req *types.CreateAssetReq) 
 		return nil, &api.ErrWeb{Code: terrors.InvalidAsset.Int(), Message: "Uploading empty files is not allowed"}
 	}
 
-	return s.AssetManager.CreateAssetUploadTask(hash, req)
+	var cNodes []*node.Node
+	if req.NodeID != "" {
+		node := s.NodeManager.GetCandidateNode(req.NodeID)
+		if node == nil {
+			return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: fmt.Sprintf("storage's node %s not found", req.NodeID)}
+		}
+
+		cNodes = append(cNodes, node)
+	} else {
+		cNodes, err = s.selectUploadNodes2()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(cNodes) == 0 {
+		return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int(), Message: fmt.Sprintf("storage's nodes not found")}
+	}
+
+	return s.AssetManager.CreateAssetUploadTask(hash, req, cNodes)
 }
 
 // CreateSyncAsset Synchronizing assets from other schedulers
@@ -441,86 +453,6 @@ func (s *Scheduler) ShareAssetV2(ctx context.Context, info *types.ShareAssetReq)
 
 	return out, err
 }
-
-// ShareAssets shares the assets of the user.
-// func (s *Scheduler) ShareAssets(ctx context.Context, userID string, assetCIDs []string, expireTime time.Time) (map[string][]string, error) {
-// 	urls := make(map[string][]string)
-// 	for _, assetCID := range assetCIDs {
-// 		rsp, _, err := s.getDownloadInfos(assetCID, true)
-// 		if err != nil {
-// 			log.Errorf("ShareAssets %s getDownloadInfos err:%s \n", assetCID, err.Error())
-// 			return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
-// 		}
-
-// 		if len(rsp.SourceList) == 0 {
-// 			log.Errorf("ShareAssets %s rsp.SourceList == 0 \n", assetCID)
-// 			return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int()}
-// 		}
-
-// 		payload := &types.AuthUserUploadDownloadAsset{UserID: userID, AssetCID: assetCID}
-// 		if !expireTime.IsZero() {
-// 			payload.Expiration = expireTime
-// 		}
-
-// 		tk, err := generateAccessToken(payload, "", s)
-// 		if err != nil {
-// 			log.Errorf("ShareAssets %s generateAccessToken err:%s \n", assetCID, err.Error())
-// 			return nil, &api.ErrWeb{Code: terrors.GenerateAccessToken.Int()}
-// 		}
-
-// 		for _, info := range rsp.SourceList {
-// 			n := s.NodeManager.GetCandidateNode(info.NodeID)
-// 			if n != nil {
-// 				url := fmt.Sprintf("http://%s/ipfs/%s?token=%s", info.Address, assetCID, tk)
-// 				if len(n.ExternalURL) > 0 {
-// 					url = fmt.Sprintf("%s/ipfs/%s?token=%s", n.ExternalURL, assetCID, tk)
-// 				}
-// 				urls[assetCID] = append(urls[assetCID], url)
-// 			}
-// 		}
-// 	}
-
-// 	return urls, nil
-// }
-
-// ShareEncryptedAsset shares the encrypted file
-// func (s *Scheduler) ShareEncryptedAsset(ctx context.Context, userID, assetCID, filePass string, expireTime time.Time) ([]string, error) {
-// 	rsp, _, err := s.getDownloadInfos(assetCID, true)
-// 	if err != nil {
-// 		log.Errorf("ShareEncryptedAsset %s getDownloadInfos err:%s \n", assetCID, err.Error())
-// 		return nil, &api.ErrWeb{Code: terrors.NotFound.Int(), Message: err.Error()}
-// 	}
-// 	if len(rsp.SourceList) == 0 {
-// 		log.Errorf("ShareEncryptedAsset %s rsp.SourceList == 0 \n", assetCID)
-// 		return nil, &api.ErrWeb{Code: terrors.NotFoundNode.Int()}
-// 	}
-
-// 	payload := &types.AuthUserUploadDownloadAsset{UserID: userID, AssetCID: assetCID}
-// 	if !expireTime.IsZero() {
-// 		payload.Expiration = expireTime
-// 	}
-
-// 	tk, err := generateAccessToken(payload, filePass, s)
-// 	if err != nil {
-// 		log.Errorf("ShareEncryptedAsset %s generateAccessToken err:%s \n", assetCID, err.Error())
-// 		return nil, &api.ErrWeb{Code: terrors.GenerateAccessToken.Int()}
-// 	}
-
-// 	var ret []string
-
-// 	for _, info := range rsp.SourceList {
-// 		n := s.NodeManager.GetCandidateNode(info.NodeID)
-// 		if n != nil {
-// 			url := fmt.Sprintf("http://%s/ipfs/%s?token=%s", info.Address, assetCID, tk)
-// 			if len(n.ExternalURL) > 0 {
-// 				url = fmt.Sprintf("%s/ipfs/%s?token=%s", n.ExternalURL, assetCID, tk)
-// 			}
-// 			ret = append(ret, url)
-// 		}
-// 	}
-
-// 	return ret, err
-// }
 
 // MinioUploadFileEvent handles the Minio file upload event.
 func (s *Scheduler) MinioUploadFileEvent(ctx context.Context, event *types.MinioUploadFileEvent) error {
@@ -696,7 +628,7 @@ func (s *Scheduler) GetNodeUploadInfoV2(ctx context.Context, info *types.GetUplo
 		userID = uID
 	}
 
-	return s.getUploadInfo(userID, info.URLMode, info.TraceID)
+	return s.getUploadInfo(userID, info.URLMode, info.TraceID, info.Test)
 }
 
 // GetNodeUploadInfo retrieves upload information for a specific user.
@@ -706,10 +638,10 @@ func (s *Scheduler) GetNodeUploadInfo(ctx context.Context, userID string, passNo
 		userID = uID
 	}
 
-	return s.getUploadInfo(userID, urlMode, "")
+	return s.getUploadInfo(userID, urlMode, "", false)
 }
 
-func (s *Scheduler) getUploadInfo(userID string, urlMode bool, traceID string) (*types.UploadInfo, error) {
+func (s *Scheduler) selectUploadNodes3() ([]*node.Node, error) {
 	_, nodes := s.NodeManager.GetResourceCandidateNodes()
 
 	cNodes := make([]*node.Node, 0)
@@ -723,17 +655,52 @@ func (s *Scheduler) getUploadInfo(userID string, urlMode bool, traceID string) (
 		return nil, &api.ErrWeb{Code: terrors.NodeOffline.Int(), Message: fmt.Sprintf("storage's nodes not found")}
 	}
 
-	// sort.Slice(cNodes, func(i, j int) bool {
-	// 	return cNodes[i].BandwidthDown > cNodes[j].BandwidthDown
-	// })
-
 	// TODO New rules Sort by remaining bandwidth
 	sort.Slice(cNodes, func(i, j int) bool {
 		return cNodes[i].BandwidthDownScore > cNodes[j].BandwidthDownScore
 	})
 
-	// mixup nodes
-	// rand.Shuffle(len(cNodes), func(i, j int) { cNodes[i], cNodes[j] = cNodes[j], cNodes[i] })
+	return cNodes, nil
+}
+
+func (s *Scheduler) selectUploadNodes2() ([]*node.Node, error) {
+	_, nodes := s.NodeManager.GetResourceCandidateNodes()
+
+	cNodes := make([]*node.Node, 0)
+	for _, node := range nodes {
+		if node.IsStorageNode && !s.ValidationMgr.IsValidator(node.NodeID) {
+			cNodes = append(cNodes, node)
+		}
+	}
+
+	if len(cNodes) == 0 {
+		return nil, &api.ErrWeb{Code: terrors.NodeOffline.Int(), Message: fmt.Sprintf("storage's nodes not found")}
+	}
+
+	sort.Slice(cNodes, func(i, j int) bool {
+		return cNodes[i].BandwidthDown > cNodes[j].BandwidthDown
+	})
+
+	return cNodes, nil
+}
+
+func (s *Scheduler) selectUploadNodes() ([]*node.Node, error) {
+	_, nodes := s.NodeManager.GetResourceCandidateNodes()
+
+	return nodes, nil
+}
+
+func (s *Scheduler) getUploadInfo(userID string, urlMode bool, traceID string, isTest bool) (*types.UploadInfo, error) {
+	var cNodes []*node.Node
+	var err error
+	if isTest {
+		cNodes, err = s.selectUploadNodes()
+	} else {
+		cNodes, err = s.selectUploadNodes2()
+	}
+	if err != nil {
+		return nil, err
+	}
 
 	ret := &types.UploadInfo{
 		List:          make([]*types.NodeUploadInfo, 0),
@@ -750,18 +717,10 @@ func (s *Scheduler) getUploadInfo(userID string, urlMode bool, traceID string) (
 
 	for i := 0; i < len(cNodes); i++ {
 		cNode := cNodes[i]
-		// if cNode.BandwidthDown < units.MiB && len(ret.List) > 2 {
+
+		// if len(ret.List) > 5 {
 		// 	break
 		// }
-
-		// TODO New rules Sort by remaining bandwidth
-		if cNode.BandwidthFreeDown < units.MiB && len(ret.List) > 2 {
-			break
-		}
-
-		if len(ret.List) > 5 {
-			break
-		}
 
 		token, err := cNode.API.AuthNew(context.Background(), payload)
 		if err != nil {
@@ -775,20 +734,10 @@ func (s *Scheduler) getUploadInfo(userID string, urlMode bool, traceID string) (
 			uploadURL = fmt.Sprintf("%s%s", cNode.ExternalURL, suffix)
 		}
 
-		// count, err := s.db.LoadPullingReplicaCountNodeID(cNode.NodeID)
-		// if err != nil {
-		// 	log.Errorf("LoadPullingReplicaCountNodeID %s , err :%s", cNode.NodeID, err.Error())
-		// }
-
 		ret.List = append(ret.List, &types.NodeUploadInfo{UploadURL: uploadURL, Token: token, NodeID: cNode.NodeID})
-
 	}
 
-	// sort.Slice(ret.List, func(i, j int) bool {
-	// 	return ret.List[i].PullingCount < ret.List[j].PullingCount
-	// })
 	rand.Shuffle(len(ret.List), func(i, j int) { ret.List[i], ret.List[j] = ret.List[j], ret.List[i] })
-	// return &types.UploadInfo{UploadURL: uploadURL, Token: token, NodeID: cNode.NodeID}, nil
 	return ret, nil
 }
 
