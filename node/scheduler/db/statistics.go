@@ -9,60 +9,6 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// // SaveBandwidthScore saves the bandwidth score information to the database.
-// func (n *SQLDB) SaveBandwidthScore(info *types.BandwidthScore) error {
-// 	query := fmt.Sprintf(
-// 		`INSERT INTO %s (node_id, bandwidth_up, bandwidth_down, bandwidth_up_node, bandwidth_down_node,
-// 		        bandwidth_up_server, bandwidth_down_server, bandwidth_up_score, bandwidth_down_score,
-// 				bandwidth_up_succeed, bandwidth_down_succeed, bandwidth_up_total, bandwidth_down_total,
-// 				bandwidth_up_final_score, bandwidth_down_final_score)
-// 				VALUES (:node_id, :bandwidth_up, :bandwidth_down, :bandwidth_up_node, :bandwidth_down_node,
-// 				:bandwidth_up_server, :bandwidth_down_server, :bandwidth_up_score, :bandwidth_down_score,
-// 				:bandwidth_up_succeed, :bandwidth_down_succeed, :bandwidth_up_total, :bandwidth_down_total,
-// 				:bandwidth_up_final_score, :bandwidth_down_final_score)`, bandwidthScoreEventTable)
-// 	_, err := n.db.NamedExec(query, info)
-
-// 	return err
-// }
-
-// // LoadBandwidthScores retrieves bandwidth events for a specific node within a time range.
-// func (n *SQLDB) LoadBandwidthScores(nodeID string, start, end time.Time, column string) ([]int64, error) {
-// 	var out []int64
-// 	query := fmt.Sprintf("SELECT %s FROM %s WHERE created_time BETWEEN ? AND ? AND node_id=?", column, bandwidthScoreEventTable)
-// 	err := n.db.Select(&out, query, start, end, nodeID)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return out, nil
-// }
-
-// // LoadBandwidthScoresOfNode retrieves bandwidth events for a specific node ID, excluding the removal events, with pagination support.
-// func (n *SQLDB) LoadBandwidthScoresOfNode(nodeID string, limit, offset int, start, end time.Time) (*types.ListBandwidthScoreRsp, error) {
-// 	res := new(types.ListBandwidthScoreRsp)
-
-// 	var infos []*types.BandwidthScore
-// 	query := fmt.Sprintf("SELECT * FROM %s WHERE node_id=? AND created_time BETWEEN ? AND ? order by created_time desc LIMIT ? OFFSET ? ", bandwidthScoreEventTable)
-
-// 	err := n.db.Select(&infos, query, nodeID, start, end, limit, offset)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	res.List = infos
-
-// 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE node_id=? AND created_time BETWEEN ? AND ?", bandwidthScoreEventTable)
-// 	var count int
-// 	err = n.db.Get(&count, countQuery, nodeID, start, end)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	res.Total = count
-
-// 	return res, nil
-// }
-
 // LoadBandwidthUpFromRetrieve retrieves the bandwidth up data for a specific node
 func (n *SQLDB) LoadBandwidthUpFromRetrieve(nodeID string, start, end time.Time) ([]int64, error) {
 	var out []int64
@@ -330,34 +276,6 @@ func (n *SQLDB) SaveServiceEvent(info *types.ServiceEvent) error {
 		        VALUES (:trace_id, :node_id, :info, :size, :status, :peak, :end_time, :start_time, :speed, :score)`, serviceEventTable)
 	_, err := n.db.NamedExec(qry, info)
 	return err
-	// tx, err := n.db.Beginx()
-	// if err != nil {
-	// 	return err
-	// }
-
-	// defer func() {
-	// 	err = tx.Rollback()
-	// 	if err != nil && err != sql.ErrTxDone {
-	// 		log.Errorf("SaveProjectEvent Rollback err:%s", err.Error())
-	// 	}
-	// }()
-
-	// // update node project count
-	// // query := fmt.Sprintf(
-	// // 	`INSERT INTO %s (node_id, project_count, project_succeeded_count, project_failed_count) VALUES (?, ?, ?, ?)
-	// // 			ON DUPLICATE KEY UPDATE project_count=project_count+? ,project_succeeded_count=project_succeeded_count+?, project_failed_count=project_failed_count+?, update_time=NOW()`, nodeStatisticsTable)
-	// // _, err = tx.Exec(query, info.NodeID, 1, succeededCount, failedCount, 1, succeededCount, failedCount)
-	// // if err != nil {
-	// // 	return err
-	// // }
-
-	// // replica event
-	// err = n.saveServiceEvent(tx, info)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// return tx.Commit()
 }
 
 func (n *SQLDB) LoadServiceEventByNode(nodeID string, start, end time.Time) ([]*types.ServiceEvent, error) {

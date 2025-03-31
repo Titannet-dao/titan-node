@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>文件上传下载系统</title>
+    <style>
+        /* 你的样式代码保持不变 */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+        }
+        h2 {
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+        .upload-section, .download-section, .stats-section {
+            margin-bottom: 30px;
+        }
+        input[type="file"], input[type="text"] {
+            display: block;
+            margin-bottom: 10px;
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        .download-links a {
+            display: block;
+            margin-bottom: 5px;
+            color: #0066cc;
+            text-decoration: none;
+        }
+        .download-links a:hover {
+            text-decoration: underline;
+        }
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .stats-table th, .stats-table td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        .stats-table th {
+            background-color: #f4f4f4;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+        }
+        /* 新增样式 */
+        .progress-container {
+            margin-top: 10px;
+        }
+        .progress-bar {
+            width: 100%;
+            background-color: #f3f3f3;
+            border-radius: 4px;
+            overflow: hidden;
+            height: 20px;
+            margin-top: 5px;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            width: 0;
+            background-color: #4caf50;
+            text-align: center;
+            color: white;
+            line-height: 20px;
+            transition: width 0.2s;
+        }
+    </style>
+    <!-- 引入 Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>文件上传下载系统</h1>
+
+    <div class="upload-section">
+        <h2>上传文件</h2>
+        <input type="file" id="fileInput">
+        <button onclick="uploadFile('uploadv1')">上传到V1</button>
+        <button onclick="uploadFile('uploadv2')">上传到V2</button>
+        <div id="uploadStatus"></div>
+        <!-- 实时上传速度显示 -->
+        <div class="progress-container">
+            <label for="uploadProgress">上传进度:</label>
+            <div class="progress-bar">
+                <div id="uploadProgress" class="progress-bar-fill">0%</div>
+            </div>
+            <div id="uploadSpeed">速度: 0 B/s</div>
+        </div>
+    </div>
+
+    <div class="download-section">
+        <h2>下载文件</h2>
+        <input type="text" id="downloadFileName" placeholder="输入文件名">
+        <button onclick="downloadFile('downloadv1')">从V1下载</button>
+        <button onclick="downloadFile('downloadv2')">从V2下载</button>
+        <div id="downloadStatus"></div>
+        <!-- 实时下载速度显示 -->
+        <div class="progress-container">
+            <label for="downloadProgress">下载进度:</label>
+            <div class="progress-bar">
+                <div id="downloadProgress" class="progress-bar-fill">0%</div>
+            </div>
+            <div id="downloadSpeed">速度: 0 B/s</div>
+        </div>
+    </div>
+
+    <div class="download-links">
+        <h2>已有文件下载链接</h2>
+        <p>假设有以下文件已上传：</p>
+        <a href="/downloadv1/example1.txt" target="_blank">下载 V1 - example1.txt</a>
+        <a href="/downloadv2/example2.jpg" target="_blank">下载 V2 - example2.jpg</a>
+    </div>
+
+    <div class="stats-section">
+        <h2>实时统计</h2>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>指标</th>
+                    <th>上行速率 (B/s)</th>
+                    <th>下行速率 (B/s)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Peak0</td>
+                    <td id="peak0-up">-</td>
+                    <td id="peak0-down">-</td>
+                </tr>
+                <tr>
+                    <td>Peak1</td>
+                    <td id="peak1-up">-</td>
+                    <td id="peak1-down">-</td>
+                </tr>
+                <tr>
+                    <td>Peak2</td>
+                    <td id="peak2-up">-</td>
+                    <td id="peak2-down">-</td>
+                </tr>
+                <tr>
+                    <td>Peak</td>
+                    <td id="peak-up">-</td>
+                    <td id="peak-down">-</td>
+                </tr>
+                <tr>
+                    <td>Free</td>
+                    <td id="free-up">-</td>
+                    <td id="free-down">-</td>
+                </tr>
+                <tr>
+                    <td>Current</td>
+                    <td id="current-up">-</td>
+                    <td id="current-down">-</td>
+                </tr>
+                <tr>
+                    <td>任务运行数</td>
+                    <td colspan="2" id="task-running-count">-</td>
+                </tr>
+                <tr>
+                    <td>任务总数</td>
+                    <td colspan="2" id="task-count">-</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 折线图部分 -->
+        <div class="chart-container">
+            <canvas id="statsChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 初始化 Chart.js 折线图
+    const ctx = document.getElementById('statsChart').getContext('2d');
+    const statsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [], // 时间标签
+            datasets: [
+                {
+                    label: 'Peak0 上行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak0 下行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 0.6)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak1 上行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 159, 64, 1)',
+                    backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak1 下行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 159, 64, 0.6)',
+                    backgroundColor: 'rgba(255, 159, 64, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak2 上行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(153, 102, 255, 1)',
+                    backgroundColor: 'rgba(153, 102, 255, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak2 下行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(153, 102, 255, 0.6)',
+                    backgroundColor: 'rgba(153, 102, 255, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak 上行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Peak 下行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 0.6)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Free 上行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 206, 86, 1)',
+                    backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Free 下行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(255, 206, 86, 0.6)',
+                    backgroundColor: 'rgba(255, 206, 86, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Current 上行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Current 下行速率 (B/s)',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 0.6)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    fill: false,
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            stacked: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                title: {
+                    display: true,
+                    text: '实时统计折线图'
+                }
+            },
+            scales: {
+                x: {
+                    type: 'category', // 使用类别刻度
+                    title: {
+                        display: true,
+                        text: '时间'
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: '速率 (B/s)'
+                    }
+                }
+            }
+        }
+    });
+
+    // 创建一个时间标签数组和数据数组
+    const maxDataPoints = 60; // 最多显示60个数据点（1分钟）
+
+    function addData(label, datasetsData) {
+        if (statsChart.data.labels.length >= maxDataPoints) {
+            statsChart.data.labels.shift();
+            statsChart.data.datasets.forEach(dataset => {
+                dataset.data.shift();
+            });
+        }
+        statsChart.data.labels.push(label);
+        statsChart.data.datasets.forEach((dataset, index) => {
+            dataset.data.push(Number(datasetsData[index]) || 0);
+        });
+        statsChart.update();
+    }
+
+    // 实时获取并显示统计信息
+    function fetchStats() {
+        fetch('/stats')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('网络响应不是 OK');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('收到统计数据:', data); // 调试日志
+
+                // 检查数据结构
+                if (!data.Peak || !data.Free || !data.Raw ||
+                    !data.Raw.Peak0 || !data.Raw.Peak1 || !data.Raw.Peak2 || !data.Raw.Current ||
+                    typeof data.TaskRunningCount !== 'number' ||
+                    typeof data.TaskCount !== 'number') {
+                    console.error('不完整的统计数据:', data);
+                    return;
+                }
+
+                // 更新表格
+                document.getElementById('peak0-up').innerText = data.Raw.Peak0.U.toLocaleString();
+                document.getElementById('peak0-down').innerText = data.Raw.Peak0.D.toLocaleString();
+
+                document.getElementById('peak1-up').innerText = data.Raw.Peak1.U.toLocaleString();
+                document.getElementById('peak1-down').innerText = data.Raw.Peak1.D.toLocaleString();
+
+                document.getElementById('peak2-up').innerText = data.Raw.Peak2.U.toLocaleString();
+                document.getElementById('peak2-down').innerText = data.Raw.Peak2.D.toLocaleString();
+
+                document.getElementById('peak-up').innerText = data.Peak.U.toLocaleString();
+                document.getElementById('peak-down').innerText = data.Peak.D.toLocaleString();
+
+                document.getElementById('free-up').innerText = data.Free.U.toLocaleString();
+                document.getElementById('free-down').innerText = data.Free.D.toLocaleString();
+
+                document.getElementById('current-up').innerText = data.Raw.Current.U.toLocaleString();
+                document.getElementById('current-down').innerText = data.Raw.Current.D.toLocaleString();
+
+                document.getElementById('task-running-count').innerText = data.TaskRunningCount;
+                document.getElementById('task-count').innerText = data.TaskCount;
+
+                // 获取当前时间
+                const now = new Date();
+                const timeLabel = now.toLocaleTimeString();
+
+                // 准备数据集数据
+                const datasetsData = [
+                    data.Raw.Peak0.U, data.Raw.Peak0.D,        // Peak0 U, D
+                    data.Raw.Peak1.U, data.Raw.Peak1.D,        // Peak1 U, D
+                    data.Raw.Peak2.U, data.Raw.Peak2.D,        // Peak2 U, D
+                    data.Peak.U, data.Peak.D,                  // Peak U, D
+                    data.Free.U, data.Free.D,                   // Free U, D
+                    data.Raw.Current.U, data.Raw.Current.D     // Current U, D
+                ];
+
+                // 添加数据到折线图
+                addData(timeLabel, datasetsData);
+            })
+            .catch(error => {
+                console.error('获取统计信息失败:', error);
+            });
+    }
+
+    // 每隔1秒获取一次统计信息
+    setInterval(fetchStats, 1000);
+
+    // 初始获取一次统计信息
+    fetchStats();
+
+    // 实现实时上传速度显示
+    function uploadFile(route) {
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('uploadStatus');
+        const progressBar = document.getElementById('uploadProgress');
+        const uploadSpeedDisplay = document.getElementById('uploadSpeed');
+
+        if (fileInput.files.length === 0) {
+            alert('请选择一个文件进行上传');
+            return;
+        }
+
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+
+        xhr.open('POST', '/' + route, true);
+
+        xhr.upload.addEventListener('progress', function (e) {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                progressBar.style.width = percentComplete.toFixed(2) + '%';
+                progressBar.innerText = percentComplete.toFixed(2) + '%';
+
+                // 计算上传速度
+                const currentTime = new Date().getTime();
+                if (!xhr.startTime) {
+                    xhr.startTime = currentTime;
+                    xhr.loadedBytes = e.loaded;
+                } else {
+                    const timeElapsed = (currentTime - xhr.startTime) / 1000; // 秒
+                    const bytesDiff = e.loaded - xhr.loadedBytes;
+                    const speed = bytesDiff / timeElapsed; // B/s
+                    uploadSpeedDisplay.innerText = '速度: ' + formatBytes(speed) + '/s';
+
+                    // 重置计时器
+                    xhr.startTime = currentTime;
+                    xhr.loadedBytes = e.loaded;
+                }
+            }
+        });
+
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200) {
+                    status.innerText = xhr.responseText;
+                } else {
+                    status.innerText = '上传失败: ' + xhr.statusText;
+                }
+                // 重置上传进度和速度
+                progressBar.style.width = '0%';
+                progressBar.innerText = '0%';
+                uploadSpeedDisplay.innerText = '速度: 0 B/s';
+                fileInput.value = '';
+            }
+        };
+
+        xhr.send(formData);
+    }
+
+    // 下载文件函数，使用 XMLHttpRequest 处理下载
+    function downloadFile(route) {
+        const fileName = document.getElementById('downloadFileName').value.trim();
+        const status = document.getElementById('downloadStatus');
+        const progressBar = document.getElementById('downloadProgress');
+        const downloadSpeedDisplay = document.getElementById('downloadSpeed');
+
+        if (fileName === '') {
+            alert('请输入要下载的文件名');
+            return;
+        }
+
+        const url = `/${route}/${encodeURIComponent(fileName)}`;
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'blob'; // 接收二进制数据
+
+        let startTime = null;
+        let loadedBytes = 0;
+
+        xhr.onprogress = function (e) {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                progressBar.style.width = percentComplete.toFixed(2) + '%';
+                progressBar.innerText = percentComplete.toFixed(2) + '%';
+
+                // 计算下载速度
+                const currentTime = new Date().getTime();
+                if (!startTime) {
+                    startTime = currentTime;
+                    loadedBytes = e.loaded;
+                } else {
+                    const timeElapsed = (currentTime - startTime) / 1000; // 秒
+                    const bytesDiff = e.loaded - loadedBytes;
+                    const speed = bytesDiff / timeElapsed; // B/s
+                    downloadSpeedDisplay.innerText = '速度: ' + formatBytes(speed) + '/s';
+
+                    // 重置计时器
+                    startTime = currentTime;
+                    loadedBytes = e.loaded;
+                }
+            }
+        };
+
+        xhr.onload = function () {
+            if (xhr.status === 200) {
+                const blob = xhr.response;
+                const link = document.createElement('a');
+                const url = window.URL.createObjectURL(blob);
+                link.href = url;
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(link);
+                }, 100);
+
+                status.innerText = `下载完成: ${fileName}`;
+            } else {
+                status.innerText = '下载失败: ' + xhr.statusText;
+            }
+            // 重置下载进度和速度
+            progressBar.style.width = '0%';
+            progressBar.innerText = '0%';
+            downloadSpeedDisplay.innerText = '速度: 0 B/s';
+        };
+
+        xhr.onerror = function () {
+            status.innerText = '下载失败: 网络错误';
+            // 重置下载进度和速度
+            progressBar.style.width = '0%';
+            progressBar.innerText = '0%';
+            downloadSpeedDisplay.innerText = '速度: 0 B/s';
+        };
+
+        xhr.send();
+        status.innerText = `正在下载: ${fileName}`;
+    }
+
+    // 格式化字节数
+    function formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+</script>
+</body>
+</html>

@@ -2,9 +2,12 @@ package asset
 
 import (
 	"sync"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 )
+
+const releaseTimeout = 60 * time.Second
 
 // releaser contains releasing files and error info
 type releaser struct {
@@ -44,12 +47,21 @@ func (r *releaser) initFiles(hashes []string) {
 	for _, hash := range hashes {
 		r.files[hash] = &releaserState{}
 	}
+
+	go r.clearOnTimeout(time.Now().Add(releaseTimeout))
 }
 
 func (r *releaser) setNextTime(time int64) {
 	r.Lock()
 	defer r.Unlock()
 	r.nextTime = time
+}
+
+func (r *releaser) clearOnTimeout(rt time.Time) {
+	time.AfterFunc(time.Until(rt), func() {
+		log.Warnf("releaser: timeout on clearing files: %v", r.files)
+		r.clear()
+	})
 }
 
 func (r *releaser) setFile(hash string, err error) {

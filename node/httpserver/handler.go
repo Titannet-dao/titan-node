@@ -23,7 +23,7 @@ const (
 	reqUploadv2       = "/uploadv2" // upload raw file
 	reqUploadv3       = "/uploadv3" // upload with url
 	reqUploadv3Status = "/statusv3" // status of active or inactive uploadv3 request
-	reqUploadv4       = "/uploadv4" // multi-part upload
+	// reqUploadv4       = "/uploadv4" // multi-part upload
 
 	reqMonitor = "/monitor"
 	reqStats   = "/stats"
@@ -80,7 +80,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		!strings.Contains(r.URL.Path, reqUploadv2) &&
 		!strings.Contains(r.URL.Path, reqUploadv3) &&
 		!strings.Contains(r.URL.Path, reqUploadv3Status) &&
-		!strings.Contains(r.URL.Path, reqUploadv4) &&
+		// !strings.Contains(r.URL.Path, reqUploadv4) &&
 		!strings.Contains(r.URL.Path, reqMonitor) &&
 		!strings.Contains(r.URL.Path, reqStats) {
 		resetPath(r)

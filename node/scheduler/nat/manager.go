@@ -260,75 +260,11 @@ func (m *Manager) retryEdgeDetectNatType(rInfo *retryNode) {
 // DetermineCandidateNATType Determine node NATType
 func (m *Manager) DetermineCandidateNATType(ctx context.Context, nodeID string) {
 	m.delayCandidateDetectNatType(&retryNode{id: nodeID, retry: 0})
-
-	// if m.isInRetryCandidateList(nodeID) {
-	// 	log.Debugf("node %s waiting to retry", nodeID)
-	// 	return
-	// }
-
-	// _, ok := m.candidateMap.LoadOrStore(nodeID, struct{}{})
-	// if ok {
-	// 	log.Warnf("node %s determining nat type")
-	// 	return
-	// }
-	// defer m.candidateMap.Delete(nodeID)
-
-	// eNode := m.nodeManager.GetNode(nodeID)
-	// if eNode == nil {
-	// 	log.Errorf("node %s offline or not exists", nodeID)
-	// 	return
-	// }
-
-	// _, caNodes := m.nodeManager.GetValidCandidateNodes()
-	// cNodes := make([]*node.Node, 0)
-	// for _, node := range caNodes {
-	// 	if node.NodeID == nodeID {
-	// 		continue
-	// 	}
-	// 	cNodes = append(cNodes, node)
-
-	// 	if len(cNodes) >= miniCandidateCount {
-	// 		break
-	// 	}
-	// }
-
-	// eNode.NATType = determineNodeNATType(eNode, cNodes, m.http3Client)
-
-	// if eNode.NATType == types.NatTypeUnknown.String() {
-	// 	m.delayCandidateDetectNatType(&retryNode{id: nodeID, retry: 0})
-	// }
-	// log.Debugf("%s nat type %s", nodeID, eNode.NATType)
 }
 
 // DetermineEdgeNATType Determine node NATType
 func (m *Manager) DetermineEdgeNATType(ctx context.Context, nodeID string) {
 	m.delayEdgeDetectNatType(&retryNode{id: nodeID, retry: 0})
-	// if m.isInRetryEdgeList(nodeID) {
-	// 	log.Debugf("node %s waiting to retry", nodeID)
-	// 	return
-	// }
-
-	// _, ok := m.edgeMap.LoadOrStore(nodeID, struct{}{})
-	// if ok {
-	// 	log.Warnf("node %s determining nat type", nodeID)
-	// 	return
-	// }
-	// defer m.edgeMap.Delete(nodeID)
-
-	// eNode := m.nodeManager.GetNode(nodeID)
-	// if eNode == nil {
-	// 	log.Errorf("node %s offline or not exists", nodeID)
-	// 	return
-	// }
-
-	// cNodes := m.nodeManager.GetCandidateNodes(miniCandidateCount)
-
-	// eNode.NATType = determineNodeNATType(eNode, cNodes, m.http3Client)
-
-	// if eNode.NATType == types.NatTypeUnknown.String() {
-	// 	m.delayEdgeDetectNatType(&retryNode{id: nodeID, retry: 0})
-	// }
-	// log.Debugf("%s nat type %s", nodeID, eNode.NATType)
 }
 
 // GetCandidateURLsForDetectNat Get the rpc url of the specified number of candidate nodes

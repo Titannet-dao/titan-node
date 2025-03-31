@@ -97,6 +97,7 @@ type uploadv3Req struct {
 	Async bool   `json:"async"`
 }
 
+// uploadv3 gives a url download mode, and return the cid async
 func (hs *HttpServer) uploadv3Handler(w http.ResponseWriter, r *http.Request) {
 	log.Debug("uploadv3Handler")
 	setAccessControlAllowForHeader(w)

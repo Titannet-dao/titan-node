@@ -878,7 +878,7 @@ func (m *Manager) ResetAssetReplicaCount(cid string, count int) error {
 
 // cleanUploadFailedAssetReplicas clean upload failed assets
 func (m *Manager) cleanUploadFailedAssetReplicas() {
-	aRows, err := m.LoadAllAssetRecords(m.nodeMgr.ServerID, checkAssetReplicaLimit, 0, []string{UploadFailed.String(), SyncFailed.String(), SeedFailed.String()})
+	aRows, err := m.LoadAllAssetRecords(m.nodeMgr.ServerID, checkAssetReplicaLimit, 0, []string{UploadFailed.String(), SeedFailed.String()})
 	if err != nil {
 		log.Errorf("LoadAllAssetRecords err:%s", err.Error())
 		return

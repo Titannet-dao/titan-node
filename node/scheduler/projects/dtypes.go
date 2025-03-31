@@ -72,29 +72,6 @@ type ProjectInfo struct {
 	Event int64
 }
 
-// // ToProjectInfo converts ProjectInfo to types.ProjectInfo
-// func (state *ProjectInfo) ToProjectInfo() *types.ProjectInfo {
-// 	// var ws types.ProjectRequirement
-// 	// dec := gob.NewDecoder(bytes.NewBuffer(state.p))
-// 	// err := dec.Decode(&ws)
-// 	// if err != nil {
-// 	// 	log.Errorf("decode data to []*types.Workload error: %s", err.Error())
-// 	// 	return nil
-// 	// }
-
-// 	return &types.ProjectInfo{
-// 		UUID:              state.UUID.String(),
-// 		State:             state.State.String(),
-// 		Name:              state.Name,
-// 		BundleURL:         state.BundleURL,
-// 		Replicas:          state.Replicas,
-// 		UserID:            state.UserID,
-// 		RetryCount:        state.RetryCount,
-// 		ReplenishReplicas: state.ReplenishReplicas,
-// 		// Requirement:       ws,
-// 	}
-// }
-
 // projectInfoFrom converts types.ProjectInfo to ProjectInfo
 func projectInfoFrom(info *types.ProjectInfo) *ProjectInfo {
 	pr := ProjectRequirement{}

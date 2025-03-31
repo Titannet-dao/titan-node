@@ -233,21 +233,6 @@ var cReplicaEventTable = `
 		KEY idx_created_time (created_time)
 	) ENGINE=InnoDB COMMENT='asset replica event';`
 
-// var cRetrieveEventTable = `
-//     CREATE TABLE if not exists %s (
-// 		token_id        VARCHAR(128)   NOT NULL UNIQUE,
-// 		node_id         VARCHAR(128)   NOT NULL,
-// 		client_id       VARCHAR(128)   NOT NULL,
-// 		cid             VARCHAR(128)   NOT NULL,
-// 		size            INT            DEFAULT 0,
-// 		created_time    INT            DEFAULT 0,
-// 		end_time        INT            DEFAULT 0,
-// 	    profit          DECIMAL(14, 6) DEFAULT 0,
-// 		PRIMARY KEY (token_id),
-// 		KEY idx_node_id (node_id),
-// 		KEY idx_created_time (created_time)
-// 	) ENGINE=InnoDB COMMENT='asset retrieve event';`
-
 var cReplenishBackupTable = `
     CREATE TABLE if not exists %s (
 	    hash        VARCHAR(128) NOT NULL,
@@ -396,28 +381,6 @@ var cUserAssetGroupTable = `
 	    KEY idx_parent (parent)
     ) ENGINE=InnoDB COMMENT='user asset group';`
 
-// var cBandwidthScoreEventTable = `
-//     CREATE TABLE if not exists %s (
-// 	    node_id                     VARCHAR(128) NOT NULL,
-// 		bandwidth_up                BIGINT       DEFAULT 0,
-// 		bandwidth_down              BIGINT       DEFAULT 0,
-// 		bandwidth_up_node           BIGINT       DEFAULT 0,
-// 		bandwidth_down_node         BIGINT       DEFAULT 0,
-// 		bandwidth_up_server         BIGINT       DEFAULT 0,
-// 		bandwidth_down_server       BIGINT       DEFAULT 0,
-// 		bandwidth_up_score          INT          DEFAULT 0,
-// 		bandwidth_down_score        INT          DEFAULT 0,
-// 		bandwidth_up_succeed        INT          DEFAULT 0,
-// 		bandwidth_down_succeed      INT          DEFAULT 0,
-// 		bandwidth_up_total          INT          DEFAULT 0,
-// 		bandwidth_down_total        INT          DEFAULT 0,
-// 		bandwidth_up_final_score    INT          DEFAULT 0,
-// 		bandwidth_down_final_score  INT          DEFAULT 0,
-// 	    created_time                DATETIME     DEFAULT CURRENT_TIMESTAMP,
-// 	    KEY idx_node_id (node_id),
-// 	    KEY idx_created_time (created_time)
-//     ) ENGINE=InnoDB COMMENT='node bandwidth score event';`
-
 var cBandwidthEventTable = `
     CREATE TABLE if not exists %s (
 	    node_id             VARCHAR(128) NOT NULL,
@@ -455,79 +418,3 @@ var cServiceEventTable = `
 	    KEY idx_end_time (end_time),
 	    KEY idx_trace_id (trace_id)
     ) ENGINE=InnoDB COMMENT='node service event';`
-
-// var cDeploymentTable = `
-// CREATE TABLE IF NOT EXISTS %s (
-//     id VARCHAR(128) NOT NULL UNIQUE,
-//     owner VARCHAR(128) NOT NULL,
-//     name VARCHAR(128) NOT NULL DEFAULT '',
-//     state INT DEFAULT 0,
-//     type INT DEFAULT 0,
-//     authority TINYINT(1) DEFAULT 0,
-//     version VARCHAR(128) DEFAULT '',
-//     balance FLOAT        DEFAULT 0,
-//     cost FLOAT        DEFAULT 0,
-//     provider_id VARCHAR(128) NOT NULL,
-//     expiration DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP
-//     )ENGINE=InnoDB COMMENT='deployments';`
-
-// var cProviderTable = `
-// CREATE TABLE IF NOT EXISTS %s(
-//     id VARCHAR(128) NOT NULL UNIQUE,
-//     owner VARCHAR(128) NOT NULL,
-//     remote_addr VARCHAR(128) NOT NULL,
-//     ip VARCHAR(128) NOT NULL,
-//     state INT DEFAULT 0,
-//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     PRIMARY KEY (id)
-//     )ENGINE=InnoDB COMMENT='providers';`
-
-// var cPropertiesTable = `
-// CREATE TABLE IF NOT EXISTS %s(
-//     id INT UNSIGNED AUTO_INCREMENT,
-//     provider_id VARCHAR(128) NOT NULL UNIQUE,
-//     app_id VARCHAR(128) NOT NULL,
-//     app_type INT DEFAULT 0,
-//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     PRIMARY KEY (id),
-//     KEY idx_provider_id (provider_id)
-//     )ENGINE=InnoDB COMMENT='properties';`
-
-// var cServicesTable = `
-// CREATE TABLE IF NOT EXISTS %s(
-//     id INT UNSIGNED AUTO_INCREMENT,
-//     name VARCHAR(128) NOT NULL DEFAULT '',
-//     image VARCHAR(128) NOT NULL DEFAULT '',
-//     ports VARCHAR(256) NOT NULL DEFAULT '',
-//     state INT DEFAULT 0,
-//     cpu FLOAT        DEFAULT 0,
-//     gpu FLOAT        DEFAULT 0,
-//     memory FLOAT        DEFAULT 0,
-//     storage VARCHAR(128),
-//     env TEXT ,
-//     arguments TEXT,
-//     deployment_id VARCHAR(128) NOT NULL,
-//     error_message VARCHAR(128) DEFAULT NULL,
-//     replicas INT NOT NULL DEFAULT 0,
-//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     PRIMARY KEY (id),
-//     UNIQUE KEY uniq_deployment_id_image (deployment_id, image)
-//     )ENGINE=InnoDB COMMENT='services';`
-
-// var cDomainTable = `
-// CREATE TABLE IF NOT EXISTS %s(
-//     id INT UNSIGNED AUTO_INCREMENT,
-//     name VARCHAR(128) NOT NULL DEFAULT '',
-//     deployment_id VARCHAR(128) NOT NULL DEFAULT '',
-//     provider_id VARCHAR(128) NOT NULL DEFAULT '',
-//     state VARCHAR(128) NOT NULL DEFAULT '',
-//     created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
-//     PRIMARY KEY (id),
-//     UNIQUE KEY idx_name (name)
-//     )ENGINE=InnoDB COMMENT='domains'`
