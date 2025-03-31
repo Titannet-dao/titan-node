@@ -24,6 +24,8 @@ type CreateAssetReq struct {
 	ExpirationDay int
 	Owner         string
 	TraceID       string
+
+	Test bool
 }
 
 // GetUploadInfoReq represents a request to get upload information.
@@ -31,6 +33,8 @@ type GetUploadInfoReq struct {
 	UserID  string
 	URLMode bool
 	TraceID string
+
+	Test bool
 }
 
 // UploadInfo holds information about file uploads.

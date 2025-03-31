@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/Filecoin-Titan/titan/api/types"
 	"github.com/Filecoin-Titan/titan/node"
@@ -347,6 +348,10 @@ func startHTTP3Server(transport *quic.Transport, handler http.Handler, scheduler
 	srv := http3.Server{
 		TLSConfig: tlsConfig,
 		Handler:   handler,
+		QUICConfig: &quic.Config{
+			HandshakeIdleTimeout: 15 * time.Second,
+			MaxIdleTimeout:       30 * time.Second,
+		},
 	}
 
 	if err = srv.ServeListener(ln); err != nil {

@@ -392,6 +392,8 @@ var daemonStartCmd = &cli.Command{
 			},
 		}
 
+		// httpServer.Stats().
+
 		go startHTTP3Server(transport, handler, tlsCfg)
 
 		go func() {
@@ -494,8 +496,8 @@ var daemonStartCmd = &cli.Command{
 						cancel()
 						return
 					}
-
-					curSession, err := keepalive(schedulerAPI, connectTimeout)
+					stats := httpServer.Stats()
+					curSession, err := keepalive(schedulerAPI, connectTimeout, stats)
 					if err != nil {
 						log.Errorf("heartbeat: keepalive failed: %+v", err)
 						errNode, ok := err.(*api.ErrNode)
@@ -529,11 +531,14 @@ func isPrivateMinioOnly(config *config.CandidateCfg) bool {
 	return config.IsPrivate
 }
 
-func keepalive(api api.Scheduler, timeout time.Duration) (uuid.UUID, error) {
+func keepalive(api api.Scheduler, timeout time.Duration, stats *types.KeepaliveReq) (uuid.UUID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
-	return api.NodeKeepaliveV2(ctx)
+	resp, err := api.NodeKeepaliveV3(ctx, stats)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return resp.SessionUUID, nil
 }
 
 func getSchedulerVersion(api api.Scheduler, timeout time.Duration) (api.APIVersion, error) {

@@ -167,6 +167,7 @@ func (tr *titanRegion) GetGeoInfo(ip string) (*region.GeoInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rsp.Body.Close()
 
 	if rsp.StatusCode != http.StatusOK {
 		buf, _ := io.ReadAll(rsp.Body)

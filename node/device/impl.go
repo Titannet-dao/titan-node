@@ -323,7 +323,7 @@ func setMemoryUsage(ctx context.Context, t *types.DeviceRunningStat) {
 	t.MemoryUsed = vMem.Used
 	t.MemoryUsage = vMem.UsedPercent
 
-	log.Infof("Updated Memory Usage: %.2f\n", t.MemoryUsage)
+	// log.Infof("Updated Memory Usage: %.2f\n", t.MemoryUsage)
 }
 
 // setCPUUsage calculates and updates CPU usage
@@ -350,5 +350,5 @@ func setCPUUsage(ctx context.Context, t *types.DeviceRunningStat) {
 	}
 	t.CPUTotalUsage = totalUsage / float64(len(cpuUsage))
 
-	log.Infof("Updated CPU Usage: %.2f \n", t.CPUTotalUsage)
+	// log.Infof("Updated CPU Usage: %.2f \n", t.CPUTotalUsage)
 }

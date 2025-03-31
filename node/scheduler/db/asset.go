@@ -55,35 +55,6 @@ func (n *SQLDB) UpdateReplicaInfo(cInfo *types.ReplicaInfo) error {
 	return nil
 }
 
-// // UpdateReplicaInfo updates information of unfinished replicas in the database.
-// // It sets the end time and updates the status and done size of the replica specified by hash and node_id.
-// // It returns an error if no rows were affected (i.e., if the replica is already finished or does not exist).
-// func (n *SQLDB) UpdateReplicaInfo(cInfo *types.ReplicaInfo) error {
-// 	var result sql.Result
-// 	var err error
-// 	if cInfo.Speed <= 0 {
-// 		query := fmt.Sprintf(`UPDATE %s SET end_time=NOW(), status=?, done_size=?, client_id=?, WHERE hash=? AND node_id=? AND (status=? or status=?)`, replicaInfoTable)
-// 		result, err = n.db.Exec(query, cInfo.Status, cInfo.DoneSize, cInfo.ClientID, cInfo.Hash, cInfo.NodeID, types.ReplicaStatusPulling, types.ReplicaStatusWaiting)
-// 	} else {
-// 		query := fmt.Sprintf(`UPDATE %s SET end_time=NOW(), status=?, done_size=?, client_id=?, speed=? WHERE hash=? AND node_id=? AND (status=? or status=?)`, replicaInfoTable)
-// 		result, err = n.db.Exec(query, cInfo.Status, cInfo.DoneSize, cInfo.ClientID, cInfo.Speed, cInfo.Hash, cInfo.NodeID, types.ReplicaStatusPulling, types.ReplicaStatusWaiting)
-// 	}
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	r, err := result.RowsAffected()
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	if r < 1 {
-// 		return xerrors.New("nothing to update")
-// 	}
-
-// 	return nil
-// }
-
 // LoadNodesOfPullingReplica retrieves a list of node IDs for replicas that are either pulling or waiting.
 func (n *SQLDB) LoadNodesOfPullingReplica(hash string) ([]string, error) {
 	var nodes []string
@@ -186,6 +157,10 @@ func (n *SQLDB) LoadAssetRecords(statuses []string, serverID dtypes.ServerID) ([
 
 // LoadAssetRecordRowsWithCID retrieves a paginated list of all asset records with cid
 func (n *SQLDB) LoadAssetRecordRowsWithCID(cids []string, serverID dtypes.ServerID) (*sqlx.Rows, error) {
+	if len(cids) > loadAssetRecordsDefaultLimit {
+		return nil, fmt.Errorf("limit:%d", loadAssetRecordsDefaultLimit)
+	}
+
 	sQuery := fmt.Sprintf(`SELECT * FROM %s a LEFT JOIN %s b ON a.hash = b.hash WHERE cid in (?) `, assetRecordTable, assetStateTable(serverID))
 	query, args, err := sqlx.In(sQuery, cids)
 	if err != nil {

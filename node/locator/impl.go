@@ -149,7 +149,7 @@ func (l *Locator) selectBestSchedulers(apis []*SchedulerAPI, nodeID string) ([]s
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	var schedulerConfig *types.SchedulerCfg
@@ -165,7 +165,7 @@ func (l *Locator) selectBestSchedulers(apis []*SchedulerAPI, nodeID string) ([]s
 				return
 			}
 
-			cancel()
+			// cancel()
 			schedulerConfig = s.config
 		}(ctx, api)
 	}
@@ -307,7 +307,7 @@ func (l *Locator) getEdgeDownloadInfoFromBestScheduler(apis []*SchedulerAPI, cid
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	infoListCh := make(chan *types.EdgeDownloadInfoList)
@@ -395,7 +395,7 @@ func (l *Locator) GetAssetSourceDownloadInfos(ctx context.Context, cid string) (
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	downloadInfos := make([]*types.AssetSourceDownloadInfoRsp, 0)
@@ -616,7 +616,7 @@ func (l *Locator) GetCandidateIP(ctx context.Context, nodeID string) (string, er
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// TODO limit concurrency
@@ -662,7 +662,7 @@ func (l *Locator) GetSchedulerWithNode(ctx context.Context, nodeID string) (stri
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// TODO limit concurrency
@@ -757,7 +757,7 @@ func (l *Locator) AllocateSchedulerForNode(ctx context.Context, nodeType types.N
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var scheduler string
@@ -813,7 +813,7 @@ func (l *Locator) GetDeploymentCandidateIP(ctx context.Context, deploymentID str
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// TODO limit concurrency

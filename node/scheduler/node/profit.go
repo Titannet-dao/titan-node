@@ -21,7 +21,7 @@ const (
 	// l1RBase     = 200000.0 / 288.0 // every 5 minutes
 	penaltyRate = 0.0001
 
-	exitRate = 0.6
+	// exitRate = 0.6
 
 	l2PhoneRate = 500.0 / 17280.0 // every 5s
 	l2PCRate    = 300.0 / 17280.0 // every 5s
@@ -29,40 +29,6 @@ const (
 
 	l2ProfitLimit = 7000
 )
-
-var (
-// mx = 1.0
-
-// year = time.Now().UTC().Year()
-
-// week1Start = time.Date(year, time.April, 22, 8, 0, 0, 0, time.UTC)
-// week1End   = time.Date(year, time.April, 28, 23, 59, 59, 0, time.UTC)
-// week2Start = time.Date(year, time.April, 29, 0, 0, 0, 0, time.UTC)
-// week2End   = time.Date(year, time.May, 5, 23, 59, 59, 0, time.UTC)
-// week3Start = time.Date(year, time.May, 6, 0, 0, 0, 0, time.UTC)
-// week3End   = time.Date(year, time.May, 12, 23, 59, 59, 0, time.UTC)
-// week4Start = time.Date(year, time.May, 13, 0, 0, 0, 0, time.UTC)
-// week4End   = time.Date(year, time.May, 19, 23, 59, 59, 0, time.UTC)
-)
-
-// func updateMx() float64 {
-// 	now := time.Now().UTC()
-
-// 	log.Debugf("updateMx now : %s , %.2f", now.Format(time.DateTime), mx)
-
-// 	switch {
-// 	case now.After(week1Start) && now.Before(week1End):
-// 		return 2
-// 	case now.After(week2Start) && now.Before(week2End):
-// 		return 1.7
-// 	case now.After(week3Start) && now.Before(week3End):
-// 		return 1.4
-// 	case now.After(week4Start) && now.Before(week4End):
-// 		return 1.2
-// 	default:
-// 		return 1
-// 	}
-// }
 
 func (m *Manager) isExceededLimit(nodeID string) bool {
 	todayProfit, err := m.LoadTodayProfitsForNode(nodeID)
@@ -274,10 +240,10 @@ func (m *Manager) GetRecompenseProfitDetails(nodeID string, profit float64, note
 }
 
 // CalculateDowntimePenalty Exit penalty calculation
-func (m *Manager) CalculateDowntimePenalty(profit float64) (float64, float64) {
-	rExit := profit * (1 - exitRate)
+func (m *Manager) CalculateDowntimePenalty(profit, reductionRate float64) (float64, float64) {
+	rExit := profit * (1 - reductionRate)
 
-	return rExit, exitRate
+	return rExit, reductionRate
 }
 
 func calculateMip(n string) float64 {

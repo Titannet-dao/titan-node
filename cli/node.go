@@ -69,12 +69,19 @@ var deactivateCmd = &cli.Command{
 	Usage: "node deactivate (40% of the points will be retained)",
 	Flags: []cli.Flag{
 		nodeIDFlag,
+		&cli.Float64Flag{
+			Name:  "reduction",
+			Usage: "reduction rate",
+			Value: 0.6,
+		},
 	},
 	Action: func(cctx *cli.Context) error {
 		nodeID := cctx.String("node-id")
 		if nodeID == "" {
 			return xerrors.New("node-id is nil")
 		}
+
+		rate := cctx.Float64("reduction")
 
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
@@ -83,7 +90,7 @@ var deactivateCmd = &cli.Command{
 		}
 		defer closer()
 
-		return schedulerAPI.DeactivateNode(ctx, nodeID, 24*7)
+		return schedulerAPI.DeactivateNodeV2(ctx, nodeID, 24*7, rate)
 	},
 }
 

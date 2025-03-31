@@ -95,201 +95,243 @@ func (s *Scheduler) getAreaInfo() (string, bool) {
 	return areaID, communityArea
 }
 
-// nodeConnect processes a node connect request with the given options and node type.
+type NodeConnectContext struct {
+	nodeID     string
+	remoteAddr string
+	nodeType   types.NodeType
+	opts       *types.ConnectOptions
+	cNode      *node.Node
+	externalIP string
+	nodeInfo   *types.NodeInfo
+
+	alreadyConnect bool
+}
+
 func (s *Scheduler) nodeConnect(ctx context.Context, opts *types.ConnectOptions, nodeType types.NodeType) error {
-	remoteAddr := handler.GetRemoteAddr(ctx)
-	nodeID := handler.GetNodeID(ctx)
+	context := &NodeConnectContext{
+		nodeID:     handler.GetNodeID(ctx),
+		remoteAddr: handler.GetRemoteAddr(ctx),
+		nodeType:   nodeType,
+		opts:       opts,
+	}
 
-	alreadyConnect := true
+	err := s.validateNodeExistence(context)
+	if err != nil {
+		return xerrors.Errorf("nodeConnect err node: %s, type: %d, error: %s", context.nodeID, nodeType, err.Error())
+	}
 
-	cNode := s.NodeManager.GetNode(nodeID)
-	if cNode == nil {
-		if err := s.NodeManager.NodeExistsFromType(nodeID, nodeType); err != nil {
-			return xerrors.Errorf("nodeConnect err node: %s, type: %d, error: %w", nodeID, nodeType, err)
-		}
-		alreadyConnect = false
-	} else {
-		// clean old info
+	err = s.storeNodeIP(context)
+	if err != nil {
+		return err
+	}
+
+	s.initNode(context)
+
+	defer s.deferCleanup(context, err)
+
+	err = s.processNodeConnection(context)
+	return err
+}
+
+func (s *Scheduler) validateNodeExistence(ctx *NodeConnectContext) error {
+	if cNode := s.NodeManager.GetNode(ctx.nodeID); cNode != nil {
+		ctx.cNode = cNode
+		ctx.alreadyConnect = true
 		if cNode.ExternalIP != "" {
-			s.NodeManager.IPMgr.RemoveNodeIP(nodeID, cNode.ExternalIP)
+			s.NodeManager.IPMgr.RemoveNodeIP(ctx.nodeID, cNode.ExternalIP)
 		}
+		return nil
 	}
+	return s.NodeManager.NodeExistsFromType(ctx.nodeID, ctx.nodeType)
+}
 
-	externalIP, _, err := net.SplitHostPort(remoteAddr)
+func (s *Scheduler) storeNodeIP(ctx *NodeConnectContext) error {
+	ip, _, err := net.SplitHostPort(ctx.remoteAddr)
 	if err != nil {
-		return xerrors.Errorf("nodeConnect err SplitHostPort err:%s", err.Error())
+		return xerrors.Errorf("SplitHostPort error: %w", err)
+	}
+	ctx.externalIP = ip
+
+	if !s.NodeManager.IPMgr.StoreNodeIP(ctx.nodeID, ip) {
+		return xerrors.Errorf("nodeConnect err %s The number of IPs exceeds the limit %s ", ctx.nodeID, ctx.externalIP)
+	}
+	return nil
+}
+
+func (s *Scheduler) initNode(ctx *NodeConnectContext) {
+	if ctx.cNode == nil {
+		ctx.cNode = node.New()
 	}
 
-	if !s.NodeManager.IPMgr.StoreNodeIP(nodeID, externalIP) {
-		return xerrors.Errorf("nodeConnect err %s The number of IPs exceeds the limit %s ", nodeID, externalIP)
+	ctx.cNode.Token = ctx.opts.Token
+	ctx.cNode.ExternalURL = ctx.opts.ExternalURL
+	ctx.cNode.TCPPort = ctx.opts.TcpServerPort
+	ctx.cNode.IsPrivateMinioOnly = ctx.opts.IsPrivateMinioOnly
+	ctx.cNode.ResourcesStatistics = ctx.opts.ResourcesStatistics
+}
+
+func (s *Scheduler) processNodeConnection(ctx *NodeConnectContext) error {
+	if err := s.connectRPC(ctx); err != nil {
+		return err
 	}
 
-	if cNode == nil {
-		cNode = node.New()
-	}
-
-	defer func() {
-		if err != nil {
-			s.NodeManager.IPMgr.RemoveNodeIP(nodeID, externalIP)
-			s.NodeManager.GeoMgr.RemoveNodeGeo(nodeID, nodeType, cNode.AreaID)
-		}
-	}()
-
-	cNode.Token = opts.Token
-	cNode.ExternalURL = opts.ExternalURL
-	cNode.TCPPort = opts.TcpServerPort
-	cNode.IsPrivateMinioOnly = opts.IsPrivateMinioOnly
-	cNode.ResourcesStatistics = opts.ResourcesStatistics
-
-	err = cNode.ConnectRPC(s.Transport, remoteAddr, nodeType)
+	// get node info from client
+	nInfo, err := ctx.cNode.API.GetNodeInfo(context.Background())
 	if err != nil {
-		return xerrors.Errorf("%s nodeConnect err ConnectRPC err:%s", nodeID, err.Error())
+		return xerrors.Errorf("%s nodeConnect err NodeInfo err:%s", ctx.nodeID, err.Error())
 	}
 
-	// init node info
-	nInfo, err := cNode.API.GetNodeInfo(context.Background())
+	if ctx.nodeID != nInfo.NodeID {
+		return xerrors.Errorf("nodeConnect err nodeID mismatch %s, %s", ctx.nodeID, nInfo.NodeID)
+	}
+
+	ctx.nodeInfo, err = s.checkNodeParameters(nInfo, ctx.nodeType)
 	if err != nil {
-		return xerrors.Errorf("%s nodeConnect err NodeInfo err:%s", nodeID, err.Error())
+		return xerrors.Errorf("nodeConnect err Node %s does not meet the standard %s", ctx.nodeID, err.Error())
 	}
 
-	if nodeID != nInfo.NodeID {
-		return xerrors.Errorf("nodeConnect err nodeID mismatch %s, %s", nodeID, nInfo.NodeID)
-	}
+	ver := api.NewVerFromString(ctx.nodeInfo.SystemVersion)
+	ctx.nodeInfo.Version = int64(ver)
 
-	nodeInfo, err := s.checkNodeParameters(nInfo, nodeType)
-	if err != nil {
-		return xerrors.Errorf("nodeConnect err Node %s does not meet the standard %s", nodeID, err.Error())
-	}
+	ctx.nodeInfo.NodeID = ctx.nodeID
+	ctx.nodeInfo.RemoteAddr = ctx.remoteAddr
+	ctx.nodeInfo.SchedulerID = s.ServerID
+	ctx.nodeInfo.ExternalIP = ctx.externalIP
+	ctx.nodeInfo.BandwidthUp = units.KiB
+	ctx.nodeInfo.NATType = types.NatTypeUnknown.String()
 
-	ver := api.NewVerFromString(nodeInfo.SystemVersion)
-	nodeInfo.Version = int64(ver)
-
-	nodeInfo.NodeID = nodeID
-	nodeInfo.RemoteAddr = remoteAddr
-	nodeInfo.SchedulerID = s.ServerID
-	nodeInfo.ExternalIP = externalIP
-	nodeInfo.BandwidthUp = units.KiB
-	nodeInfo.NATType = types.NatTypeUnknown.String()
-
-	if opts.GeoInfo != nil {
-		nodeInfo.AreaID = opts.GeoInfo.Geo
+	if ctx.opts.GeoInfo != nil {
+		ctx.nodeInfo.AreaID = ctx.opts.GeoInfo.Geo
 	} else {
-		geoInfo, err := s.GetGeoInfo(externalIP)
+		geoInfo, err := s.GetGeoInfo(ctx.externalIP)
 		if err != nil {
-			log.Warnf("%s getAreaID error %s", nodeID, err.Error())
+			log.Warnf("%s getAreaID error %s", ctx.nodeID, err.Error())
 		}
-		nodeInfo.AreaID = geoInfo.Geo
+		ctx.nodeInfo.AreaID = geoInfo.Geo
 	}
 
-	dbInfo, err := s.NodeManager.LoadNodeInfo(nodeID)
-	if err != nil && err != sql.ErrNoRows {
-		return xerrors.Errorf("nodeConnect err load node online duration %s err : %s", nodeID, err.Error())
+	dbInfo, err := s.loadNodeData(ctx)
+	if err != nil {
+		return err
 	}
 
-	nodeInfo.FirstTime = time.Now()
-	nodeInfo.LastSeen = time.Now()
-	if dbInfo != nil {
-		// init node info
-		nodeInfo.PortMapping = dbInfo.PortMapping
-		nodeInfo.OnlineDuration = dbInfo.OnlineDuration
-		nodeInfo.OfflineDuration = dbInfo.OfflineDuration
-		nodeInfo.BandwidthDown = dbInfo.BandwidthDown
-		nodeInfo.BandwidthUp = dbInfo.BandwidthUp
-		nodeInfo.DeactivateTime = dbInfo.DeactivateTime
-		nodeInfo.DownloadTraffic = dbInfo.DownloadTraffic
-		nodeInfo.UploadTraffic = dbInfo.UploadTraffic
-		nodeInfo.WSServerID = dbInfo.WSServerID
-		nodeInfo.Profit = dbInfo.Profit
-		nodeInfo.FirstTime = dbInfo.FirstTime
-		nodeInfo.NATType = dbInfo.NATType
+	return s.handleNodeTypeLogic(ctx, dbInfo)
+}
 
-		if dbInfo.DeactivateTime > 0 && dbInfo.DeactivateTime < time.Now().Unix() {
-			return xerrors.Errorf("nodeConnect err The node %s has been deactivate and cannot be logged in", nodeID)
-		}
+func (s *Scheduler) handleNodeTypeLogic(ctx *NodeConnectContext, dbInfo *types.NodeInfo) error {
+	ctx.cNode.InitInfo(ctx.nodeInfo)
 
-		if dbInfo.ForceOffline {
-			return xerrors.Errorf("nodeConnect err The node %s has been forced offline", nodeID)
-		}
-	}
-
-	log.Infof("node connected %s, address[%s] , %v, ExternalURL:%s ,  nodeVer:%s", nodeID, remoteAddr, alreadyConnect, cNode.ExternalURL, nodeInfo.SystemVersion)
-
-	cNode.InitInfo(nodeInfo)
-
-	if !alreadyConnect || dbInfo == nil || dbInfo.SystemVersion != nodeInfo.SystemVersion {
-		err = s.saveNodeInfo(nodeInfo)
+	if !ctx.alreadyConnect || dbInfo == nil || dbInfo.SystemVersion != ctx.nodeInfo.SystemVersion {
+		err := s.saveNodeInfo(ctx.nodeInfo)
 		if err != nil {
 			return err
 		}
 	}
 
-	if !alreadyConnect {
-		if nodeType == types.NodeEdge {
-			incr, _ := s.NodeManager.GetEdgeBaseProfitDetails(cNode, 0)
-			cNode.IncomeIncr = incr
-		} else {
-			// cNode.TaskTotal, _ = s.db.LoadServiceEventCount(nodeID)
-			// cNode.TaskSuccess, _ = s.db.LoadServiceEventCountByStatus(nodeID, types.ServiceTypeSucceed)
+	if !ctx.alreadyConnect {
+		if ctx.nodeType == types.NodeEdge {
+			incr, _ := s.NodeManager.GetEdgeBaseProfitDetails(ctx.cNode, 0)
+			ctx.cNode.IncomeIncr = incr
 		}
 
-		if cNode.IsResourceNode() {
-			s.NodeManager.GeoMgr.AddNodeGeo(nodeInfo, cNode.AreaID)
+		if ctx.cNode.IsResourceNode() {
+			s.NodeManager.GeoMgr.AddNodeGeo(ctx.nodeInfo, ctx.cNode.AreaID)
 		}
 
-		pStr, err := s.NodeManager.LoadNodePublicKey(nodeID)
+		pStr, err := s.NodeManager.LoadNodePublicKey(ctx.nodeID)
 		if err != nil && err != sql.ErrNoRows {
-			return xerrors.Errorf("nodeConnect err load node port %s err : %s", nodeID, err.Error())
+			return xerrors.Errorf("nodeConnect err load node port %s err : %s", ctx.nodeID, err.Error())
 		}
 
 		publicKey, err := titanrsa.Pem2PublicKey([]byte(pStr))
 		if err != nil {
-			return xerrors.Errorf("nodeConnect err load node port %s err : %s", nodeID, err.Error())
+			return xerrors.Errorf("nodeConnect err load node port %s err : %s", ctx.nodeID, err.Error())
 		}
-		cNode.PublicKey = publicKey
+		ctx.cNode.PublicKey = publicKey
 		// init LastValidateTime
-		cNode.LastValidateTime = s.getNodeLastValidateTime(nodeID)
+		ctx.cNode.LastValidateTime = s.getNodeLastValidateTime(ctx.nodeID)
 
-		cNode.OnlineRate = s.NodeManager.ComputeNodeOnlineRate(nodeID, nodeInfo.FirstTime)
+		ctx.cNode.OnlineRate = s.NodeManager.ComputeNodeOnlineRate(ctx.nodeID, ctx.nodeInfo.FirstTime)
 
-		err = s.NodeManager.NodeOnline(cNode, nodeInfo)
+		err = s.NodeManager.NodeOnline(ctx.cNode, ctx.nodeInfo)
 		if err != nil {
-			log.Errorf("nodeConnect err:%s,nodeID:%s", err.Error(), nodeID)
+			log.Errorf("nodeConnect err:%s,nodeID:%s", err.Error(), ctx.nodeID)
 			return err
 		}
 
-		s.ProjectManager.CheckProjectReplicasFromNode(nodeID)
+		s.ProjectManager.CheckProjectReplicasFromNode(ctx.nodeID)
 
-		s.DataSync.AddNodeToList(nodeID)
+		s.DataSync.AddNodeToList(ctx.nodeID)
 
-		if nodeType == types.NodeEdge {
-			s.NatManager.DetermineEdgeNATType(context.Background(), nodeID)
-		} else if nodeType == types.NodeCandidate {
+		if ctx.nodeType == types.NodeEdge {
+			s.NatManager.DetermineEdgeNATType(context.Background(), ctx.nodeID)
+		} else if ctx.nodeType == types.NodeCandidate {
 			// err := checkDomain(cNode.ExternalURL)
 			// log.Infof("%s checkDomain [%s] %v", nodeID, cNode.ExternalURL, err)
 			// cNode.IsStorageNode = err == nil
 
-			s.NatManager.DetermineCandidateNATType(context.Background(), nodeID)
+			s.NatManager.DetermineCandidateNATType(context.Background(), ctx.nodeID)
 		}
 	}
 
 	return nil
 }
 
+func (s *Scheduler) connectRPC(ctx *NodeConnectContext) error {
+	if err := ctx.cNode.ConnectRPC(s.Transport, ctx.remoteAddr, ctx.nodeType); err != nil {
+		return xerrors.Errorf("%s nodeConnect err ConnectRPC err:%s", ctx.nodeID, err.Error())
+	}
+	return nil
+}
+
+func (s *Scheduler) loadNodeData(ctx *NodeConnectContext) (*types.NodeInfo, error) {
+	dbInfo, err := s.NodeManager.LoadNodeInfo(ctx.nodeID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, xerrors.Errorf("nodeConnect err load node online duration %s err : %s", ctx.nodeID, err.Error())
+	}
+
+	ctx.nodeInfo.FirstTime = time.Now()
+	ctx.nodeInfo.LastSeen = time.Now()
+	if dbInfo != nil {
+		// init node info
+		ctx.nodeInfo.PortMapping = dbInfo.PortMapping
+		ctx.nodeInfo.OnlineDuration = dbInfo.OnlineDuration
+		ctx.nodeInfo.OfflineDuration = dbInfo.OfflineDuration
+		ctx.nodeInfo.BandwidthDown = dbInfo.BandwidthDown
+		ctx.nodeInfo.BandwidthUp = dbInfo.BandwidthUp
+		ctx.nodeInfo.DeactivateTime = dbInfo.DeactivateTime
+		ctx.nodeInfo.DownloadTraffic = dbInfo.DownloadTraffic
+		ctx.nodeInfo.UploadTraffic = dbInfo.UploadTraffic
+		ctx.nodeInfo.WSServerID = dbInfo.WSServerID
+		ctx.nodeInfo.Profit = dbInfo.Profit
+		ctx.nodeInfo.FirstTime = dbInfo.FirstTime
+		ctx.nodeInfo.NATType = dbInfo.NATType
+
+		if dbInfo.DeactivateTime > 0 && dbInfo.DeactivateTime < time.Now().Unix() {
+			return nil, xerrors.Errorf("nodeConnect err The node %s has been deactivate and cannot be logged in", ctx.nodeID)
+		}
+
+		if dbInfo.ForceOffline {
+			return nil, xerrors.Errorf("nodeConnect err The node %s has been forced offline", ctx.nodeID)
+		}
+	}
+
+	return dbInfo, nil
+}
+
+func (s *Scheduler) deferCleanup(ctx *NodeConnectContext, err error) {
+	defer func() {
+		if err != nil {
+			s.NodeManager.IPMgr.RemoveNodeIP(ctx.nodeID, ctx.externalIP)
+			s.NodeManager.GeoMgr.RemoveNodeGeo(ctx.nodeID, ctx.nodeType, ctx.cNode.AreaID)
+		}
+	}()
+}
+
 // SaveInfo Save node information when it comes online
 func (s *Scheduler) saveNodeInfo(n *types.NodeInfo) error {
 	return s.db.SaveNodeInfo(n)
 }
-
-// func checkDomain(domain string) error {
-// 	if domain == "" {
-// 		return xerrors.New("domain is nil")
-// 	}
-
-// 	url := fmt.Sprintf("%s/net", domain)
-// 	_, err := http.Get(url)
-
-// 	return err
-// }
 
 func (s *Scheduler) getNodeLastValidateTime(nodeID string) int64 {
 	rsp, err := s.NodeManager.LoadValidationResultInfos(nodeID, 1, 0)
@@ -330,58 +372,19 @@ func roundUpToNextGB(bytes int64) int64 {
 }
 
 func (s *Scheduler) nodeParametersApplyLimits(nodeInfo types.NodeInfo) *types.NodeInfo {
-	if nodeInfo.Memory > memoryLimit {
-		nodeInfo.Memory = memoryLimit
-	}
-
-	if nodeInfo.CPUCores > cpuLimit {
-		nodeInfo.CPUCores = cpuLimit
-	}
-
-	if nodeInfo.DiskSpace > diskSpaceLimit {
-		nodeInfo.DiskSpace = diskSpaceLimit
-	}
-
-	if nodeInfo.BandwidthDown > bandwidthLimit {
-		nodeInfo.BandwidthDown = bandwidthLimit
-	}
-
-	if nodeInfo.BandwidthUp > bandwidthLimit {
-		nodeInfo.BandwidthUp = bandwidthLimit
-	}
-
-	if nodeInfo.Memory < 0 {
-		nodeInfo.Memory = 0
-	}
-
-	if nodeInfo.CPUCores < 0 {
-		nodeInfo.CPUCores = 0
-	}
-
-	if nodeInfo.DiskSpace < 0 {
-		nodeInfo.DiskSpace = 0
-	}
-
-	if nodeInfo.BandwidthDown < 0 {
-		nodeInfo.BandwidthDown = 0
-	}
-
-	if nodeInfo.BandwidthUp < 0 {
-		nodeInfo.BandwidthUp = 0
-	}
+	nodeInfo.Memory = max(0, min(nodeInfo.Memory, memoryLimit))
+	nodeInfo.CPUCores = max(0, min(nodeInfo.CPUCores, cpuLimit))
+	nodeInfo.DiskSpace = max(0, min(nodeInfo.DiskSpace, diskSpaceLimit))
+	nodeInfo.BandwidthDown = max(0, min(nodeInfo.BandwidthDown, bandwidthLimit))
+	nodeInfo.BandwidthUp = max(0, min(nodeInfo.BandwidthUp, bandwidthLimit))
 
 	return &nodeInfo
 }
 
 func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.NodeType) (*types.NodeInfo, error) {
 	nInfo := s.nodeParametersApplyLimits(nodeInfo)
-	if nInfo.AvailableDiskSpace <= 0 {
-		nInfo.AvailableDiskSpace = 2 * units.GiB
-	}
 
-	if nInfo.AvailableDiskSpace > nInfo.DiskSpace {
-		nInfo.AvailableDiskSpace = nInfo.DiskSpace
-	}
+	nodeInfo.AvailableDiskSpace = max(2*units.GiB, min(nodeInfo.AvailableDiskSpace, nInfo.DiskSpace))
 
 	nInfo.Type = nodeType
 
@@ -391,20 +394,13 @@ func (s *Scheduler) checkNodeParameters(nodeInfo types.NodeInfo, nodeType types.
 	}
 
 	if nodeType == types.NodeEdge {
-		if nInfo.AvailableDiskSpace > availableDiskLimit {
-			nInfo.AvailableDiskSpace = availableDiskLimit
-		}
+		nodeInfo.AvailableDiskSpace = min(nodeInfo.AvailableDiskSpace, availableDiskLimit)
 
 		nInfo.ClientType = checkNodeClientType(nInfo.SystemVersion, s.SchedulerCfg.AndroidSymbol, s.SchedulerCfg.IOSSymbol, s.SchedulerCfg.WindowsSymbol, s.SchedulerCfg.MacosSymbol)
 		// limit node availableDiskSpace to 5 GiB when using phone
 		if nInfo.ClientType == types.NodeAndroid || nInfo.ClientType == types.NodeIOS {
-			if nInfo.AvailableDiskSpace > float64(5*units.GiB) {
-				nInfo.AvailableDiskSpace = float64(5 * units.GiB)
-			}
-
-			if useSize > 5*units.GiB {
-				useSize = 5 * units.GiB
-			}
+			nInfo.AvailableDiskSpace = min(nInfo.AvailableDiskSpace, 5*units.GiB)
+			useSize = min(useSize, 5*units.GiB)
 		}
 
 	} else if nodeType == types.NodeCandidate {
