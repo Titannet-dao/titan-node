@@ -19,6 +19,10 @@ import (
 	"github.com/Filecoin-Titan/titan/lib/rpcenc"
 )
 
+var (
+	defaultHTTP3Client *http.Client
+)
+
 // NewScheduler creates a new http jsonrpc client.
 func NewScheduler(ctx context.Context, addr string, requestHeader http.Header, opts ...jsonrpc.Option) (api.Scheduler, jsonrpc.ClientCloser, error) {
 	pushURL, err := getPushURL(addr)
@@ -165,8 +169,12 @@ func NewLocator(ctx context.Context, addr string, requestHeader http.Header, opt
 }
 
 func NewHTTP3Client() *http.Client {
-	return &http.Client{
-		Transport: &http3.RoundTripper{
+	if defaultHTTP3Client != nil {
+		return defaultHTTP3Client
+	}
+
+	defaultHTTP3Client = &http.Client{
+		Transport: &http3.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
@@ -176,6 +184,8 @@ func NewHTTP3Client() *http.Client {
 			},
 		},
 	}
+	
+	return defaultHTTP3Client
 }
 
 // NewHTTP3ClientWithPacketConn new http3 client for nat trave
@@ -189,7 +199,7 @@ func NewHTTP3ClientWithPacketConn(tansport *quic.Transport) (*http.Client, error
 		return tansport.DialEarly(ctx, remoteAddr, tlsCfg, cfg)
 	}
 
-	roundTripper := &http3.RoundTripper{
+	roundTripper := &http3.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
