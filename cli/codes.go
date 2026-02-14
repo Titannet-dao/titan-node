@@ -20,36 +20,44 @@ var codesCmds = &cli.Command{
 
 var removeCandidateCodeCmd = &cli.Command{
 	Name:  "rm",
-	Usage: "remove code info",
+	Usage: "Remove code info",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:  "code",
-			Usage: "code id",
+			Usage: "Code ID (required)",
 			Value: "",
 		},
 	},
 	Action: func(cctx *cli.Context) error {
 		code := cctx.String("code")
+		if code == "" {
+			return fmt.Errorf("the --code flag is required")
+		}
 
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get scheduler API: %w", err)
 		}
 		defer closer()
 
-		return schedulerAPI.RemoveCandidateCode(ctx, code)
+		if err := schedulerAPI.RemoveCandidateCode(ctx, code); err != nil {
+			return fmt.Errorf("failed to remove candidate code: %w", err)
+		}
+
+		fmt.Println("Candidate code removed successfully")
+		return nil
 	},
 }
 
 var resetCandidateCodeCmd = &cli.Command{
 	Name:  "reset",
-	Usage: "reset code info",
+	Usage: "Reset code info",
 	Flags: []cli.Flag{
 		nodeIDFlag,
 		&cli.StringFlag{
 			Name:  "code",
-			Usage: "code id",
+			Usage: "Code ID (required)",
 			Value: "",
 		},
 	},
@@ -57,58 +65,65 @@ var resetCandidateCodeCmd = &cli.Command{
 		nodeID := cctx.String("node-id")
 		code := cctx.String("code")
 
+		if nodeID == "" {
+			return fmt.Errorf("the --node-id flag is required")
+		}
+		if code == "" {
+			return fmt.Errorf("the --code flag is required")
+		}
+
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get scheduler API: %w", err)
 		}
 		defer closer()
 
-		return schedulerAPI.ResetCandidateCode(ctx, nodeID, code)
+		if err := schedulerAPI.ResetCandidateCode(ctx, nodeID, code); err != nil {
+			return fmt.Errorf("failed to reset candidate code: %w", err)
+		}
+
+		fmt.Println("Candidate code reset successfully")
+		return nil
 	},
 }
 
 var generateCandidateCodeCmd = &cli.Command{
 	Name:  "new",
-	Usage: "generate code",
+	Usage: "Generate codes",
 	Flags: []cli.Flag{
-		// nodeTypeFlag,
 		&cli.Int64Flag{
 			Name:  "count",
-			Usage: "code count",
+			Usage: "Number of codes to generate (must be greater than 0)",
 			Value: 0,
 		},
 		&cli.BoolFlag{
 			Name:  "test",
-			Usage: "is test",
+			Usage: "Generate test codes",
 			Value: false,
 		},
 	},
 	Action: func(cctx *cli.Context) error {
-		// nodeType := cctx.Int("node-type")
 		count := cctx.Int("count")
 		isTest := cctx.Bool("test")
+
+		if count <= 0 {
+			return fmt.Errorf("the --count flag must be greater than 0")
+		}
 
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get scheduler API: %w", err)
 		}
 		defer closer()
 
-		// if nodeType != int(types.NodeCandidate) && nodeType != int(types.NodeValidator) {
-		// 	return nil
-		// }
-
-		if count <= 0 {
-			return nil
-		}
-
 		list, err := schedulerAPI.GenerateCandidateCodes(ctx, count, types.NodeCandidate, isTest)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to generate candidate codes: %w", err)
 		}
 
+		fmt.Println("Generated codes:")
 		for _, code := range list {
 			fmt.Println(code)
 		}
@@ -119,12 +134,12 @@ var generateCandidateCodeCmd = &cli.Command{
 
 var loadCandidateCodeCmd = &cli.Command{
 	Name:  "get",
-	Usage: "load candidate code info",
+	Usage: "Load candidate code info",
 	Flags: []cli.Flag{
 		nodeIDFlag,
 		&cli.StringFlag{
 			Name:  "code",
-			Usage: "code id",
+			Usage: "Code ID (optional)",
 			Value: "",
 		},
 	},
@@ -132,20 +147,25 @@ var loadCandidateCodeCmd = &cli.Command{
 		nodeID := cctx.String("node-id")
 		code := cctx.String("code")
 
+		if nodeID == "" {
+			return fmt.Errorf("the --node-id flag is required")
+		}
+
 		ctx := ReqContext(cctx)
 		schedulerAPI, closer, err := GetSchedulerAPI(cctx, "")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get scheduler API: %w", err)
 		}
 		defer closer()
 
 		infos, err := schedulerAPI.GetCandidateCodeInfos(ctx, nodeID, code)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to load candidate code info: %w", err)
 		}
 
+		fmt.Println("Candidate code infos:")
 		for _, info := range infos {
-			fmt.Printf("code:%s node:%s type:%s\n", info.Code, info.NodeID, info.NodeType.String())
+			fmt.Printf("Code: %s, Node: %s, Type: %s\n", info.Code, info.NodeID, info.NodeType.String())
 		}
 
 		return nil
